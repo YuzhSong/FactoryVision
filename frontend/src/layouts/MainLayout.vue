@@ -26,8 +26,8 @@ function handleSelect(index) {
   <el-container class="app-shell">
     <el-aside width="240px" class="app-sidebar">
       <div class="brand-block">
-        <h1>智安工厂</h1>
-        <p>Smart Factory Vision</p>
+        <h1>工厂监测</h1>
+        <p>Factory Vision</p>
       </div>
       <el-menu :default-active="activeMenu" class="nav-menu" @select="handleSelect">
         <el-menu-item v-for="item in menuItems" :key="item.path" :index="item.path">
@@ -38,7 +38,7 @@ function handleSelect(index) {
     <el-container>
       <el-header class="app-header">
         <div>
-          <h2>{{ route.meta.title || '智安工厂实时视频分析监测系统' }}</h2>
+          <h2>{{ route.meta.title || '工厂实时视频分析监测系统' }}</h2>
           <p>第一阶段项目骨架</p>
         </div>
         <el-button type="primary" plain @click="router.push('/login')">登录页</el-button>

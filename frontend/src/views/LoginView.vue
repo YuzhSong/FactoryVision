@@ -1,7 +1,7 @@
 <template>
   <div class="login-view">
     <div class="login-card">
-      <h1>智安工厂</h1>
+      <h1>工厂监测</h1>
       <p>实时视频分析监测系统</p>
       <el-form label-position="top">
         <el-form-item label="用户名">

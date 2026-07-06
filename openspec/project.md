@@ -1,8 +1,8 @@
-# Smart Factory Vision Project
+# Factory Vision Project
 
 ## Overview
 
-智安工厂实时视频分析监测系统面向工厂安全生产场景，采用前后端分离与 AI 独立服务架构。
+工厂实时视频分析监测系统面向工厂安全生产场景，采用前后端分离与 AI 独立服务架构。
 
 ## Scope
 
