@@ -1,0 +1,21 @@
+# IDE and local agent metadata
+.idea/
+.ai/
+
+# Python caches and virtual environments
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Frontend dependencies and build output
+frontend/node_modules/
+frontend/dist/
+
+# Backend local database and static output
+backend/db.sqlite3
+backend/staticfiles/
+
+# OS files
+.DS_Store
+Thumbs.db
