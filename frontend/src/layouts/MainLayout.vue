@@ -1,17 +1,22 @@
 <script setup>
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { ElMessage } from 'element-plus'
 import {
   Bell,
-  Camera,
   DataAnalysis,
   Histogram,
   Location,
+  Moon,
   Monitor,
+  Sunny,
+  SwitchButton,
   User,
   VideoCamera,
 } from '@element-plus/icons-vue'
+import { authApi } from '../api/modules'
 import { systemStatus } from '../data/placeholders'
+import { applyTheme, getStoredTheme } from '../utils/theme'
 
 const route = useRoute()
 const router = useRouter()
@@ -27,9 +32,32 @@ const menuItems = [
 ]
 
 const activeMenu = computed(() => route.path)
+const logoutLoading = ref(false)
+const theme = ref(getStoredTheme())
+const isDark = computed(() => theme.value === 'dark')
 
 function handleSelect(index) {
   router.push(index)
+}
+
+async function handleLogout() {
+  logoutLoading.value = true
+  try {
+    await authApi.logout()
+    ElMessage.success('已登出')
+  } catch (error) {
+    ElMessage.warning('已清理本地登录状态')
+  } finally {
+    localStorage.removeItem('factoryVisionToken')
+    localStorage.removeItem('factoryVisionUser')
+    logoutLoading.value = false
+    router.replace('/login')
+  }
+}
+
+function toggleTheme() {
+  theme.value = isDark.value ? 'light' : 'dark'
+  applyTheme(theme.value)
 }
 </script>
 
@@ -59,7 +87,12 @@ function handleSelect(index) {
             <i class="status-dot" :class="item.type" />
             {{ item.label }}: {{ item.value }}
           </span>
-          <el-button :icon="Camera" type="primary" plain @click="router.push('/login')">登录页</el-button>
+          <el-button :icon="isDark ? Sunny : Moon" plain @click="toggleTheme">
+            {{ isDark ? '浅色' : '深色' }}
+          </el-button>
+          <el-button :icon="SwitchButton" type="primary" plain :loading="logoutLoading" @click="handleLogout">
+            登出
+          </el-button>
         </div>
       </el-header>
       <el-main class="app-main">
