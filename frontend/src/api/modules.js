@@ -7,6 +7,9 @@ export const authApi = {
   logout() {
     return http.post('/auth/logout/')
   },
+  me() {
+    return http.get('/auth/me/')
+  },
 }
 
 export const healthApi = {

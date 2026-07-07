@@ -38,4 +38,21 @@ const router = createRouter({
   routes,
 })
 
+router.beforeEach((to) => {
+  const token = localStorage.getItem('factoryVisionToken')
+
+  if (to.path !== '/login' && !token) {
+    return {
+      path: '/login',
+      query: { redirect: to.fullPath },
+    }
+  }
+
+  if (to.path === '/login' && token) {
+    return '/dashboard'
+  }
+
+  return true
+})
+
 export default router
