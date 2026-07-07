@@ -1,21 +1,24 @@
-from flask import Flask, jsonify
+from fastapi import FastAPI
+import uvicorn
 
 from config import Config
 
 
-def create_app():
-    app = Flask(__name__)
-    app.config.from_object(Config)
+def create_app() -> FastAPI:
+    app = FastAPI(
+        title="Smart Factory AI Service",
+        description="Independent AI service for video stream analysis, face recognition, and behavior detection.",
+        version="0.1.0",
+    )
 
-    @app.get("/health")
+    @app.get("/health", tags=["system"])
     def health_check():
-        return jsonify(
-            {
-                "service": app.config["SERVICE_NAME"],
-                "status": "ok",
-                "stage": "skeleton",
-            }
-        )
+        return {
+            "service": Config.SERVICE_NAME,
+            "status": "ok",
+            "stage": "skeleton",
+            "docs": "/docs",
+        }
 
     return app
 
@@ -24,4 +27,9 @@ app = create_app()
 
 
 if __name__ == "__main__":
-    app.run(host=Config.HOST, port=Config.PORT, debug=Config.DEBUG)
+    uvicorn.run(
+        "app:app",
+        host=Config.HOST,
+        port=Config.PORT,
+        reload=Config.DEBUG,
+    )

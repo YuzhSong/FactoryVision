@@ -8,7 +8,7 @@
 
 - `frontend`: Vue 3 + Vite 页面骨架已存在。
 - `backend`: Django + DRF 项目、Swagger、健康检查和 placeholder API 已存在。
-- `ai-service`: Flask 服务、健康检查和 AI 模块 placeholder 已存在。
+- `ai-service`: FastAPI 服务、健康检查、自动接口文档和 AI 模块 placeholder 已存在。
 - `video-stream`: MediaMTX 或 Nginx-RTMP 为规划组件，当前未接入。
 - `database`: 开发阶段 SQLite 已可用，目标为 MySQL。
 
