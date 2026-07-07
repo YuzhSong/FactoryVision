@@ -15,6 +15,20 @@ let sdkPromise = null
 const currentCamera = computed(() => cameras.find((camera) => camera.id === activeCamera.value) || cameras[0])
 const detectedPlayUrl = computed(() => currentCamera.value.playUrl)
 
+function normalizeSrsWebRtcUrl(url) {
+  if (!url || !url.startsWith('webrtc://')) {
+    return url
+  }
+
+  const [base, queryString = ''] = url.split('?')
+  const params = new URLSearchParams(queryString)
+  if (!params.has('schema')) {
+    params.set('schema', 'https')
+  }
+
+  return `${base}?${params.toString()}`
+}
+
 function loadScript(src) {
   return new Promise((resolve, reject) => {
     const existing = document.querySelector(`script[src="${src}"]`)
@@ -69,9 +83,10 @@ async function startPlayback() {
       videoRef.value.srcObject = player.stream
       videoRef.value.muted = true
     }
-    await player.play(detectedPlayUrl.value)
+    const playUrl = normalizeSrsWebRtcUrl(detectedPlayUrl.value)
+    await player.play(playUrl)
     playbackStatus.value = 'connected'
-    playbackMessage.value = `正在播放 ${detectedPlayUrl.value}`
+    playbackMessage.value = `正在播放 ${playUrl}`
   } catch (error) {
     playbackStatus.value = 'error'
     playbackMessage.value = error.message
