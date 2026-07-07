@@ -1,90 +1,151 @@
 # Factory Vision
 
-工厂实时视频分析监测系统第一阶段项目骨架。
+工厂实时视频分析与安全监测系统。
 
-## Project Overview
-
-本项目面向工厂安全生产场景，目标是围绕实时视频流接入、人员检测、人脸识别、陌生人告警、危险区域入侵、头盔检测、摔倒检测、异常跑动、告警中心、监控日志与考勤统计，逐步搭建一个前后端分离、AI 服务独立、便于多人并行开发的监测系统。
-
-## Tech Stack
-
-- Frontend: Vue 3 + Vite + Element Plus + ECharts
-- Backend: Django + Django REST Framework
-- AI Service: Python placeholder service for OpenCV / YOLO / face recognition integration
-- Database: SQLite for local development, MySQL reserved for future deployment
-- CI/CD: Jenkins
-- Specification: OpenSpec
+当前仓库是一个多服务项目，包含前端、后端和 AI 服务三个独立目录。启动时需要分别进入对应目录安装依赖，不能在仓库根目录直接执行一次 `pip install -r requirements.txt`。
 
 ## Repository Structure
 
 ```text
-smart-factory-vision/
+FactoryVision/
   README.md
-  Jenkinsfile
   docker-compose.yml
   backend/
+    manage.py
+    requirements.txt
   frontend/
+    package.json
   ai-service/
-  openspec/
+    app.py
+    requirements.txt
   docs/
+  openspec/
 ```
 
-## Development Stages
+## Prerequisites
 
-- Stage 0：文档与范围固化，补齐 PRD、架构、OpenSpec 和项目说明。
-- Stage 1：项目骨架搭建，完成 frontend、backend、ai-service、Jenkins、docs、openspec 基础结构。
-- Stage 2：基础管理与数据库，补员工、摄像头、区域、事件等基础模型和 CRUD。
-- Stage 3：实时视频流展示，跑通摄像头配置、监控页和视频展示闭环。
-- Stage 4：人员检测结果接入与前端叠加显示。
-- Stage 5：人脸识别与陌生人告警闭环。
-- Stage 6：危险区域绘制与入侵检测。
-- Stage 7：告警中心与事件日志完善。
-- Stage 8：头盔、摔倒、跑动检测接入。
-- Stage 9：考勤统计与离开/返回检测。
-- Stage 10：Jenkins、测试与交付文档收尾。
+- Python 3.14 is verified locally for `backend/` and `ai-service/`
+- Python 3.12+ is recommended for `backend/` because it uses Django 6
+- Node.js 24 is verified locally for `frontend/`
+- npm 11 is verified locally for `frontend/`
+
+## Important Notes
+
+- The repository root does not contain a `requirements.txt`
+- `backend/requirements.txt` is only for the Django backend
+- `ai-service/requirements.txt` is only for the Flask AI service
+- `pip install -r requirements.txt` is not machine-specific
+- That command always reads the `requirements.txt` in your current directory
+- If a teammate runs it from the repo root, it will fail because no such file exists there
 
 ## Quick Start
 
-### Backend
+### 1. Backend
 
-```bash
+```powershell
 cd backend
-python -m venv .venv
-.venv\Scripts\activate
+py -3.14 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
 pip install -r requirements.txt
 python manage.py migrate
 python manage.py runserver
 ```
 
-### Frontend
+Backend URLs:
 
-```bash
+- API root: `http://127.0.0.1:8000/`
+- Health check: `http://127.0.0.1:8000/api/health/`
+- Swagger: `http://127.0.0.1:8000/api/docs/`
+
+### 2. Frontend
+
+```powershell
 cd frontend
 npm install
 npm run dev
 ```
 
-### AI Service
+Frontend URL:
 
-```bash
+- Vite dev server: `http://127.0.0.1:5173/`
+
+### 3. AI Service
+
+```powershell
 cd ai-service
-python -m venv .venv
-.venv\Scripts\activate
+py -3.14 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
 pip install -r requirements.txt
 python app.py
 ```
 
-## Current Stage
+AI service URL:
 
-- Stage 1 only: project skeleton setup
-- No complex business logic
-- No hard-coded large mock datasets
-- Frontend gets business data from backend APIs only
-- AI service reports results to backend APIs only
+- Health check: `http://127.0.0.1:9000/health`
 
-## Development Rules
+## Start From Repo Root
 
-- 前端后续只通过后端 API 获取业务数据，不直连数据库。
-- AI 服务后续只通过后端 API 上报检测结果，不直接写数据库。
-- 当前阶段只实现项目骨架和可运行入口，不落复杂业务逻辑。
-- 需要 mock 时，应放到明确的 mock 文件或模块中，避免散落在业务代码里。
+If you prefer to stay in the repo root, use explicit relative paths:
+
+```powershell
+py -3.14 -m venv backend\.venv
+backend\.venv\Scripts\python -m pip install -r backend\requirements.txt
+
+py -3.14 -m venv ai-service\.venv
+ai-service\.venv\Scripts\python -m pip install -r ai-service\requirements.txt
+```
+
+This works because the `-r` path is explicit. It is also a good way to avoid confusion about which `requirements.txt` is being used.
+
+## Verified Locally
+
+The following checks passed locally on July 7, 2026:
+
+- `backend`: `pip install -r requirements.txt`
+- `backend`: `python manage.py check`
+- `backend`: `python manage.py migrate`
+- `frontend`: `npm install`
+- `frontend`: `npm run build`
+- `ai-service`: `pip install -r requirements.txt`
+
+## Common Problems
+
+### `pip install -r requirements.txt` fails in repo root
+
+Reason: there is no root-level `requirements.txt`.
+
+Fix: run the command inside `backend/` or `ai-service/`, or use an explicit path such as:
+
+```powershell
+pip install -r backend\requirements.txt
+```
+
+### `Couldn't import Django`
+
+Reason: backend virtual environment is not activated, or backend dependencies were not installed.
+
+Fix:
+
+```powershell
+cd backend
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+```
+
+### Python version is too old
+
+Reason: the backend depends on Django 6, which requires a newer Python version.
+
+Fix: use Python 3.12+ and preferably Python 3.14 to match the local verified setup and `docker-compose.yml`.
+
+## Docker Compose
+
+The repository also includes `docker-compose.yml`, which uses:
+
+- `python:3.14-slim` for `backend`
+- `python:3.14-slim` for `ai-service`
+- `node:24-alpine` for `frontend`
+
+That file is a useful reference for the expected runtime versions even if you run everything locally.
