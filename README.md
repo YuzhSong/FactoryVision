@@ -115,9 +115,3 @@ uvicorn app:app --host 0.0.0.0 --port 9000 --reload
 - Database: 当前业务表未实现，开发阶段使用 SQLite，目标部署使用 MySQL。
 
 未实现的业务能力在文档中统一标记为 `planned`。
-
-## Development Rules
-
-- 前端后续只通过后端 API 获取业务数据，不直连数据库。
-- AI 服务后续只通过后端 API 上报检测结果，不直接写数据库。
-- 需要 mock 时，应放到明确的 mock 文件或模块中，避免散落在业务代码里。
