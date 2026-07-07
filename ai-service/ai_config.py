@@ -18,7 +18,6 @@ os.environ.setdefault("NO_ALBUMENTATIONS_UPDATE", "1")
 
 
 def _parse_size(value: str, default: tuple[int, int]):
-    """Parse size text like '640,640' into (width, height)."""
     try:
         width, height = value.lower().replace("x", ",").split(",", maxsplit=1)
         return (int(width.strip()), int(height.strip()))
@@ -27,8 +26,6 @@ def _parse_size(value: str, default: tuple[int, int]):
 
 
 class Config:
-    """Store ai-service environment configuration values."""
-
     SERVICE_NAME = "smart-factory-ai-service"
     HOST = os.getenv("AI_SERVICE_HOST", "0.0.0.0")
     PORT = int(os.getenv("AI_SERVICE_PORT", "9000"))
@@ -76,3 +73,10 @@ class Config:
     STREAM_RECONNECT_DELAY_SECONDS = float(os.getenv("STREAM_RECONNECT_DELAY_SECONDS", "1.0"))
     STREAM_MAX_FRAMES_PER_REQUEST = int(os.getenv("STREAM_MAX_FRAMES_PER_REQUEST", "30"))
     STREAM_SAMPLE_INTERVAL = int(os.getenv("STREAM_SAMPLE_INTERVAL", "1"))
+    STREAM_INPUT_URL = os.getenv("STREAM_INPUT_URL", "rtmp://81.70.90.222:1935/live/1")
+    STREAM_OUTPUT_URL = os.getenv("STREAM_OUTPUT_URL", "rtmp://81.70.90.222:1935/live/1_detected")
+    STREAM_PLAY_URL = os.getenv("STREAM_PLAY_URL", "webrtc://webrtc.rainycode.cn:8443/live/1_detected")
+    STREAM_PROCESS_MODE = os.getenv("STREAM_PROCESS_MODE", "detect")
+    STREAM_REPORT_TO_BACKEND = os.getenv("STREAM_REPORT_TO_BACKEND", "False").lower() == "true"
+    STREAM_OUTPUT_FPS = float(os.getenv("STREAM_OUTPUT_FPS", "25"))
+    STREAM_FFMPEG_PATH = os.getenv("STREAM_FFMPEG_PATH", "ffmpeg")

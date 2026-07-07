@@ -329,6 +329,47 @@ body {
   color: #dbeafe;
 }
 
+.stream-player {
+  aspect-ratio: 16 / 9;
+  min-height: 0;
+  background: #020617;
+}
+
+.stream-player video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #020617;
+}
+
+.stream-head,
+.stream-foot {
+  position: absolute;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: calc(100% - 32px);
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(2, 6, 23, 0.68);
+  color: #f8fafc;
+  font-size: 12px;
+  backdrop-filter: blur(8px);
+}
+
+.stream-head {
+  top: 14px;
+  left: 14px;
+}
+
+.stream-foot {
+  right: 14px;
+  bottom: 14px;
+}
+
 .monitor-screen::before {
   content: '';
   position: absolute;
@@ -348,6 +389,11 @@ body {
   font-family: ui-monospace, "Fira Code", Consolas, monospace;
   font-size: 12px;
   letter-spacing: 0.08em;
+}
+
+.stream-player::before,
+.stream-player::after {
+  content: none;
 }
 
 .monitor-label {

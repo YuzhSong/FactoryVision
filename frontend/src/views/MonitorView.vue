@@ -1,16 +1,111 @@
 <script setup>
-import { ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import SectionHeader from '../components/SectionHeader.vue'
 import StatusTag from '../components/StatusTag.vue'
 import { cameras, realtimeEvents, systemStatus } from '../data/placeholders'
 
 const activeCamera = ref(cameras[0].id)
+const videoRef = ref(null)
+const playbackStatus = ref('idle')
+const playbackMessage = ref('等待播放 AI 处理后视频流')
+
+let player = null
+let sdkPromise = null
+
+const currentCamera = computed(() => cameras.find((camera) => camera.id === activeCamera.value) || cameras[0])
+const detectedPlayUrl = computed(() => currentCamera.value.playUrl)
+
+function loadScript(src) {
+  return new Promise((resolve, reject) => {
+    const existing = document.querySelector(`script[src="${src}"]`)
+    if (existing) {
+      if (existing.dataset.loaded === 'true') {
+        resolve()
+        return
+      }
+      existing.addEventListener('load', () => resolve(), { once: true })
+      existing.addEventListener('error', () => reject(new Error(`脚本加载失败: ${src}`)), { once: true })
+      return
+    }
+
+    const script = document.createElement('script')
+    script.src = src
+    script.async = true
+    script.onload = () => {
+      script.dataset.loaded = 'true'
+      resolve()
+    }
+    script.onerror = () => reject(new Error(`脚本加载失败: ${src}`))
+    document.head.appendChild(script)
+  })
+}
+
+function loadSrsSdk() {
+  if (window.SrsRtcPlayerAsync) {
+    return Promise.resolve()
+  }
+
+  if (!sdkPromise) {
+    sdkPromise = loadScript('https://webrtc.rainycode.cn:8443/players/js/adapter-7.4.0.min.js')
+      .then(() => loadScript('https://webrtc.rainycode.cn:8443/players/js/srs.sdk.js'))
+      .catch((error) => {
+        sdkPromise = null
+        throw error
+      })
+  }
+
+  return sdkPromise
+}
+
+async function startPlayback() {
+  stopPlayback()
+  playbackStatus.value = 'connecting'
+  playbackMessage.value = '正在连接 AI 处理后视频流'
+
+  try {
+    await loadSrsSdk()
+    player = new window.SrsRtcPlayerAsync()
+    if (videoRef.value) {
+      videoRef.value.srcObject = player.stream
+      videoRef.value.muted = true
+    }
+    await player.play(detectedPlayUrl.value)
+    playbackStatus.value = 'connected'
+    playbackMessage.value = `正在播放 ${detectedPlayUrl.value}`
+  } catch (error) {
+    playbackStatus.value = 'error'
+    playbackMessage.value = error.message
+    stopPlayback()
+  }
+}
+
+function stopPlayback() {
+  if (player && typeof player.close === 'function') {
+    player.close()
+  }
+  player = null
+  if (videoRef.value) {
+    videoRef.value.srcObject = null
+  }
+}
+
+watch(activeCamera, () => {
+  startPlayback()
+})
+
+onMounted(() => {
+  startPlayback()
+})
+
+onBeforeUnmount(() => {
+  stopPlayback()
+})
 </script>
 
 <template>
   <div class="page-grid monitor-page">
     <div class="panel">
-      <SectionHeader title="实时监控工作台" description="WebSocket 和视频流服务 planned，当前展示监控调度台结构。">
+      <SectionHeader title="实时监控工作台" description="当前播放 AI Service 回推到 SRS 的带框 WebRTC 视频流。">
         <div class="status-strip">
           <span v-for="item in systemStatus" :key="item.label" class="status-pill">
             <i class="status-dot" :class="item.type" />{{ item.label }}: {{ item.value }}
@@ -39,12 +134,19 @@ const activeCamera = ref(cameras[0].id)
       </div>
 
       <div class="panel monitor-center">
-        <SectionHeader title="视频画面" description="深色区域为视频播放器、检测框和警戒区域叠加占位。" />
-        <div class="monitor-screen">
-          <span class="monitor-label">CAM-01 / planned stream / zone overlay</span>
-          <div class="detection-box" data-label="PERSON t-1" style="left: 18%; top: 30%; width: 18%; height: 44%" />
-          <div class="detection-box" data-label="unknown" style="left: 52%; top: 22%; width: 14%; height: 38%" />
-          <div class="zone-shape" />
+        <SectionHeader title="AI 处理后视频" description="画面由 AI Service 拉流检测后写入检测框，再回推到 SRS 播放。">
+          <el-button size="small" type="primary" @click="startPlayback">重连</el-button>
+        </SectionHeader>
+        <div class="monitor-screen stream-player" :class="playbackStatus">
+          <video ref="videoRef" autoplay playsinline controls muted />
+          <div class="stream-head">
+            <span>{{ currentCamera.name }}</span>
+            <StatusTag :value="playbackStatus" />
+          </div>
+          <div class="stream-foot">
+            <span>原始流：{{ currentCamera.streamUrl }}</span>
+            <span>{{ playbackMessage }}</span>
+          </div>
         </div>
       </div>
 
@@ -64,10 +166,10 @@ const activeCamera = ref(cameras[0].id)
     </div>
 
     <div class="metric-grid">
-      <div class="metric-card"><p class="metric-label">当前人数</p><p class="metric-value">2</p></div>
-      <div class="metric-card"><p class="metric-label">陌生人</p><p class="metric-value">1</p></div>
-      <div class="metric-card"><p class="metric-label">区域入侵</p><p class="metric-value">1</p></div>
-      <div class="metric-card"><p class="metric-label">异常行为</p><p class="metric-value">0</p></div>
+      <div class="metric-card"><p class="metric-label">原始流</p><p class="metric-value">RTMP</p></div>
+      <div class="metric-card"><p class="metric-label">带框流</p><p class="metric-value">WebRTC</p></div>
+      <div class="metric-card"><p class="metric-label">播放状态</p><p class="metric-value">{{ playbackStatus }}</p></div>
+      <div class="metric-card"><p class="metric-label">处理模式</p><p class="metric-value">AI</p></div>
     </div>
   </div>
 </template>

@@ -1,4 +1,5 @@
 from importlib import import_module
+import shutil
 
 from ai_config import Config
 
@@ -15,7 +16,6 @@ DEPENDENCIES = {
 
 
 def check_dependencies():
-    """Check package versions and torch CUDA availability."""
     Config.ULTRALYTICS_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
 
     results = {}
@@ -43,4 +43,9 @@ def check_dependencies():
                 "version": None,
                 "error": str(exc),
             }
+    results["ffmpeg"] = {
+        "installed": shutil.which(Config.STREAM_FFMPEG_PATH) is not None,
+        "path": shutil.which(Config.STREAM_FFMPEG_PATH),
+        "error": None if shutil.which(Config.STREAM_FFMPEG_PATH) else "ffmpeg executable not found",
+    }
     return results
