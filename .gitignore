@@ -1,6 +1,7 @@
 # IDE and local agent metadata
 .idea/
 .ai/
+.codex/
 
 # Python caches and virtual environments
 __pycache__/
