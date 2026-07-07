@@ -1,4 +1,5 @@
 import math
+from datetime import datetime
 
 
 class RunningDetector:
@@ -72,8 +73,10 @@ class RunningDetector:
         previous_timestamp = previous.get("timestamp") or previous.get("time")
         current_timestamp = current.get("timestamp") or current.get("time")
 
-        if isinstance(previous_timestamp, (int, float)) and isinstance(current_timestamp, (int, float)):
-            return current_timestamp - previous_timestamp
+        parsed_previous_timestamp = self._parse_timestamp(previous_timestamp)
+        parsed_current_timestamp = self._parse_timestamp(current_timestamp)
+        if parsed_previous_timestamp is not None and parsed_current_timestamp is not None:
+            return parsed_current_timestamp - parsed_previous_timestamp
 
         previous_frame_id = previous.get("frameIndex")
         current_frame_id = current.get("frameIndex")
@@ -82,6 +85,22 @@ class RunningDetector:
             return (current_frame_id - previous_frame_id) / fps
 
         return 1.0
+
+    def _parse_timestamp(self, value):
+        if isinstance(value, (int, float)):
+            return float(value)
+
+        if not isinstance(value, str) or not value.strip():
+            return None
+
+        normalized_value = value.strip()
+        if normalized_value.endswith("Z"):
+            normalized_value = f"{normalized_value[:-1]}+00:00"
+
+        try:
+            return datetime.fromisoformat(normalized_value).timestamp()
+        except ValueError:
+            return None
 
     def _get_level(self, is_running, pixel_speed):
         if not is_running:

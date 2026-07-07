@@ -6,6 +6,13 @@ class AIResultPlaceholderSerializer(serializers.Serializer):
     status = serializers.CharField(default="placeholder")
 
 
+class AIResultReportSerializer(serializers.Serializer):
+    cameraId = serializers.IntegerField(min_value=1)
+    frameId = serializers.CharField()
+    timestamp = serializers.DateTimeField()
+    results = serializers.ListField(child=serializers.DictField(), allow_empty=True)
+
+
 class HealthCheckSerializer(serializers.Serializer):
     service = serializers.CharField(default="backend")
     status = serializers.CharField(default="ok")

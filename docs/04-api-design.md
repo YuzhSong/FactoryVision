@@ -130,7 +130,7 @@ GET /api/health/
 | 接口说明 | 用户登录并获取访问凭证 |
 | URL | `/api/auth/login/` |
 | Method | `POST` |
-| 状态 | planned |
+| 状态 | implemented (stub) |
 
 请求参数：
 
@@ -147,6 +147,8 @@ GET /api/health/
   "password": "password"
 }
 ```
+
+当前实现说明：已实现基础字段校验和验收响应，事件生成、告警生成和数据持久化仍为 `planned`。
 
 响应示例：
 
