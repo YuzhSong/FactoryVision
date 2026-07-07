@@ -1,6 +1,6 @@
 from importlib import import_module
 
-from config import Config
+from ai_config import Config
 
 
 DEPENDENCIES = {
@@ -15,6 +15,7 @@ DEPENDENCIES = {
 
 
 def check_dependencies():
+    """Check package versions and torch CUDA availability."""
     Config.ULTRALYTICS_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
 
     results = {}

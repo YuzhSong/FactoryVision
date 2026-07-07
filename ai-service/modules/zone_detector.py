@@ -2,15 +2,20 @@ import math
 
 
 class ZoneDetector:
+    """Detect zone intrusion from person foot points and polygon zones."""
+
     def __init__(self, zones=None):
+        """Initialize zone detector with optional zones."""
         self.zones = []
         if zones:
             self.set_zones(zones)
 
     def set_zones(self, zones):
+        """Replace active warning zone definitions."""
         self.zones = zones or []
 
     def detect_intrusion(self, detections):
+        """Return ZONE_WARNING results for detections inside or near zones."""
         warnings = []
         for detection in detections or []:
             foot_point = self._get_foot_point(detection)
@@ -44,6 +49,7 @@ class ZoneDetector:
         return warnings
 
     def _get_foot_point(self, detection):
+        """Extract foot point from detection, falling back to bbox bottom center."""
         foot_point = detection.get("footPoint")
         if isinstance(foot_point, dict):
             return (foot_point.get("x", 0), foot_point.get("y", 0))
@@ -60,6 +66,7 @@ class ZoneDetector:
         return None
 
     def _get_zone_points(self, zone):
+        """Normalize zone polygon points to tuple coordinates."""
         points = zone.get("points") or zone.get("polygonPoints") or []
         normalized_points = []
         for point in points:
@@ -70,6 +77,7 @@ class ZoneDetector:
         return normalized_points
 
     def _point_in_polygon(self, point, polygon):
+        """Return whether point lies inside polygon using ray casting."""
         x, y = point
         inside = False
         previous_x, previous_y = polygon[-1]
@@ -85,12 +93,14 @@ class ZoneDetector:
         return inside
 
     def _distance_to_polygon(self, point, polygon):
+        """Calculate shortest distance from point to polygon edges."""
         distances = []
         for start, end in zip(polygon, polygon[1:] + polygon[:1]):
             distances.append(self._distance_to_segment(point, start, end))
         return min(distances) if distances else math.inf
 
     def _distance_to_segment(self, point, start, end):
+        """Calculate shortest distance from point to one line segment."""
         px, py = point
         sx, sy = start
         ex, ey = end
@@ -106,4 +116,5 @@ class ZoneDetector:
         return math.dist(point, projection)
 
     def _get_level(self, inside):
+        """Map inside-zone state to warning level."""
         return "high" if inside else "medium"

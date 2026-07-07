@@ -18,6 +18,7 @@ os.environ.setdefault("NO_ALBUMENTATIONS_UPDATE", "1")
 
 
 def _parse_size(value: str, default: tuple[int, int]):
+    """Parse size text like '640,640' into (width, height)."""
     try:
         width, height = value.lower().replace("x", ",").split(",", maxsplit=1)
         return (int(width.strip()), int(height.strip()))
@@ -26,6 +27,8 @@ def _parse_size(value: str, default: tuple[int, int]):
 
 
 class Config:
+    """Store ai-service environment configuration values."""
+
     SERVICE_NAME = "smart-factory-ai-service"
     HOST = os.getenv("AI_SERVICE_HOST", "0.0.0.0")
     PORT = int(os.getenv("AI_SERVICE_PORT", "9000"))

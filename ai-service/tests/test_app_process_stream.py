@@ -1,20 +1,30 @@
 import unittest
 from unittest.mock import patch
 
-from fastapi.testclient import TestClient
+try:
+    from fastapi.testclient import TestClient
 
-import app as app_module
+    import app as app_module
+except ModuleNotFoundError as exc:
+    if exc.name == "fastapi":
+        raise unittest.SkipTest("fastapi is not installed; run pip install -r requirements.txt")
+    raise
 
 
 class _FakeBackendClient:
+    """Fake backend client for process-stream endpoint tests."""
+
     def __init__(self):
+        """Initialize fake backend state."""
         self.report_payloads = []
         self.face_status = "not-called"
 
     def find_camera(self, camera_id):
+        """Return one fake camera with streamUrl for camera_id."""
         return {"id": int(camera_id), "streamUrl": "fake-stream-url"}
 
     def list_face_records(self, status="active"):
+        """Return one fake employee face record."""
         self.face_status = status
         return [
             {
@@ -26,36 +36,48 @@ class _FakeBackendClient:
         ]
 
     def list_zones(self, camera_id):
+        """Return no fake zones for camera_id."""
         return []
 
     def report_ai_results(self, payload):
+        """Capture report payload and return fake backend response."""
         self.report_payloads.append(payload)
         return {"code": 200, "data": {"acceptedResults": len(payload.get("results", []))}}
 
 
 class _FakeFaceService:
+    """Fake face service that records loaded employee items."""
+
     def __init__(self):
+        """Initialize empty fake face library."""
         self.loaded_items = []
 
     def status(self):
+        """Return fake face-library status."""
         return {"loadedFaces": len(self.loaded_items), "modelLoaded": False}
 
     def load_face_library(self, employee_items=None, **_kwargs):
+        """Store employee_items as fake loaded face library."""
         self.loaded_items = employee_items or []
         return {"count": len(self.loaded_items), "errors": []}
 
 
 class _FakeStreamReader:
+    """Fake stream reader that yields one frame packet."""
+
     opened_url = None
 
     def __init__(self, *_args, **_kwargs):
+        """Initialize fake reader without external resources."""
         return None
 
     def open_stream(self, stream_url):
+        """Capture opened stream_url and return self."""
         type(self).opened_url = stream_url
         return self
 
     def iter_frames(self, max_frames=None, sample_interval=1):
+        """Yield one fake frame packet."""
         yield type(
             "Packet",
             (),
@@ -69,11 +91,15 @@ class _FakeStreamReader:
         )()
 
     def close_stream(self):
+        """Close fake stream reader."""
         return None
 
 
 class _FakeFrameProcessor:
+    """Fake frame processor that returns one person detection report."""
+
     def process_frame(self, _frame, **kwargs):
+        """Return deterministic report for endpoint test."""
         return {
             "cameraId": kwargs["camera_id"],
             "frameId": kwargs["frame_id"],
@@ -90,7 +116,10 @@ class _FakeFrameProcessor:
 
 
 class ProcessStreamEndpointTests(unittest.TestCase):
+    """Test /process/stream endpoint integration behavior."""
+
     def test_process_stream_loads_camera_and_employee_faces_from_backend(self):
+        """Verify camera lookup, face loading, stream open, and backend report."""
         fake_backend = _FakeBackendClient()
         fake_face_service = _FakeFaceService()
 

@@ -5,6 +5,8 @@ import time
 
 @dataclass
 class FramePacket:
+    """Carry one decoded video frame with frame metadata."""
+
     frame: object
     frame_id: str
     frame_index: int
@@ -13,7 +15,10 @@ class FramePacket:
 
 
 class StreamReader:
+    """Read frames from local video, camera index, or stream URL with OpenCV."""
+
     def __init__(self, reconnect_attempts: int = 3, reconnect_delay_seconds: float = 1.0):
+        """Initialize stream reader with reconnect controls."""
         self.reconnect_attempts = reconnect_attempts
         self.reconnect_delay_seconds = reconnect_delay_seconds
         self.stream_url = None
@@ -22,6 +27,7 @@ class StreamReader:
         self.fps = None
 
     def open_stream(self, stream_url: str):
+        """Open video source by stream_url or camera index."""
         self.close_stream()
         self.stream_url = stream_url
         self.frame_index = 0
@@ -30,6 +36,7 @@ class StreamReader:
         return self
 
     def read_frame(self):
+        """Read one frame and return FramePacket, or None at end/failure."""
         if self.capture is None or not self.capture.isOpened():
             self._reconnect()
 
@@ -53,6 +60,7 @@ class StreamReader:
         return None
 
     def iter_frames(self, max_frames: int | None = None, sample_interval: int = 1):
+        """Yield sampled FramePacket objects up to max_frames."""
         emitted = 0
         sample_interval = max(1, int(sample_interval or 1))
 
@@ -68,11 +76,13 @@ class StreamReader:
             yield packet
 
     def close_stream(self):
+        """Release current OpenCV capture if open."""
         if self.capture is not None:
             self.capture.release()
         self.capture = None
 
     def _open_capture(self, stream_url):
+        """Create OpenCV VideoCapture for the given source."""
         try:
             import cv2
         except ImportError as exc:
@@ -88,6 +98,7 @@ class StreamReader:
         return capture
 
     def _reconnect(self):
+        """Reconnect to the configured stream_url."""
         if not self.stream_url:
             raise RuntimeError("Stream URL is not configured.")
 
@@ -106,6 +117,7 @@ class StreamReader:
         raise RuntimeError(f"Unable to reconnect video stream: {self.stream_url}") from last_error
 
     def _read_fps(self):
+        """Read FPS from current capture when available."""
         if self.capture is None:
             return None
 
@@ -119,15 +131,18 @@ class StreamReader:
         return fps if fps > 0 else None
 
     def __enter__(self):
+        """Enter context after stream has been opened."""
         if self.stream_url is None:
             raise RuntimeError("Call open_stream before entering StreamReader context.")
         return self
 
     def __exit__(self, _exc_type, _exc, _traceback):
+        """Close stream when leaving context manager."""
         self.close_stream()
 
 
 def _coerce_source(stream_url):
+    """Convert numeric camera source strings to int for OpenCV."""
     if isinstance(stream_url, int):
         return stream_url
 

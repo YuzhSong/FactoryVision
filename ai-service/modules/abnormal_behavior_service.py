@@ -7,7 +7,10 @@ from .zone_detector import ZoneDetector
 
 
 class AbnormalBehaviorService:
+    """Build behavior-related warnings from person detections and track histories."""
+
     def __init__(self, zones=None, config=None):
+        """Initialize fall, running, helmet, and zone detectors."""
         config = config or {}
         self.fall_detector = FallDetector(
             ratio_threshold=config.get("fallRatioThreshold", 1.2),
@@ -23,6 +26,7 @@ class AbnormalBehaviorService:
         self.zone_detector = ZoneDetector(zones=zones)
 
     def build_ai_report(self, camera_id, frame_id, person_detections, track_histories=None, timestamp=None):
+        """Build one AI report with person detections and behavior warnings."""
         results = []
         person_detections = person_detections or []
         track_histories = track_histories or {}
@@ -56,6 +60,7 @@ class AbnormalBehaviorService:
         }
 
     def _build_helmet_result(self, detection):
+        """Format helmet warning when detection contains helmet status fields."""
         helmet_status = detection.get("helmetStatus") or detection.get("helmet_status")
         helmet_confidence = detection.get("helmetConfidence") or detection.get("helmet_confidence")
         if helmet_status is None or helmet_confidence is None:
@@ -67,4 +72,5 @@ class AbnormalBehaviorService:
         )
 
     def _now_iso(self):
+        """Return current local ISO timestamp."""
         return datetime.now(timezone.utc).astimezone().isoformat()

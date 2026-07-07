@@ -6,11 +6,12 @@ import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from config import Config
+from ai_config import Config
 from modules.person_detector import PersonDetector
 
 
 def main():
+    """Check torch CUDA status and run one blank YOLO person-detection inference."""
     print(f"torch={torch.__version__}")
     print(f"torch_cuda={torch.version.cuda}")
     print(f"cuda_available={torch.cuda.is_available()}")

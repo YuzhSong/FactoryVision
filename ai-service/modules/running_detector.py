@@ -3,11 +3,15 @@ from datetime import datetime
 
 
 class RunningDetector:
+    """Detect running from movement speed across recent track history."""
+
     def __init__(self, speed_threshold: float = 30.0, confirm_frames: int = 5):
+        """Initialize running detector with speed_threshold and confirm_frames."""
         self.speed_threshold = speed_threshold
         self.confirm_frames = confirm_frames
 
     def detect(self, track_history):
+        """Return RUNNING_ALERT-style result from one track history."""
         recent_history = self._get_recent_history(track_history)
         if len(recent_history) < 2:
             return None
@@ -32,11 +36,13 @@ class RunningDetector:
         }
 
     def _get_recent_history(self, track_history):
+        """Keep only recent frames needed for running confirmation."""
         if not track_history:
             return []
         return list(track_history)[-self.confirm_frames :]
 
     def _calculate_speeds(self, history):
+        """Calculate pixel speeds between adjacent history entries."""
         speeds = []
         for previous, current in zip(history, history[1:]):
             previous_point = self._get_point(previous)
@@ -54,6 +60,7 @@ class RunningDetector:
         return speeds
 
     def _get_point(self, entry):
+        """Extract center or foot point from one history entry."""
         point = entry.get("centerPoint") or entry.get("footPoint")
         if isinstance(point, dict):
             return (point.get("x", 0), point.get("y", 0))
@@ -70,6 +77,7 @@ class RunningDetector:
         return None
 
     def _get_elapsed_seconds(self, previous, current):
+        """Calculate elapsed seconds from timestamps or frameIndex/fps."""
         previous_timestamp = previous.get("timestamp") or previous.get("time")
         current_timestamp = current.get("timestamp") or current.get("time")
 
@@ -87,6 +95,7 @@ class RunningDetector:
         return 1.0
 
     def _parse_timestamp(self, value):
+        """Parse numeric or ISO timestamp into epoch seconds."""
         if isinstance(value, (int, float)):
             return float(value)
 
@@ -103,6 +112,7 @@ class RunningDetector:
             return None
 
     def _get_level(self, is_running, pixel_speed):
+        """Map running state and pixel_speed to alert level."""
         if not is_running:
             return "low"
         if pixel_speed >= self.speed_threshold * 1.5:
