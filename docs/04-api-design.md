@@ -5,6 +5,9 @@
 当前后端已实现：
 
 - `GET /api/health/`: implemented
+- `POST /api/auth/login/`: implemented
+- `POST /api/auth/logout/`: implemented
+- `GET /api/auth/me/`: implemented
 - `GET /api/users/`: placeholder
 - `GET /api/employees/`: placeholder
 - `GET /api/cameras/`: placeholder
@@ -12,6 +15,7 @@
 - `GET /api/events/`: placeholder
 - `GET /api/attendance/`: placeholder
 - `GET /api/ai-results/`: placeholder
+- `POST /api/ai-results/report/`: implemented (stub)
 - `GET /api/schema/`: implemented
 - `GET /api/docs/`: implemented
 
@@ -21,7 +25,7 @@
 - `GET /docs`: implemented
 - `GET /openapi.json`: implemented
 
-除上述 placeholder 外，本文档中设计的业务接口均为 `planned`。
+除上述 implemented / placeholder 外，本文档中设计的业务接口均为 `planned`。
 
 ## 统一返回格式
 
@@ -43,7 +47,7 @@
 | `data` | object / array / null | 业务数据 |
 | `requestId` | string | 请求追踪 ID |
 
-说明：当前 `common.response.api_response` 默认 `code=0`。后续业务接口应统一调整为本文档约定的 `200` 成功码，或在文档中明确兼容策略。
+说明：当前 `common.response.api_response` 默认 `code=200`，placeholder 接口也会使用统一成功码。
 
 ## 错误码规范
 
@@ -108,7 +112,7 @@ GET /api/health/
 
 ```json
 {
-  "code": 0,
+  "code": 200,
   "message": "Backend service is healthy",
   "data": {
     "service": "backend",
@@ -130,7 +134,7 @@ GET /api/health/
 | 接口说明 | 用户登录并获取访问凭证 |
 | URL | `/api/auth/login/` |
 | Method | `POST` |
-| 状态 | implemented (stub) |
+| 状态 | implemented |
 
 请求参数：
 
@@ -147,8 +151,6 @@ GET /api/health/
   "password": "password"
 }
 ```
-
-当前实现说明：已实现基础字段校验和验收响应，事件生成、告警生成和数据持久化仍为 `planned`。
 
 响应示例：
 
@@ -177,7 +179,7 @@ GET /api/health/
 | 接口说明 | 清理当前登录态 |
 | URL | `/api/auth/logout/` |
 | Method | `POST` |
-| 状态 | planned |
+| 状态 | implemented |
 
 请求参数：无。
 
@@ -223,7 +225,7 @@ GET /api/users/
 
 ```json
 {
-  "code": 0,
+  "code": 200,
   "message": "Users module placeholder",
   "data": {
     "module": "users",
@@ -242,7 +244,7 @@ GET /api/users/
 | 接口说明 | 查询系统用户列表 |
 | URL | `/api/users/list/` |
 | Method | `GET` |
-| 状态 | planned |
+| 状态 | implemented |
 
 请求参数：通用分页参数。
 
@@ -298,7 +300,7 @@ GET /api/employees/
 
 ```json
 {
-  "code": 0,
+  "code": 200,
   "message": "Employees module placeholder",
   "data": {
     "module": "employees",
@@ -461,7 +463,7 @@ GET /api/cameras/
 
 ```json
 {
-  "code": 0,
+  "code": 200,
   "message": "Cameras module placeholder",
   "data": {
     "module": "cameras",
@@ -581,7 +583,7 @@ GET /api/zones/
 
 ```json
 {
-  "code": 0,
+  "code": 200,
   "message": "Zones module placeholder",
   "data": {
     "module": "zones",
@@ -665,7 +667,7 @@ GET /api/events/
 
 ```json
 {
-  "code": 0,
+  "code": 200,
   "message": "Events module placeholder",
   "data": {
     "module": "events",
@@ -824,7 +826,7 @@ GET /api/attendance/
 
 ```json
 {
-  "code": 0,
+  "code": 200,
   "message": "Attendance module placeholder",
   "data": {
     "module": "attendance",
@@ -900,7 +902,7 @@ GET /api/ai-results/
 
 ```json
 {
-  "code": 0,
+  "code": 200,
   "message": "AI results module placeholder",
   "data": {
     "module": "ai_results",
@@ -919,7 +921,7 @@ GET /api/ai-results/
 | 接口说明 | AI 服务向后端上报检测结果 |
 | URL | `/api/ai-results/report/` |
 | Method | `POST` |
-| 状态 | planned |
+| 状态 | implemented (stub) |
 
 请求参数：
 
@@ -961,6 +963,8 @@ GET /api/ai-results/
 }
 ```
 
+当前实现说明：已实现基础字段校验和验收响应，事件生成、告警生成和数据持久化仍为 `planned`。
+
 响应示例：
 
 ```json
@@ -968,8 +972,11 @@ GET /api/ai-results/
   "code": 200,
   "message": "success",
   "data": {
-    "eventIds": [1],
-    "alertIds": []
+    "eventIds": [],
+    "alertIds": [],
+    "acceptedResults": 1,
+    "cameraId": 1,
+    "frameId": "frame-0001"
   },
   "requestId": "uuid"
 }

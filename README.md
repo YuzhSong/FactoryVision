@@ -109,7 +109,7 @@ uvicorn app:app --host 0.0.0.0 --port 9000 --reload
 
 ## 当前实现状态
 
-- Backend: 已有 Django 项目、Swagger 入口、健康检查接口、各业务模块 placeholder API，以及 AI 结果上报校验 stub。
+- Backend: 已有 Django 项目、Swagger 入口、健康检查接口、JWT 登录接口、各业务模块 placeholder API，以及 AI 结果上报校验 stub。
 - Frontend: 已有 Login、Dashboard、Monitor、Alerts、Employees、Cameras、Zones、Attendance 页面骨架和路由。
 - AI Service: 已有 FastAPI 健康检查接口、自动接口文档和检测模块 placeholder。
 - Database: 当前业务表未实现，开发阶段使用 SQLite，目标部署使用 MySQL。
