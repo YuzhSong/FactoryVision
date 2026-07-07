@@ -8,12 +8,24 @@ const activeCamera = ref(cameras[0].id)
 const videoRef = ref(null)
 const playbackStatus = ref('idle')
 const playbackMessage = ref('等待播放 AI 处理后视频流')
+const playbackMode = ref('flv')
 
 let player = null
 let sdkPromise = null
+let flvPromise = null
 
 const currentCamera = computed(() => cameras.find((camera) => camera.id === activeCamera.value) || cameras[0])
 const detectedPlayUrl = computed(() => currentCamera.value.playUrl)
+const detectedFlvUrl = computed(() => {
+  const url = currentCamera.value.playUrl
+  if (!url || !url.startsWith('webrtc://')) {
+    return url
+  }
+
+  return url
+    .replace('webrtc://', 'https://')
+    .replace(/\/([^/?]+)(\?.*)?$/, '/$1.flv')
+})
 
 function normalizeSrsWebRtcUrl(url) {
   if (!url || !url.startsWith('webrtc://')) {
@@ -71,12 +83,42 @@ function loadSrsSdk() {
   return sdkPromise
 }
 
+function loadMpegtsSdk() {
+  if (window.mpegts) {
+    return Promise.resolve()
+  }
+
+  if (!flvPromise) {
+    flvPromise = loadScript('https://webrtc.rainycode.cn:8443/players/js/mpegts-1.7.2.min.js')
+      .catch((error) => {
+        flvPromise = null
+        throw error
+      })
+  }
+
+  return flvPromise
+}
+
 async function startPlayback() {
   stopPlayback()
   playbackStatus.value = 'connecting'
   playbackMessage.value = '正在连接 AI 处理后视频流'
 
   try {
+    if (playbackMode.value === 'flv') {
+      await startFlvPlayback()
+      return
+    }
+
+    await startRtcPlayback()
+  } catch (error) {
+    playbackStatus.value = 'error'
+    playbackMessage.value = error.message
+    stopPlayback()
+  }
+}
+
+async function startRtcPlayback() {
     await loadSrsSdk()
     player = new window.SrsRtcPlayerAsync()
     if (videoRef.value) {
@@ -87,24 +129,48 @@ async function startPlayback() {
     await player.play(playUrl)
     playbackStatus.value = 'connected'
     playbackMessage.value = `正在播放 ${playUrl}`
-  } catch (error) {
-    playbackStatus.value = 'error'
-    playbackMessage.value = error.message
-    stopPlayback()
+}
+
+async function startFlvPlayback() {
+  await loadMpegtsSdk()
+  if (!window.mpegts?.getFeatureList().mseLivePlayback) {
+    throw new Error('当前浏览器不支持 HTTP-FLV MSE 直播播放')
   }
+
+  const playUrl = detectedFlvUrl.value
+  player = window.mpegts.createPlayer({
+    type: 'flv',
+    url: playUrl,
+    isLive: true,
+    enableStashBuffer: false,
+  })
+
+  if (videoRef.value) {
+    videoRef.value.srcObject = null
+    videoRef.value.muted = true
+    player.attachMediaElement(videoRef.value)
+  }
+  player.load()
+  await player.play()
+  playbackStatus.value = 'connected'
+  playbackMessage.value = `正在播放 ${playUrl}`
 }
 
 function stopPlayback() {
   if (player && typeof player.close === 'function') {
     player.close()
   }
+  if (player && typeof player.destroy === 'function') {
+    player.destroy()
+  }
   player = null
   if (videoRef.value) {
     videoRef.value.srcObject = null
+    videoRef.value.removeAttribute('src')
   }
 }
 
-watch(activeCamera, () => {
+watch([activeCamera, playbackMode], () => {
   startPlayback()
 })
 
@@ -150,7 +216,13 @@ onBeforeUnmount(() => {
 
       <div class="panel monitor-center">
         <SectionHeader title="AI 处理后视频" description="画面由 AI Service 拉流检测后写入检测框，再回推到 SRS 播放。">
-          <el-button size="small" type="primary" @click="startPlayback">重连</el-button>
+          <div class="stream-actions">
+            <el-radio-group v-model="playbackMode" size="small">
+              <el-radio-button value="flv">HTTP-FLV</el-radio-button>
+              <el-radio-button value="rtc">WebRTC</el-radio-button>
+            </el-radio-group>
+            <el-button size="small" type="primary" @click="startPlayback">重连</el-button>
+          </div>
         </SectionHeader>
         <div class="monitor-screen stream-player" :class="playbackStatus">
           <video ref="videoRef" autoplay playsinline controls muted />
@@ -207,6 +279,12 @@ onBeforeUnmount(() => {
   border-left: var(--el-border);
   border-radius: 8px;
   text-align: left;
+}
+
+.stream-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }
 
 @media (max-width: 1180px) {
