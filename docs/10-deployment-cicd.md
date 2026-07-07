@@ -43,12 +43,13 @@ py -3.14 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
 pip install -r requirements.txt
-python app.py
+uvicorn app:app --host 0.0.0.0 --port 9000 --reload
 ```
 
 访问地址：
 
 - `http://127.0.0.1:9000/health`
+- `http://127.0.0.1:9000/docs`
 
 ## 数据库初始化
 
@@ -162,6 +163,6 @@ python -m compileall .
 | Django 无法导入 | 未激活虚拟环境或依赖未安装 | 激活 `.venv` 后重新安装依赖 |
 | Django 依赖安装失败 | Python 版本过低 | 使用 Python 3.12+，本地验证版本为 3.14 |
 | 前端启动失败 | Node 或 npm 版本不匹配 | 使用 Node 24 / npm 11 或兼容版本 |
-| AI 服务健康检查失败 | Flask 依赖未安装或端口被占用 | 安装依赖并检查 9000 端口 |
+| AI 服务健康检查失败 | FastAPI 或 uvicorn 依赖未安装，或端口被占用 | 安装依赖并检查 9000 端口 |
 | 视频流无法播放 | 视频流服务未配置或播放地址不可用 | 检查 MediaMTX / Nginx-RTMP 配置 |
 | Jenkins 构建失败 | 构建机缺少 Python、Node 或网络依赖 | 固定构建环境并缓存依赖 |

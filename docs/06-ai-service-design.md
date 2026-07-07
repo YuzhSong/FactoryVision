@@ -2,7 +2,7 @@
 
 ## 当前状态
 
-`ai-service` 当前提供 Flask 健康检查接口和模块类骨架。各检测模块均为 placeholder，真实模型加载、视频帧读取、检测推理和事件上报均为 `planned`。
+`ai-service` 当前提供 FastAPI 健康检查接口、自动 OpenAPI 文档和模块类骨架。各检测模块均为 placeholder，真实模型加载、视频帧读取、检测推理和事件上报均为 `planned`。
 
 ## 服务职责
 

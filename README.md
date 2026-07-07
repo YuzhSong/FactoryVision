@@ -22,7 +22,7 @@
 
 - Frontend: Vue 3 + Vite + Element Plus + ECharts
 - Backend: Django + Django REST Framework
-- AI Service: Python + OpenCV + YOLO + dlib / face_recognition 预留
+- AI Service: FastAPI + OpenCV + YOLO + dlib / face_recognition 预留
 - Video Stream: MediaMTX 或 Nginx-RTMP
 - Database: MySQL，开发阶段可使用 SQLite
 - API Docs: Swagger / OpenAPI
@@ -60,7 +60,21 @@ FactoryVision/
 
 ## 本地启动
 
-后端、前端、AI 服务需要分别进入对应目录安装依赖并启动。仓库根目录没有通用 `requirements.txt`。
+推荐使用 Docker Compose 一键启动：
+
+```powershell
+docker compose up --build
+```
+
+启动后访问：
+
+- Frontend: `http://127.0.0.1:5173/`
+- Backend: `http://127.0.0.1:8000/api/health/`
+- Backend Swagger: `http://127.0.0.1:8000/api/docs/`
+- AI Service: `http://127.0.0.1:9000/health`
+- AI Service Docs: `http://127.0.0.1:9000/docs`
+
+如需分别调试服务，可按下面方式手动启动。后端、前端、AI 服务需要分别进入对应目录安装依赖并启动；仓库根目录没有通用 `requirements.txt`。
 
 ### Backend
 
@@ -90,14 +104,14 @@ py -3.14 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
 pip install -r requirements.txt
-python app.py
+uvicorn app:app --host 0.0.0.0 --port 9000 --reload
 ```
 
 ## 当前实现状态
 
 - Backend: 已有 Django 项目、Swagger 入口、健康检查接口、各业务模块 placeholder API。
 - Frontend: 已有 Login、Dashboard、Monitor、Alerts、Employees、Cameras、Zones、Attendance 页面骨架和路由。
-- AI Service: 已有 Flask 健康检查接口和检测模块 placeholder。
+- AI Service: 已有 FastAPI 健康检查接口、自动接口文档和检测模块 placeholder。
 - Database: 当前业务表未实现，开发阶段使用 SQLite，目标部署使用 MySQL。
 
 未实现的业务能力在文档中统一标记为 `planned`。

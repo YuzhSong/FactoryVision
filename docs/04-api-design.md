@@ -15,6 +15,12 @@
 - `GET /api/schema/`: implemented
 - `GET /api/docs/`: implemented
 
+当前 AI 服务已实现：
+
+- `GET /health`: implemented
+- `GET /docs`: implemented
+- `GET /openapi.json`: implemented
+
 除上述 placeholder 外，本文档中设计的业务接口均为 `planned`。
 
 ## 统一返回格式

@@ -1,6 +1,6 @@
 # AI Service
 
-Python AI service skeleton for stream reading, detection pipeline placeholders, and backend event reporting.
+FastAPI-based AI service skeleton for stream reading, detection pipeline placeholders, and backend event reporting.
 
 ## Requirements
 
@@ -13,12 +13,14 @@ py -3.14 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
 pip install -r requirements.txt
-python app.py
+uvicorn app:app --host 0.0.0.0 --port 9000 --reload
 ```
 
 ## Endpoints
 
 - Health check: `http://127.0.0.1:9000/health`
+- Swagger UI: `http://127.0.0.1:9000/docs`
+- OpenAPI schema: `http://127.0.0.1:9000/openapi.json`
 
 ## Notes
 
