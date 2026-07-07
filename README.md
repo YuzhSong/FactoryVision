@@ -1,46 +1,68 @@
 # Factory Vision
 
-工厂实时视频分析与安全监测系统。
+智安工厂实时视频分析监测系统面向工厂安全生产场景，采用前后端分离、AI 服务独立、视频流服务独立接入的项目结构，目标是形成“视频采集-智能识别-事件生成-告警处置-日志追溯-统计分析”的闭环。
 
-当前仓库是一个多服务项目，包含前端、后端和 AI 服务三个独立目录。启动时需要分别进入对应目录安装依赖，不能在仓库根目录直接执行一次 `pip install -r requirements.txt`。
+当前阶段已经完成基础框架搭建，后续开发应先对齐 `docs/` 和 `openspec/` 中的设计与规范，再进入具体功能实现。
 
-## Repository Structure
+## 开发前必读
+
+新成员开始开发前，请先阅读 [docs/README.md](docs/README.md)，再按职责阅读对应设计文档。所有需求、接口、数据库、AI 输出格式、页面结构、部署和测试约定都以 `docs/` 下的编号文档为准。
+
+推荐阅读顺序：
+
+1. [项目总览](docs/01-project-overview.md)
+2. [需求说明](docs/02-requirements.md)
+3. [架构设计](docs/03-architecture-design.md)
+4. [开发指南](docs/08-development-guide.md)
+5. 根据个人分工阅读 API、数据库、AI、前端、部署或测试文档
+
+功能开发前应先确认对应 OpenSpec 和文档是否已经对齐；如果修改接口、数据库、页面、AI 输出或部署方式，必须同步更新文档。
+
+## 技术栈
+
+- Frontend: Vue 3 + Vite + Element Plus + ECharts
+- Backend: Django + Django REST Framework
+- AI Service: Python + OpenCV + YOLO + dlib / face_recognition 预留
+- Video Stream: MediaMTX 或 Nginx-RTMP
+- Database: MySQL，开发阶段可使用 SQLite
+- API Docs: Swagger / OpenAPI
+- CI/CD: Jenkins
+- Spec Management: OpenSpec
+
+## 项目结构
 
 ```text
 FactoryVision/
-  README.md
+  backend/        Django REST API 服务
+  frontend/       Vue 前端应用
+  ai-service/     AI 检测服务骨架
+  docs/           项目文档体系
+  openspec/       需求与变更规范
+  Jenkinsfile     CI 流水线骨架
   docker-compose.yml
-  backend/
-    manage.py
-    requirements.txt
-  frontend/
-    package.json
-  ai-service/
-    app.py
-    requirements.txt
-  docs/
-  openspec/
 ```
 
-## Prerequisites
+## 文档导航
 
-- Python 3.14 is verified locally for `backend/` and `ai-service/`
-- Python 3.12+ is recommended for `backend/` because it uses Django 6
-- Node.js 24 is verified locally for `frontend/`
-- npm 11 is verified locally for `frontend/`
+正式文档入口见 [docs/README.md](docs/README.md)。
 
-## Important Notes
+- [项目总览](docs/01-project-overview.md)
+- [需求说明](docs/02-requirements.md)
+- [架构设计](docs/03-architecture-design.md)
+- [API 设计](docs/04-api-design.md)
+- [数据库设计](docs/05-database-design.md)
+- [AI 服务设计](docs/06-ai-service-design.md)
+- [前端设计](docs/07-frontend-design.md)
+- [开发指南](docs/08-development-guide.md)
+- [团队分工](docs/09-team-division.md)
+- [部署与 CI/CD](docs/10-deployment-cicd.md)
+- [测试计划](docs/11-test-plan.md)
 
-- The repository root does not contain a `requirements.txt`
-- `backend/requirements.txt` is only for the Django backend
-- `ai-service/requirements.txt` is only for the Flask AI service
-- `pip install -r requirements.txt` is not machine-specific
-- That command always reads the `requirements.txt` in your current directory
-- If a teammate runs it from the repo root, it will fail because no such file exists there
+## 本地启动
 
-## Quick Start
+后端、前端、AI 服务需要分别进入对应目录安装依赖并启动。仓库根目录没有通用 `requirements.txt`。
 
-### 1. Backend
+### Backend
 
 ```powershell
 cd backend
@@ -52,13 +74,7 @@ python manage.py migrate
 python manage.py runserver
 ```
 
-Backend URLs:
-
-- API root: `http://127.0.0.1:8000/`
-- Health check: `http://127.0.0.1:8000/api/health/`
-- Swagger: `http://127.0.0.1:8000/api/docs/`
-
-### 2. Frontend
+### Frontend
 
 ```powershell
 cd frontend
@@ -66,11 +82,7 @@ npm install
 npm run dev
 ```
 
-Frontend URL:
-
-- Vite dev server: `http://127.0.0.1:5173/`
-
-### 3. AI Service
+### AI Service
 
 ```powershell
 cd ai-service
@@ -81,71 +93,11 @@ pip install -r requirements.txt
 python app.py
 ```
 
-AI service URL:
+## 当前实现状态
 
-- Health check: `http://127.0.0.1:9000/health`
+- Backend: 已有 Django 项目、Swagger 入口、健康检查接口、各业务模块 placeholder API。
+- Frontend: 已有 Login、Dashboard、Monitor、Alerts、Employees、Cameras、Zones、Attendance 页面骨架和路由。
+- AI Service: 已有 Flask 健康检查接口和检测模块 placeholder。
+- Database: 当前业务表未实现，开发阶段使用 SQLite，目标部署使用 MySQL。
 
-## Start From Repo Root
-
-If you prefer to stay in the repo root, use explicit relative paths:
-
-```powershell
-py -3.14 -m venv backend\.venv
-backend\.venv\Scripts\python -m pip install -r backend\requirements.txt
-
-py -3.14 -m venv ai-service\.venv
-ai-service\.venv\Scripts\python -m pip install -r ai-service\requirements.txt
-```
-
-This works because the `-r` path is explicit. It is also a good way to avoid confusion about which `requirements.txt` is being used.
-
-## Verified Locally
-
-The following checks passed locally on July 7, 2026:
-
-- `backend`: `pip install -r requirements.txt`
-- `backend`: `python manage.py check`
-- `backend`: `python manage.py migrate`
-- `frontend`: `npm install`
-- `frontend`: `npm run build`
-- `ai-service`: `pip install -r requirements.txt`
-
-## Common Problems
-
-### `pip install -r requirements.txt` fails in repo root
-
-Reason: there is no root-level `requirements.txt`.
-
-Fix: run the command inside `backend/` or `ai-service/`, or use an explicit path such as:
-
-```powershell
-pip install -r backend\requirements.txt
-```
-
-### `Couldn't import Django`
-
-Reason: backend virtual environment is not activated, or backend dependencies were not installed.
-
-Fix:
-
-```powershell
-cd backend
-.\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-```
-
-### Python version is too old
-
-Reason: the backend depends on Django 6, which requires a newer Python version.
-
-Fix: use Python 3.12+ and preferably Python 3.14 to match the local verified setup and `docker-compose.yml`.
-
-## Docker Compose
-
-The repository also includes `docker-compose.yml`, which uses:
-
-- `python:3.14-slim` for `backend`
-- `python:3.14-slim` for `ai-service`
-- `node:24-alpine` for `frontend`
-
-That file is a useful reference for the expected runtime versions even if you run everything locally.
+未实现的业务能力在文档中统一标记为 `planned`。
