@@ -1,1 +1,1 @@
-"""Placeholder detector modules for the AI service."""
+"""AI service modules for video reading, detection, abnormal behavior analysis and reporting."""
