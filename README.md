@@ -60,7 +60,21 @@ FactoryVision/
 
 ## 本地启动
 
-后端、前端、AI 服务需要分别进入对应目录安装依赖并启动。仓库根目录没有通用 `requirements.txt`。
+推荐使用 Docker Compose 一键启动：
+
+```powershell
+docker compose up --build
+```
+
+启动后访问：
+
+- Frontend: `http://127.0.0.1:5173/`
+- Backend: `http://127.0.0.1:8000/api/health/`
+- Backend Swagger: `http://127.0.0.1:8000/api/docs/`
+- AI Service: `http://127.0.0.1:9000/health`
+- AI Service Docs: `http://127.0.0.1:9000/docs`
+
+如需分别调试服务，可按下面方式手动启动。后端、前端、AI 服务需要分别进入对应目录安装依赖并启动；仓库根目录没有通用 `requirements.txt`。
 
 ### Backend
 
