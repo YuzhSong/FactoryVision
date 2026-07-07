@@ -78,5 +78,10 @@ class Config:
     STREAM_PLAY_URL = os.getenv("STREAM_PLAY_URL", "webrtc://webrtc.rainycode.cn:8443/live/1_detected")
     STREAM_PROCESS_MODE = os.getenv("STREAM_PROCESS_MODE", "detect")
     STREAM_REPORT_TO_BACKEND = os.getenv("STREAM_REPORT_TO_BACKEND", "False").lower() == "true"
-    STREAM_OUTPUT_FPS = float(os.getenv("STREAM_OUTPUT_FPS", "25"))
+    STREAM_OUTPUT_FPS = float(os.getenv("OUTPUT_FPS", os.getenv("STREAM_OUTPUT_FPS", "10")))
     STREAM_FFMPEG_PATH = os.getenv("STREAM_FFMPEG_PATH", "ffmpeg")
+    FRAME_DETECT_INTERVAL = int(os.getenv("FRAME_DETECT_INTERVAL", "5"))
+    MAX_HISTORY_POINTS = int(os.getenv("MAX_HISTORY_POINTS", "5"))
+    INPUT_WIDTH = int(os.getenv("INPUT_WIDTH", "640"))
+    INPUT_HEIGHT = int(os.getenv("INPUT_HEIGHT", "360"))
+    RUNNING_SPEED_THRESHOLD = float(os.getenv("RUNNING_SPEED_THRESHOLD", "120.0"))

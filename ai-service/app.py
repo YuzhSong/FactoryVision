@@ -52,6 +52,8 @@ face_service = FaceRecognitionService(
 frame_processor = FrameProcessor(
     person_detector=person_detector,
     face_service=face_service,
+    history_limit=Config.MAX_HISTORY_POINTS,
+    abnormal_config={"runningSpeedThreshold": Config.RUNNING_SPEED_THRESHOLD},
 )
 
 processed_stream_service = ProcessedStreamService(
@@ -66,6 +68,9 @@ processed_stream_service = ProcessedStreamService(
     reconnect_delay_seconds=Config.STREAM_RECONNECT_DELAY_SECONDS,
     output_fps=Config.STREAM_OUTPUT_FPS,
     ffmpeg_path=Config.STREAM_FFMPEG_PATH,
+    detect_interval=Config.FRAME_DETECT_INTERVAL,
+    input_width=Config.INPUT_WIDTH,
+    input_height=Config.INPUT_HEIGHT,
 )
 
 

@@ -49,6 +49,35 @@ class FrameAnnotator:
         _draw_label(cv2, output, label, x1, y1, color)
         return output
 
+    def draw_debug_overlay(self, frame, metrics: dict | None = None):
+        """Draw stream timing metrics in the top-left corner."""
+        try:
+            import cv2
+        except ImportError as exc:
+            raise RuntimeError("opencv-python is required to draw debug overlay.") from exc
+
+        metrics = metrics or {}
+        lines = [
+            f"time: {metrics.get('time', '')}",
+            f"process_fps: {metrics.get('process_fps', 0)}",
+            f"dropped_frames: {metrics.get('dropped_frames', 0)}",
+            f"frame_age_ms: {metrics.get('frame_age_ms', 0)}",
+            f"playback mode: {metrics.get('playback_mode', 'detected stream')}",
+        ]
+        output = frame.copy()
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        scale = 0.48
+        thickness = 1
+        line_height = 20
+        padding = 8
+        width = 330
+        height = padding * 2 + line_height * len(lines)
+        cv2.rectangle(output, (0, 0), (width, height), (0, 0, 0), -1)
+        for index, line in enumerate(lines):
+            y = padding + 15 + index * line_height
+            cv2.putText(output, line, (padding, y), font, scale, (255, 255, 255), thickness, cv2.LINE_AA)
+        return output
+
 
 def _label_for_result(result: dict):
     """Create compact display label from one AI result."""

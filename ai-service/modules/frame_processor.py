@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+import math
 
 from .abnormal_behavior_service import AbnormalBehaviorService
 
@@ -11,7 +12,7 @@ class FrameProcessor:
         person_detector,
         face_service=None,
         zones: list[dict] | None = None,
-        history_limit: int = 30,
+        history_limit: int = 5,
         abnormal_config: dict | None = None,
     ):
         """Initialize frame processor with detectors, zones, and history settings."""
@@ -73,20 +74,100 @@ class FrameProcessor:
             self.person_detector.reset_tracks()
 
     def _update_track_histories(self, person_results, timestamp: str, frame_index: int | None, fps: float | None):
-        """Append current detections to per-track history for behavior rules."""
+        """Append lightweight per-track history for behavior rules."""
         for detection in person_results:
             track_id = detection.get("trackId")
             if not track_id:
                 continue
 
-            entry = dict(detection)
-            entry["timestamp"] = timestamp
+            bbox = _bbox_to_list(detection.get("bbox"))
+            center = _center_to_list(detection.get("centerPoint"), bbox)
+            speed = self.calculate_speed(track_id, center, timestamp)
+            entry = {
+                "trackId": track_id,
+                "timestamp": timestamp,
+                "center": center,
+                "bbox": bbox,
+            }
             if frame_index is not None:
                 entry["frameIndex"] = frame_index
             if fps is not None:
                 entry["fps"] = fps
+            if speed is not None:
+                entry["speed"] = round(speed, 2)
 
             history = self.track_histories.setdefault(track_id, [])
             history.append(entry)
             if len(history) > self.history_limit:
                 del history[:-self.history_limit]
+
+    def calculate_speed(self, track_id, current_center, current_timestamp):
+        """
+        Calculate pixel speed from lightweight track history.
+
+        The calculation uses the latest stored center point for the same track_id,
+        so it does not require continuous frames or any saved image data.
+        """
+        if not current_center or len(current_center) != 2:
+            return None
+
+        history = self.track_histories.get(track_id, [])
+        if not history:
+            return None
+
+        previous = history[-1]
+        previous_center = previous.get("center")
+        if not previous_center or len(previous_center) != 2:
+            return None
+
+        elapsed_seconds = _elapsed_seconds(previous.get("timestamp"), current_timestamp)
+        if elapsed_seconds <= 0:
+            return None
+
+        return math.dist(previous_center, current_center) / elapsed_seconds
+
+
+def _bbox_to_list(bbox):
+    if isinstance(bbox, dict):
+        return [
+            float(bbox.get("x1", 0)),
+            float(bbox.get("y1", 0)),
+            float(bbox.get("x2", 0)),
+            float(bbox.get("y2", 0)),
+        ]
+    if isinstance(bbox, (list, tuple)) and len(bbox) == 4:
+        return [float(value) for value in bbox]
+    return [0.0, 0.0, 0.0, 0.0]
+
+
+def _center_to_list(center, bbox):
+    if isinstance(center, dict):
+        return [float(center.get("x", 0)), float(center.get("y", 0))]
+    if isinstance(center, (list, tuple)) and len(center) == 2:
+        return [float(center[0]), float(center[1])]
+
+    x1, y1, x2, y2 = bbox
+    return [(x1 + x2) / 2, (y1 + y2) / 2]
+
+
+def _elapsed_seconds(previous_timestamp, current_timestamp):
+    previous = _parse_timestamp(previous_timestamp)
+    current = _parse_timestamp(current_timestamp)
+    if previous is None or current is None:
+        return 0.0
+    return current - previous
+
+
+def _parse_timestamp(value):
+    if isinstance(value, (int, float)):
+        return float(value)
+    if not isinstance(value, str) or not value.strip():
+        return None
+
+    normalized = value.strip()
+    if normalized.endswith("Z"):
+        normalized = f"{normalized[:-1]}+00:00"
+    try:
+        return datetime.fromisoformat(normalized).timestamp()
+    except ValueError:
+        return None

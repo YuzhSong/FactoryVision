@@ -54,8 +54,45 @@ Default demo flow:
 rtmp://81.70.90.222:1935/live/1
   -> AI Service
   -> rtmp://81.70.90.222:1935/live/1_detected
-  -> webrtc://webrtc.rainycode.cn:8443/live/1_detected
+  -> https://webrtc.rainycode.cn:8443/live/1_detected.flv
 ```
+
+The continuous processed stream is optimized for real-time playback rather than
+processing every old frame. It uses two loops:
+
+- Capture loop: continuously reads the raw RTMP stream and overwrites one
+  `latest_frame` slot.
+- Process loop: copies only the newest available frame, processes it, draws
+  boxes/metrics, and pushes it to `rtmp://81.70.90.222:1935/live/1_detected`.
+
+If processing is slower than capture, old unprocessed frames are dropped. This
+prevents the processed stream from drifting tens of seconds behind the phone
+camera. The service exposes `dropped_frames`, `capture_fps`, `process_fps`,
+`process_time_ms`, `latest_frame_age_ms`, and `output_fps` from
+`GET /streams/status`, and overlays the same live debug data on the video.
+
+Detection does not have to run on every output frame. By default the service
+runs heavier detection every 5 input frames and reuses the latest detection
+result for intermediate frames, so the output stream can continue while latency
+stays bounded.
+
+Behavior algorithms can still keep lightweight history. `FrameProcessor` stores
+only recent structured track points per `trackId`:
+
+```python
+track_history = {
+    "t-1": [
+        {
+            "timestamp": "2026-07-08T03:00:00+08:00",
+            "center": [120.0, 240.0],
+            "bbox": [100.0, 120.0, 240.0, 360.0],
+        }
+    ]
+}
+```
+
+Each track keeps only the latest `MAX_HISTORY_POINTS` entries. Full frames and
+image queues are not stored for speed, running, fall, or zone logic.
 
 Use `mode=test` first to verify the whole stream path with a synthetic box:
 
@@ -123,3 +160,9 @@ For camera processing, `POST /process/stream` automatically uses the same backen
 - `STREAM_PLAY_URL`: default `webrtc://webrtc.rainycode.cn:8443/live/1_detected`.
 - `STREAM_PROCESS_MODE`: `test` or `detect`, default `detect`.
 - `STREAM_FFMPEG_PATH`: default `ffmpeg`; required for `/streams/start`.
+- `OUTPUT_FPS` / `STREAM_OUTPUT_FPS`: default `10`.
+- `FRAME_DETECT_INTERVAL`: default `5`; run heavier detection every N input frames.
+- `MAX_HISTORY_POINTS`: default `5`; per-track lightweight history length.
+- `INPUT_WIDTH`: default `640`; resize continuous-stream frames before processing.
+- `INPUT_HEIGHT`: default `360`; resize continuous-stream frames before processing.
+- `RUNNING_SPEED_THRESHOLD`: default `120.0`; pixel/second threshold for running alerts.
