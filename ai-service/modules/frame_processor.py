@@ -4,6 +4,8 @@ from .abnormal_behavior_service import AbnormalBehaviorService
 
 
 class FrameProcessor:
+    """Coordinate person detection, face recognition, and behavior report building."""
+
     def __init__(
         self,
         person_detector,
@@ -12,6 +14,7 @@ class FrameProcessor:
         history_limit: int = 30,
         abnormal_config: dict | None = None,
     ):
+        """Initialize frame processor with detectors, zones, and history settings."""
         self.person_detector = person_detector
         self.face_service = face_service
         self.abnormal_service = AbnormalBehaviorService(zones=zones or [], config=abnormal_config)
@@ -29,6 +32,7 @@ class FrameProcessor:
         fps: float | None = None,
         zones: list[dict] | None = None,
     ):
+        """Process one frame into a unified AI report payload."""
         timestamp = timestamp or datetime.now(timezone.utc).astimezone().isoformat()
         frame_id = frame_id or f"frame-{int(datetime.now(timezone.utc).timestamp() * 1000)}"
 
@@ -63,11 +67,13 @@ class FrameProcessor:
         return report
 
     def reset(self):
+        """Reset track history and person detector tracking state."""
         self.track_histories = {}
         if hasattr(self.person_detector, "reset_tracks"):
             self.person_detector.reset_tracks()
 
     def _update_track_histories(self, person_results, timestamp: str, frame_index: int | None, fps: float | None):
+        """Append current detections to per-track history for behavior rules."""
         for detection in person_results:
             track_id = detection.get("trackId")
             if not track_id:

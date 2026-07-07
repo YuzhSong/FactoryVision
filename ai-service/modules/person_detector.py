@@ -7,12 +7,16 @@ PERSON_CLASS_ID = 0
 
 @dataclass
 class _Track:
+    """Store one lightweight IoU track with bbox and missed-frame count."""
+
     track_id: str
     bbox: tuple[float, float, float, float]
     missed_frames: int = 0
 
 
 class PersonDetector:
+    """Detect person boxes with YOLO and assign lightweight track IDs."""
+
     def __init__(
         self,
         model_path: str,
@@ -25,6 +29,7 @@ class PersonDetector:
         track_iou_threshold: float = 0.3,
         max_missed_frames: int = 15,
     ):
+        """Initialize YOLO detector with model, thresholds, device, and tracking options."""
         self.model_path = model_path
         self.confidence_threshold = confidence_threshold
         self.iou_threshold = iou_threshold
@@ -39,6 +44,7 @@ class PersonDetector:
         self._next_track_number = 1
 
     def load_model(self):
+        """Lazy-load the YOLO model and resolve CUDA/CPU runtime settings."""
         if self.model is not None:
             return self.model
 
@@ -57,6 +63,7 @@ class PersonDetector:
         return self.model
 
     def detect(self, frame, frame_id: str | None = None):
+        """Detect persons in one frame and return PERSON_DETECTION results."""
         model = self.load_model()
         predictions = model.predict(
             source=frame,
@@ -111,10 +118,12 @@ class PersonDetector:
         return results
 
     def reset_tracks(self):
+        """Clear all tracked person IDs."""
         self._tracks = []
         self._next_track_number = 1
 
     def _assign_tracks(self, boxes):
+        """Assign YOLO boxes to existing or new track IDs by IoU."""
         for track in self._tracks:
             track.missed_frames += 1
 
@@ -157,6 +166,7 @@ class PersonDetector:
 
 
 def _iou(box_a, box_b):
+    """Calculate IoU between two boxes in xyxy format."""
     ax1, ay1, ax2, ay2 = box_a
     bx1, by1, bx2, by2 = box_b
 
@@ -179,12 +189,14 @@ def _iou(box_a, box_b):
 
 
 def _ensure_ultralytics_config_dir():
-    from config import Config
+    """Ensure Ultralytics writes settings under ai-service data directory."""
+    from ai_config import Config
 
     Config.ULTRALYTICS_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def _resolve_model_path(model_path: str):
+    """Resolve local model path or known Ultralytics model name."""
     path = Path(model_path)
     if path.exists():
         return str(path)
@@ -196,6 +208,7 @@ def _resolve_model_path(model_path: str):
 
 
 def _resolve_device(device: str):
+    """Resolve 'auto' device to cuda:0 when torch CUDA is available."""
     if device != "auto":
         return device
 
@@ -208,6 +221,7 @@ def _resolve_device(device: str):
 
 
 def _resolve_half_precision(value, device: str):
+    """Enable half precision only when requested and running on CUDA."""
     if isinstance(value, bool):
         return value and device.startswith("cuda")
 
@@ -218,6 +232,7 @@ def _resolve_half_precision(value, device: str):
 
 
 def _configure_cuda_runtime(device: str, cudnn_benchmark: bool):
+    """Enable CUDA runtime optimizations when using a CUDA device."""
     if not device.startswith("cuda"):
         return
 

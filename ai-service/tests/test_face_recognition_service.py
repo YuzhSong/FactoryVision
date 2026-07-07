@@ -8,7 +8,10 @@ from modules.face_recognition_service import FaceRecognitionService, _should_use
 
 
 class FaceRecognitionServiceTests(unittest.TestCase):
+    """Test face-library loading and matching helpers."""
+
     def test_load_face_library_expands_employee_face_features(self):
+        """Verify nested faceFeatures become employee FaceRecord entries."""
         service = FaceRecognitionService(similarity_threshold=0.45)
 
         result = service.load_face_library(
@@ -31,6 +34,7 @@ class FaceRecognitionServiceTests(unittest.TestCase):
         self.assertEqual(service.face_records[0].employee_no, "E001")
 
     def test_match_returns_best_employee_feature(self):
+        """Verify best cosine-similarity employee is selected."""
         service = FaceRecognitionService(similarity_threshold=0.45)
         service.load_face_library(
             records=[
@@ -45,6 +49,7 @@ class FaceRecognitionServiceTests(unittest.TestCase):
         self.assertGreater(similarity, 0.99)
 
     def test_existing_relative_file_takes_precedence_over_image_base_url(self):
+        """Verify local relative file wins over configured image base URL."""
         with tempfile.TemporaryDirectory() as temp_dir:
             base_dir = Path(temp_dir)
             (base_dir / "employee.jpg").write_bytes(b"not-a-real-image")

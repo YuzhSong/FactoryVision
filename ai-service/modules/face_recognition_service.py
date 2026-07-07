@@ -10,6 +10,8 @@ SUPPORTED_IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
 
 @dataclass
 class FaceRecord:
+    """Store one employee face embedding and identity metadata."""
+
     employee_id: object
     employee_no: str | None
     name: str | None
@@ -18,6 +20,8 @@ class FaceRecord:
 
 
 class FaceRecognitionService:
+    """Load employee face library and recognize faces with InsightFace."""
+
     def __init__(
         self,
         model_name: str = "buffalo_l",
@@ -29,6 +33,7 @@ class FaceRecognitionService:
         image_dir: str | Path | None = None,
         image_base_url: str = "",
     ):
+        """Initialize InsightFace settings and face-library paths."""
         self.model_name = model_name
         self.model_root = Path(model_root) if model_root else None
         self.similarity_threshold = similarity_threshold
@@ -50,6 +55,7 @@ class FaceRecognitionService:
         image_dir: str | Path | None = None,
         image_base_url: str | None = None,
     ):
+        """Load face records from direct records, employee items, JSON, or image directory."""
         self.face_records = []
         self.load_errors = []
         image_base_url = self.image_base_url if image_base_url is None else image_base_url
@@ -76,6 +82,7 @@ class FaceRecognitionService:
         }
 
     def recognize(self, frame, person_detections: list[dict] | None = None, frame_id: str | None = None):
+        """Recognize faces in frame and bind results to person track IDs when provided."""
         faces = self._detect_faces(frame)
         if not faces:
             return []
@@ -123,6 +130,7 @@ class FaceRecognitionService:
         return results
 
     def extract_feature(self, image):
+        """Extract one normalized face feature from an image path or frame."""
         frame = self._load_image(image) if isinstance(image, (str, Path)) else image
         faces = self._detect_faces(frame)
         if not faces:
@@ -130,6 +138,7 @@ class FaceRecognitionService:
         return self._face_embedding(faces[0])
 
     def status(self):
+        """Return model, provider, threshold, and loaded face-library status."""
         return {
             "loadedFaces": len(self.face_records),
             "modelLoaded": self.app is not None,
@@ -140,6 +149,7 @@ class FaceRecognitionService:
         }
 
     def _load_json_library(self, library_path: Path, image_base_url: str):
+        """Load face records from one JSON library file."""
         try:
             with library_path.open("r", encoding="utf-8") as file:
                 payload = json.load(file)
@@ -155,6 +165,7 @@ class FaceRecognitionService:
         )
 
     def _load_image_directory(self, image_dir: Path):
+        """Load employee face images from a directory tree."""
         metadata = _load_metadata(image_dir / "metadata.json")
         items = []
         for image_path in image_dir.rglob("*"):
@@ -174,6 +185,7 @@ class FaceRecognitionService:
         image_base_url: str = "",
         base_dir: Path | None = None,
     ):
+        """Expand and load a list of employee or face record dictionaries."""
         for item in items:
             for expanded in _expand_record_item(item):
                 try:
@@ -183,6 +195,7 @@ class FaceRecognitionService:
                     self.load_errors.append(f"{identifier}: {exc}")
 
     def _load_single_record(self, item: dict, image_base_url: str = "", base_dir: Path | None = None):
+        """Load one FaceRecord from feature vector or image source."""
         employee_id = _first(item, "employeeId", "employee_id", "id")
         employee_no = _first(item, "employeeNo", "employee_no", "number", "no")
         name = _first(item, "name", "employeeName", "employee_name")
@@ -232,11 +245,13 @@ class FaceRecognitionService:
         )
 
     def _detect_faces(self, frame):
+        """Run InsightFace detection on one frame and sort faces by area."""
         app = self._load_model()
         faces = app.get(frame)
         return sorted(faces, key=lambda face: _bbox_area(face.bbox), reverse=True)
 
     def _load_model(self):
+        """Lazy-load InsightFace FaceAnalysis model with selected providers."""
         if self.app is not None:
             return self.app
 
@@ -267,6 +282,7 @@ class FaceRecognitionService:
         return self.app
 
     def _load_image(self, image_source, image_base_url: str = "", base_dir: Path | None = None):
+        """Load image from frame, path, base64 data, or URL."""
         import cv2
         import numpy as np
         import requests
@@ -304,12 +320,14 @@ class FaceRecognitionService:
         return frame
 
     def _face_embedding(self, face):
+        """Return normalized embedding from an InsightFace face object."""
         feature = getattr(face, "normed_embedding", None)
         if feature is None:
             feature = getattr(face, "embedding", None)
         return _normalize_vector(feature)
 
     def _match(self, feature):
+        """Find the most similar loaded FaceRecord for one feature."""
         if not self.face_records:
             return None, 0.0
 
@@ -326,6 +344,7 @@ class FaceRecognitionService:
         return best_record, max(0.0, best_similarity)
 
     def _assign_faces(self, faces, person_detections: list[dict]):
+        """Assign detected faces to person detections by containment and IoU."""
         if not person_detections:
             return [(face, None) for face in faces]
 
@@ -362,6 +381,7 @@ class FaceRecognitionService:
 
 
 def _resolve_providers(provider: str):
+    """Resolve InsightFace ONNXRuntime providers and ctx_id from provider option."""
     try:
         import onnxruntime as ort
 
@@ -380,6 +400,7 @@ def _resolve_providers(provider: str):
 
 
 def _extract_items(payload):
+    """Extract item list from common face-library response shapes."""
     data = payload.get("data", payload) if isinstance(payload, dict) else payload
     if isinstance(data, list):
         return data
@@ -393,6 +414,7 @@ def _extract_items(payload):
 
 
 def _expand_record_item(item):
+    """Expand employee records containing nested face/image arrays."""
     if not isinstance(item, dict):
         return []
 
@@ -442,11 +464,13 @@ def _expand_record_item(item):
 
 
 def _preserve_employee_identity(item):
+    """Keep parent employee id as employeeId before merging nested face feature id."""
     if "id" in item and "employeeId" not in item and "employee_id" not in item:
         item["employeeId"] = item["id"]
 
 
 def _load_metadata(path: Path):
+    """Load optional metadata.json for local employee face folders."""
     if not path.exists():
         return {}
     try:
@@ -461,6 +485,7 @@ def _load_metadata(path: Path):
 
 
 def _metadata_from_key(key: str):
+    """Infer employee metadata from folder/file key like '1_E001_Name'."""
     parts = [part for part in key.split("_") if part]
     data = {}
     if parts:
@@ -473,6 +498,7 @@ def _metadata_from_key(key: str):
 
 
 def _first(mapping, *keys, default=None):
+    """Return first non-empty mapping value among keys."""
     for key in keys:
         value = mapping.get(key) if isinstance(mapping, dict) else None
         if value not in (None, ""):
@@ -481,6 +507,7 @@ def _first(mapping, *keys, default=None):
 
 
 def _normalize_vector(feature):
+    """Convert feature list/string/array into unit-length float32 vector."""
     import numpy as np
 
     if isinstance(feature, str):
@@ -494,6 +521,7 @@ def _normalize_vector(feature):
 
 
 def _looks_like_base64(value: str):
+    """Heuristically detect base64 image content."""
     if len(value) < 64:
         return False
     allowed = set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=\n\r")
@@ -501,14 +529,17 @@ def _looks_like_base64(value: str):
 
 
 def _is_data_url(value: str):
+    """Return whether value is a data URL."""
     return value.startswith("data:image") or value.startswith("data:application/octet-stream")
 
 
 def _is_remote_url(value: str):
+    """Return whether value is an HTTP or HTTPS URL."""
     return value.startswith(("http://", "https://"))
 
 
 def _should_use_base_url(source: str, image_base_url: str, base_dir: Path | None):
+    """Decide whether a relative image source should use image_base_url."""
     if not image_base_url:
         return False
 
@@ -523,11 +554,13 @@ def _should_use_base_url(source: str, image_base_url: str, base_dir: Path | None
 
 
 def _bbox_tuple(bbox):
+    """Convert bbox-like object to xyxy float tuple."""
     values = [float(value) for value in bbox[:4]]
     return values[0], values[1], values[2], values[3]
 
 
 def _format_bbox(bbox):
+    """Format bbox as rounded JSON object."""
     x1, y1, x2, y2 = _bbox_tuple(bbox)
     return {
         "x1": round(x1, 2),
@@ -538,11 +571,13 @@ def _format_bbox(bbox):
 
 
 def _bbox_area(bbox):
+    """Calculate bbox area from xyxy coordinates."""
     x1, y1, x2, y2 = _bbox_tuple(bbox)
     return max(0.0, x2 - x1) * max(0.0, y2 - y1)
 
 
 def _detection_bbox(detection):
+    """Extract xyxy bbox tuple from a detection dict."""
     bbox = detection.get("bbox") if isinstance(detection, dict) else None
     if isinstance(bbox, dict):
         return (
@@ -557,12 +592,14 @@ def _detection_bbox(detection):
 
 
 def _point_inside(point, bbox):
+    """Return whether point is inside bbox."""
     x, y = point
     x1, y1, x2, y2 = bbox
     return x1 <= x <= x2 and y1 <= y <= y2
 
 
 def _box_iou(box_a, box_b):
+    """Calculate IoU for two xyxy boxes."""
     ax1, ay1, ax2, ay2 = box_a
     bx1, by1, bx2, by2 = box_b
     inter_x1 = max(ax1, bx1)

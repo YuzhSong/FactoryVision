@@ -7,13 +7,14 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from config import Config
+from ai_config import Config
 from modules.frame_processor import FrameProcessor
 from modules.person_detector import PersonDetector
 from modules.stream_reader import StreamReader
 
 
 def main():
+    """Check local video reading through the frame processor and YOLO detector."""
     with tempfile.TemporaryDirectory() as temp_dir:
         video_path = Path(temp_dir) / "blank-stream.avi"
         _write_blank_video(video_path)
@@ -56,6 +57,7 @@ def main():
 
 
 def _write_blank_video(video_path: Path):
+    """Write a small blank AVI video for local stream pipeline testing."""
     writer = cv2.VideoWriter(
         str(video_path),
         cv2.VideoWriter_fourcc(*"MJPG"),
