@@ -933,7 +933,20 @@ GET /api/ai-results/
     {
       "type": "PERSON_DETECTION",
       "trackId": "t-1",
-      "bbox": [100, 120, 240, 420],
+      "bbox": {
+        "x1": 100,
+        "y1": 120,
+        "x2": 240,
+        "y2": 420
+      },
+      "centerPoint": {
+        "x": 170,
+        "y": 270
+      },
+      "footPoint": {
+        "x": 170,
+        "y": 420
+      },
       "confidence": 0.94
     }
   ]
