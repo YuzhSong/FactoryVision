@@ -1,6 +1,6 @@
 # AI Service
 
-Flask-based AI service for smart factory video-frame analysis. This service consumes camera stream URLs or uploaded images, runs CUDA-accelerated YOLO person detection, optionally runs InsightFace employee recognition, and reports structured AI results to the backend API.
+FastAPI-based AI service for smart factory video-frame analysis. This service consumes camera stream URLs or uploaded images, runs CUDA-accelerated YOLO person detection, optionally runs InsightFace employee recognition, and reports structured AI results to the backend API.
 
 ## Boundary
 
@@ -17,7 +17,7 @@ py -3.14 -m venv .venv
 python -m pip install --upgrade pip
 pip install -r requirements.txt
 pip install -r requirements-cuda.txt
-python app.py
+uvicorn app:app --host 0.0.0.0 --port 9000 --reload
 ```
 
 The CUDA requirements install PyTorch wheels for CUDA 12.8. On an RTX 4060 environment, `YOLO_DEVICE=auto` should resolve to `cuda:0`.
@@ -33,6 +33,8 @@ The CUDA requirements install PyTorch wheels for CUDA 12.8. On an RTX 4060 envir
 ## Endpoints
 
 - `GET /health`: service status and face-library status.
+- `GET /docs`: Swagger UI.
+- `GET /openapi.json`: OpenAPI schema.
 - `GET /dependencies`: Python package and CUDA availability check.
 - `GET /faces/status`: current InsightFace library/model status.
 - `POST /faces/reload`: load employees from local JSON/images or backend.

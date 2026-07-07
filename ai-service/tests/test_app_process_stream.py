@@ -1,6 +1,8 @@
 import unittest
 from unittest.mock import patch
 
+from fastapi.testclient import TestClient
+
 import app as app_module
 
 
@@ -97,12 +99,12 @@ class ProcessStreamEndpointTests(unittest.TestCase):
         ), patch.object(app_module, "StreamReader", _FakeStreamReader), patch.object(
             app_module, "frame_processor", _FakeFrameProcessor()
         ):
-            response = app_module.app.test_client().post(
+            response = TestClient(app_module.app).post(
                 "/process/stream",
                 json={"cameraId": 1, "maxFrames": 1, "reportToBackend": True},
             )
 
-        payload = response.get_json()
+        payload = response.json()
         self.assertEqual(response.status_code, 200)
         self.assertEqual(payload["data"]["streamUrl"], "fake-stream-url")
         self.assertEqual(payload["data"]["faceLibrary"]["count"], 1)

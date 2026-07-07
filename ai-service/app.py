@@ -1,6 +1,9 @@
 from datetime import datetime, timezone
+from typing import Any
 
-from flask import Flask, jsonify, request
+from fastapi import FastAPI, File, Form, Request, UploadFile
+from fastapi.responses import JSONResponse
+import uvicorn
 
 from config import Config
 from modules.backend_client import BackendClient
@@ -51,85 +54,91 @@ frame_processor = FrameProcessor(
 )
 
 
-def create_app():
-    app = Flask(__name__)
-    app.config.from_object(Config)
+def create_app() -> FastAPI:
+    app = FastAPI(
+        title="Smart Factory AI Service",
+        description="Video-frame analysis, person detection, face recognition, and behavior reporting service.",
+        version="0.2.0",
+    )
 
-    @app.get("/health")
+    @app.get("/health", tags=["system"])
     def health_check():
-        return jsonify(
-            {
-                "service": app.config["SERVICE_NAME"],
-                "status": "ok",
-                "stage": "cuda-yolo-frame-pipeline-ready",
-                "faceLibrary": face_service.status(),
-            }
-        )
+        return {
+            "service": Config.SERVICE_NAME,
+            "status": "ok",
+            "stage": "cuda-yolo-frame-pipeline-ready",
+            "docs": "/docs",
+            "faceLibrary": face_service.status(),
+        }
 
-    @app.get("/dependencies")
+    @app.get("/dependencies", tags=["system"])
     def dependencies_check():
-        return jsonify(
-            {
-                "service": app.config["SERVICE_NAME"],
-                "dependencies": check_dependencies(),
-            }
-        )
+        return {
+            "service": Config.SERVICE_NAME,
+            "dependencies": check_dependencies(),
+        }
 
-    @app.get("/faces/status")
+    @app.get("/faces/status", tags=["faces"])
     def face_status():
-        return jsonify(
-            {
-                "code": 200,
-                "message": "success",
-                "data": face_service.status(),
-            }
-        )
+        return {"code": 200, "message": "success", "data": face_service.status()}
 
-    @app.post("/faces/reload")
-    def reload_faces():
+    @app.post("/faces/reload", tags=["faces"])
+    async def reload_faces(request: Request):
         try:
-            payload = _payload()
+            payload = await _payload(request)
             result = _reload_face_library(payload)
         except Exception as exc:
-            return jsonify({"code": 500, "message": str(exc), "data": None}), 500
+            return _error_response(exc)
 
-        return jsonify({"code": 200, "message": "success", "data": result})
+        return {"code": 200, "message": "success", "data": result}
 
-    @app.post("/detect/person")
-    def detect_person():
+    @app.post("/detect/person", tags=["detection"])
+    async def detect_person(
+        request: Request,
+        image: UploadFile | None = File(default=None),
+        camera_id_form: Any = Form(default=None, alias="cameraId"),
+        frame_id_form: Any = Form(default=None, alias="frameId"),
+        image_path_form: str | None = Form(default=None, alias="imagePath"),
+    ):
         try:
-            frame = _read_frame_from_request()
-            payload = _payload()
-            frame_id = request.form.get("frameId") or payload.get("frameId")
-            camera_id = request.form.get("cameraId") or payload.get("cameraId")
+            payload = await _payload(request)
+            frame = await _read_frame(image=image, image_path=image_path_form or payload.get("imagePath"))
+            frame_id = frame_id_form or payload.get("frameId")
+            camera_id = camera_id_form or payload.get("cameraId")
             results = person_detector.detect(frame, frame_id=frame_id)
         except Exception as exc:
-            return jsonify({"code": 500, "message": str(exc), "data": None}), 500
+            return _error_response(exc)
 
-        return jsonify(
-            {
-                "code": 200,
-                "message": "success",
-                "data": {
-                    "cameraId": _to_number(camera_id),
-                    "frameId": frame_id,
-                    "timestamp": datetime.now(timezone.utc).isoformat(),
-                    "results": results,
-                },
-            }
-        )
+        return {
+            "code": 200,
+            "message": "success",
+            "data": {
+                "cameraId": _to_number(camera_id),
+                "frameId": frame_id,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "results": results,
+            },
+        }
 
-    @app.post("/detect/frame")
-    def detect_frame():
+    @app.post("/detect/frame", tags=["detection"])
+    async def detect_frame(
+        request: Request,
+        image: UploadFile | None = File(default=None),
+        camera_id_form: Any = Form(default=None, alias="cameraId"),
+        frame_id_form: Any = Form(default=None, alias="frameId"),
+        image_path_form: str | None = Form(default=None, alias="imagePath"),
+        include_faces_form: Any = Form(default=None, alias="includeFaces"),
+        reload_faces_form: Any = Form(default=None, alias="reloadFaces"),
+    ):
         try:
-            frame = _read_frame_from_request()
-            payload = _payload()
-            if _to_bool(payload.get("reloadFaces") or request.form.get("reloadFaces")):
+            payload = await _payload(request)
+            frame = await _read_frame(image=image, image_path=image_path_form or payload.get("imagePath"))
+            if _to_bool(_first_present(payload.get("reloadFaces"), reload_faces_form)):
                 _reload_face_library(payload)
 
-            camera_id = request.form.get("cameraId") or payload.get("cameraId")
-            frame_id = request.form.get("frameId") or payload.get("frameId")
-            include_faces = _to_bool(payload.get("includeFaces", request.form.get("includeFaces", True)))
+            camera_id = camera_id_form or payload.get("cameraId")
+            frame_id = frame_id_form or payload.get("frameId")
+            include_faces = _to_bool(_first_present(payload.get("includeFaces"), include_faces_form, True))
             zones = _resolve_zones(payload, camera_id)
             report = frame_processor.process_frame(
                 frame,
@@ -139,15 +148,15 @@ def create_app():
                 zones=zones,
             )
         except Exception as exc:
-            return jsonify({"code": 500, "message": str(exc), "data": None}), 500
+            return _error_response(exc)
 
-        return jsonify({"code": 200, "message": "success", "data": report})
+        return {"code": 200, "message": "success", "data": report}
 
-    @app.post("/process/stream")
-    def process_stream():
+    @app.post("/process/stream", tags=["stream"])
+    async def process_stream(request: Request):
         reader = None
         try:
-            payload = _payload()
+            payload = await _payload(request)
             stream_url, camera_id = _resolve_stream_source(payload)
             max_frames = _bounded_frame_count(payload.get("maxFrames", 1))
             sample_interval = int(payload.get("sampleInterval", Config.STREAM_SAMPLE_INTERVAL) or 1)
@@ -178,25 +187,23 @@ def create_app():
                 if report_to_backend:
                     report_responses.append(backend_client.report_ai_results(report))
         except Exception as exc:
-            return jsonify({"code": 500, "message": str(exc), "data": None}), 500
+            return _error_response(exc)
         finally:
             if reader is not None:
                 reader.close_stream()
 
-        return jsonify(
-            {
-                "code": 200,
-                "message": "success",
-                "data": {
-                    "cameraId": _to_number(camera_id),
-                    "streamUrl": stream_url,
-                    "processedFrames": len(reports),
-                    "faceLibrary": face_library_result,
-                    "reports": reports,
-                    "reportResponses": report_responses,
-                },
-            }
-        )
+        return {
+            "code": 200,
+            "message": "success",
+            "data": {
+                "cameraId": _to_number(camera_id),
+                "streamUrl": stream_url,
+                "processedFrames": len(reports),
+                "faceLibrary": face_library_result,
+                "reports": reports,
+                "reportResponses": report_responses,
+            },
+        }
 
     return app
 
@@ -204,11 +211,16 @@ def create_app():
 app = create_app()
 
 
-def _payload():
-    return request.get_json(silent=True) or {}
+async def _payload(request: Request) -> dict:
+    content_type = request.headers.get("content-type", "")
+    if "application/json" not in content_type:
+        return {}
+
+    payload = await request.json()
+    return payload if isinstance(payload, dict) else {}
 
 
-def _read_frame_from_request():
+async def _read_frame(image: UploadFile | None = None, image_path: str | None = None):
     try:
         import cv2
         import numpy as np
@@ -217,16 +229,14 @@ def _read_frame_from_request():
             "opencv-python and numpy are required. Run `pip install -r requirements.txt` in ai-service."
         ) from exc
 
-    if "image" in request.files:
-        image_bytes = request.files["image"].read()
+    if image is not None:
+        image_bytes = await image.read()
         buffer = np.frombuffer(image_bytes, dtype=np.uint8)
         frame = cv2.imdecode(buffer, cv2.IMREAD_COLOR)
         if frame is None:
             raise ValueError("Unable to decode uploaded image.")
         return frame
 
-    payload = request.get_json(silent=True) or {}
-    image_path = payload.get("imagePath") or request.form.get("imagePath")
     if not image_path:
         raise ValueError("Provide an uploaded `image` file or an `imagePath`.")
 
@@ -342,5 +352,24 @@ def _to_number(value):
         return value
 
 
+def _first_present(*values):
+    for value in values:
+        if value is not None:
+            return value
+    return None
+
+
+def _error_response(exc: Exception):
+    return JSONResponse(
+        status_code=500,
+        content={"code": 500, "message": str(exc), "data": None},
+    )
+
+
 if __name__ == "__main__":
-    app.run(host=Config.HOST, port=Config.PORT, debug=Config.DEBUG)
+    uvicorn.run(
+        "app:app",
+        host=Config.HOST,
+        port=Config.PORT,
+        reload=Config.DEBUG,
+    )
