@@ -1,0 +1,14 @@
+# Optional NVIDIA CUDA acceleration for local development.
+# Install after requirements.txt on machines with an NVIDIA GPU.
+#
+# Example:
+#   .\.venv\Scripts\python.exe -m pip install -r requirements-cuda.txt
+
+--index-url https://download.pytorch.org/whl/cu128
+torch==2.11.0+cu128
+torchvision==0.26.0+cu128
+torchaudio==2.11.0+cu128
+
+# Keep shared CV/image dependencies compatible with requirements.txt.
+numpy>=2.2,<2.3
+Pillow>=11.0,<12.0

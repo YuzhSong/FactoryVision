@@ -1,0 +1,15 @@
+.venv/
+__pycache__/
+*.py[cod]
+
+# Runtime caches that should stay local to ai-service.
+data/matplotlib/
+data/torch/
+data/ultralytics/
+
+# Model weights are downloaded or provided separately.
+*.pt
+*.onnx
+models/**/*.pt
+models/**/*.onnx
+models/**/*.zip
