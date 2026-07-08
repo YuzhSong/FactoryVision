@@ -17,6 +17,7 @@ class _FakeBackendClient:
     def __init__(self):
         """Initialize fake backend state."""
         self.report_payloads = []
+        self.realtime_payloads = []
         self.face_status = "not-called"
 
     def find_camera(self, camera_id):
@@ -43,6 +44,11 @@ class _FakeBackendClient:
         """Capture report payload and return fake backend response."""
         self.report_payloads.append(payload)
         return {"code": 200, "data": {"acceptedResults": len(payload.get("results", []))}}
+
+    def report_realtime_frame_results(self, payload):
+        """Capture realtime frame payload and return fake backend response."""
+        self.realtime_payloads.append(payload)
+        return {"code": 200, "data": {"broadcast": True}}
 
 
 class _FakeFaceService:
@@ -130,7 +136,7 @@ class ProcessStreamEndpointTests(unittest.TestCase):
         ):
             response = TestClient(app_module.app).post(
                 "/process/stream",
-                json={"cameraId": 1, "maxFrames": 1, "reportToBackend": True},
+                json={"cameraId": 1, "maxFrames": 1, "reportToBackend": True, "reportRealtimeToBackend": True},
             )
 
         payload = response.json()
@@ -139,6 +145,8 @@ class ProcessStreamEndpointTests(unittest.TestCase):
         self.assertEqual(payload["data"]["faceLibrary"]["count"], 1)
         self.assertEqual(fake_face_service.loaded_items[0]["employeeNo"], "E001")
         self.assertEqual(fake_backend.report_payloads[0]["cameraId"], 1)
+        self.assertEqual(fake_backend.realtime_payloads[0]["cameraId"], 1)
+        self.assertIn("playbackUrl", fake_backend.realtime_payloads[0])
         self.assertEqual(_FakeStreamReader.opened_url, "fake-stream-url")
 
 

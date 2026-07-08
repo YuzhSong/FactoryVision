@@ -6,6 +6,7 @@ import threading
 import traceback
 
 from ai_config import Config
+from .event_media_recorder import EventMediaRecorder
 from .frame_annotator import FrameAnnotator
 from .stream_reader import StreamReader
 from .stream_writer import FFmpegStreamWriter
@@ -36,6 +37,8 @@ class StreamTaskStatus:
     process_time_ms: float = 0.0
     latest_frame_age_ms: float = 0.0
     output_fps: float = Config.STREAM_OUTPUT_FPS
+    event_media_count: int = 0
+    last_event_media: dict | None = None
 
 
 @dataclass
@@ -60,6 +63,7 @@ class ProcessedStreamService:
         default_play_url: str = Config.STREAM_PLAY_URL,
         default_mode: str = Config.STREAM_PROCESS_MODE,
         default_report_to_backend: bool = Config.STREAM_REPORT_TO_BACKEND,
+        default_report_realtime_to_backend: bool = Config.STREAM_REPORT_REALTIME_TO_BACKEND,
         reconnect_attempts: int = Config.STREAM_RECONNECT_ATTEMPTS,
         reconnect_delay_seconds: float = Config.STREAM_RECONNECT_DELAY_SECONDS,
         output_fps: float = Config.STREAM_OUTPUT_FPS,
@@ -67,6 +71,12 @@ class ProcessedStreamService:
         detect_interval: int = Config.FRAME_DETECT_INTERVAL,
         input_width: int = Config.INPUT_WIDTH,
         input_height: int = Config.INPUT_HEIGHT,
+        event_media_recorder: EventMediaRecorder | None = None,
+        event_media_enabled: bool = Config.EVENT_MEDIA_ENABLED,
+        event_media_dir: str = Config.EVENT_MEDIA_DIR,
+        event_media_pre_seconds: float = Config.EVENT_MEDIA_PRE_SECONDS,
+        event_media_post_seconds: float = Config.EVENT_MEDIA_POST_SECONDS,
+        event_media_cooldown_seconds: float = Config.EVENT_MEDIA_COOLDOWN_SECONDS,
     ):
         self.frame_processor = frame_processor
         self.backend_client = backend_client
@@ -76,6 +86,7 @@ class ProcessedStreamService:
         self.default_play_url = default_play_url
         self.default_mode = default_mode
         self.default_report_to_backend = default_report_to_backend
+        self.default_report_realtime_to_backend = default_report_realtime_to_backend
         self.reconnect_attempts = reconnect_attempts
         self.reconnect_delay_seconds = reconnect_delay_seconds
         self.output_fps = output_fps
@@ -83,6 +94,14 @@ class ProcessedStreamService:
         self.detect_interval = max(1, int(detect_interval or 1))
         self.input_width = max(0, int(input_width or 0))
         self.input_height = max(0, int(input_height or 0))
+        self.event_media_recorder = event_media_recorder or EventMediaRecorder(
+            output_dir=event_media_dir,
+            enabled=event_media_enabled,
+            fps=output_fps or 10.0,
+            pre_event_seconds=event_media_pre_seconds,
+            post_event_seconds=event_media_post_seconds,
+            cooldown_seconds=event_media_cooldown_seconds,
+        )
         self._status = StreamTaskStatus(
             input_url=default_input_url,
             output_url=default_output_url,
@@ -125,7 +144,11 @@ class ProcessedStreamService:
                 last_frame_id=None,
                 last_error=None,
                 output_fps=self.output_fps,
+                event_media_count=0,
+                last_event_media=None,
             )
+            if self.event_media_recorder is not None:
+                self.event_media_recorder.reset()
             self._thread = threading.Thread(target=self._run, args=(dict(payload),), daemon=True)
             self._thread.start()
             snapshot = asdict(self._status)
@@ -195,6 +218,8 @@ class ProcessedStreamService:
                 self._frame_condition.notify_all()
             if self._capture_thread is not None and self._capture_thread.is_alive():
                 self._capture_thread.join(timeout=5)
+            if self.event_media_recorder is not None:
+                self.event_media_recorder.flush()
             if writer is not None:
                 writer.close()
             if reader is not None:
@@ -233,6 +258,9 @@ class ProcessedStreamService:
     def _process_loop(self, payload: dict, writer, output_fps: float):
         include_faces = _to_bool(payload.get("includeFaces", True))
         report_to_backend = _to_bool(payload.get("reportToBackend", self.default_report_to_backend))
+        report_realtime_to_backend = _to_bool(
+            payload.get("reportRealtimeToBackend", self.default_report_realtime_to_backend)
+        )
         max_frames = _optional_positive_int(payload.get("maxFrames"))
         zones = payload.get("zones") if isinstance(payload.get("zones"), list) else None
         last_report = {"results": []}
@@ -254,6 +282,7 @@ class ProcessedStreamService:
                 writer,
                 include_faces,
                 report_to_backend,
+                report_realtime_to_backend,
                 zones,
                 last_report,
             )
@@ -291,6 +320,7 @@ class ProcessedStreamService:
         writer,
         include_faces: bool,
         report_to_backend: bool,
+        report_realtime_to_backend: bool,
         zones: list[dict] | None,
         last_report: dict,
     ):
@@ -318,8 +348,17 @@ class ProcessedStreamService:
 
         overlay = self._overlay_metrics(frame_age_ms=(time.monotonic() - snapshot.captured_at) * 1000)
         output_frame = self.annotator.draw_debug_overlay(output_frame, overlay)
+        event_media = self._record_event_media(
+            output_frame=output_frame,
+            packet=packet,
+            report=report if should_detect else {"results": []},
+        )
+        if event_media:
+            report["eventMedia"] = list(report.get("eventMedia", [])) + event_media
         if should_detect and report_to_backend and report.get("results") and self.backend_client is not None:
             self.backend_client.report_ai_results(report)
+        if should_detect and report_realtime_to_backend and self.backend_client is not None:
+            self.backend_client.report_realtime_frame_results(self._with_playback_url(report))
         return output_frame, last_report
 
     def _publish_latest_frame(self, packet):
@@ -357,6 +396,22 @@ class ProcessedStreamService:
             self._status.process_time_ms = round(process_time_ms, 2)
             self._status.latest_frame_age_ms = round(frame_age_ms, 2)
 
+    def _record_event_media(self, output_frame, packet, report):
+        if self.event_media_recorder is None:
+            return []
+
+        event_media = self.event_media_recorder.record_frame(
+            output_frame,
+            frame_id=packet.frame_id,
+            timestamp=packet.timestamp,
+            report=report,
+        )
+        if event_media:
+            with self._lock:
+                self._status.event_media_count += len(event_media)
+                self._status.last_event_media = event_media[-1]
+        return event_media
+
     def _prepare_packet(self, packet):
         if not self.input_width or not self.input_height:
             return packet
@@ -387,6 +442,12 @@ class ProcessedStreamService:
         if self.output_fps > 0:
             return self.output_fps
         return input_fps or 20
+
+    def _with_playback_url(self, report):
+        payload = dict(report)
+        if self._status.play_url:
+            payload["playbackUrl"] = self._status.play_url
+        return payload
 
 
 def _now():

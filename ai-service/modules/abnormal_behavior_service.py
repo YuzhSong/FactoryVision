@@ -15,6 +15,9 @@ class AbnormalBehaviorService:
         self.fall_detector = FallDetector(
             ratio_threshold=config.get("fallRatioThreshold", 1.2),
             confirm_frames=config.get("fallConfirmFrames", 5),
+            min_confidence=config.get("fallMinConfidence", 0.6),
+            pose_horizontal_angle_threshold=config.get("fallPoseHorizontalAngleThreshold", 35.0),
+            pose_min_keypoint_confidence=config.get("fallPoseMinKeypointConfidence", 0.3),
         )
         self.running_detector = RunningDetector(
             speed_threshold=config.get("runningSpeedThreshold", 30.0),
@@ -22,6 +25,13 @@ class AbnormalBehaviorService:
         )
         self.helmet_detector = HelmetDetector(
             confidence_threshold=config.get("helmetConfidenceThreshold", 0.6),
+            model_path=config.get("helmetModelPath"),
+            detection_confidence_threshold=config.get("helmetDetectionConfidenceThreshold", 0.35),
+            iou_threshold=config.get("helmetIouThreshold", 0.45),
+            device=config.get("helmetDevice", "auto"),
+            image_size=config.get("helmetImageSize", 640),
+            half_precision=config.get("helmetHalfPrecision", "auto"),
+            cudnn_benchmark=config.get("helmetCudnnBenchmark", True),
         )
         self.zone_detector = ZoneDetector(zones=zones)
 
