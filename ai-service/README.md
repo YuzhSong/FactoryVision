@@ -161,6 +161,11 @@ For camera processing, `POST /process/stream` automatically uses the same backen
 - `FACE_ENROLLMENT_MIN_QUALITY_SCORE`: default `0.5`; reject low-confidence enrollment faces when detector score is available.
 - `FACE_ENROLLMENT_MIN_FACE_SIZE`: default `40`; reject enrollment faces whose smaller bbox side is below this pixel size.
 - `FACE_ENROLLMENT_MAX_POSE_YAW`: default `75`; reject enrollment faces with excessive yaw when pose metadata is available.
+- `FACE_LIVENESS_ENABLED`: default `True`; run passive RGB liveness before accepting realtime face matches.
+- `FACE_LIVENESS_THRESHOLD`: default `0.55`; minimum liveness score required for realtime face recognition.
+- `FACE_LIVENESS_MIN_FACE_SIZE`: default `48`; minimum face crop side for liveness evaluation.
+- `FACE_LIVENESS_MODEL_PATH`: optional ONNX anti-spoofing model path; when absent, RGB heuristics are used.
+- `FACE_LIVENESS_REQUIRE_FOR_ENROLLMENT`: default `False`; when `True`, reject `/faces/extract` enrollment images that fail liveness.
 - `AUTO_LOAD_FACES_FROM_BACKEND`: default `True` for `cameraId` stream processing.
 - `BACKEND_API_BASE_URL`: default `http://127.0.0.1:8000/api`.
 - `BACKEND_CAMERA_LIST_PATH`: default `/cameras/list/`.
@@ -188,6 +193,8 @@ For camera processing, `POST /process/stream` automatically uses the same backen
 - `INPUT_WIDTH`: default `640`; resize continuous-stream frames before processing.
 - `INPUT_HEIGHT`: default `360`; resize continuous-stream frames before processing.
 - `RUNNING_SPEED_THRESHOLD`: default `120.0`; pixel/second threshold for running alerts.
+- `ZONE_MIN_STAY_SECONDS`: default `10`; person must stay inside or within safe distance this long before `ZONE_WARNING`.
+- `ZONE_STATE_TTL_SECONDS`: default `30`; clear stale zone stay state after inactivity.
 - `FALL_RATIO_THRESHOLD`: default `1.2`; bbox width/height fallback threshold for fall-like posture.
 - `FALL_CONFIRM_FRAMES`: default `5`; consecutive recent fall-like frames required before `FALL_ALERT`.
 - `FALL_MIN_CONFIDENCE`: default `0.6`; minimum confidence for high-level fall alerts.

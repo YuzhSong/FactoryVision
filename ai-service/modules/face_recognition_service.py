@@ -4,6 +4,8 @@ import json
 from pathlib import Path
 from urllib.parse import urljoin
 
+from .liveness_detector import LivenessDetector
+
 
 SUPPORTED_IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
 
@@ -33,6 +35,12 @@ class FaceRecognitionService:
         enrollment_min_quality_score: float = 0.5,
         enrollment_min_face_size: int = 40,
         enrollment_max_pose_yaw: float = 75.0,
+        liveness_enabled: bool = False,
+        liveness_threshold: float = 0.55,
+        liveness_min_face_size: int = 48,
+        liveness_model_path: str | Path | None = None,
+        liveness_require_for_enrollment: bool = False,
+        liveness_detector: LivenessDetector | None = None,
         det_size: tuple[int, int] = (640, 640),
         provider: str = "auto",
         library_path: str | Path | None = None,
@@ -49,6 +57,13 @@ class FaceRecognitionService:
         self.enrollment_min_quality_score = float(enrollment_min_quality_score or 0)
         self.enrollment_min_face_size = max(0, int(enrollment_min_face_size or 0))
         self.enrollment_max_pose_yaw = float(enrollment_max_pose_yaw or 0)
+        self.liveness_require_for_enrollment = bool(liveness_require_for_enrollment)
+        self.liveness_detector = liveness_detector or LivenessDetector(
+            enabled=liveness_enabled,
+            threshold=liveness_threshold,
+            min_face_size=liveness_min_face_size,
+            model_path=liveness_model_path,
+        )
         self.det_size = det_size
         self.provider = provider
         self.library_path = Path(library_path) if library_path else None
@@ -114,8 +129,30 @@ class FaceRecognitionService:
             if person_detections and not track_id:
                 continue
 
-            match, similarity, decision = self._classify_match(self._face_embedding(face))
             face_box = _format_bbox(face.bbox)
+            liveness = self._check_liveness(frame, face)
+            if not liveness.passed:
+                result = {
+                    "type": "FACE_RESULT",
+                    "trackId": track_id,
+                    "employeeId": None,
+                    "matched": False,
+                    "label": "spoof",
+                    "similarity": 0.0,
+                    "threshold": self.similarity_threshold,
+                    "scoreMargin": 0.0,
+                    "rejectReason": liveness.reject_reason or "liveness_failed",
+                    "livenessPassed": False,
+                    "livenessScore": liveness.score,
+                    "liveness": liveness.to_dict(),
+                    "faceBox": face_box,
+                }
+                if frame_id is not None:
+                    result["frameId"] = frame_id
+                results.append(result)
+                continue
+
+            match, similarity, decision = self._classify_match(self._face_embedding(face))
             if match and decision["accepted"]:
                 result = {
                     "type": "FACE_RESULT",
@@ -128,6 +165,9 @@ class FaceRecognitionService:
                     "threshold": round(float(decision["threshold"]), 4),
                     "scoreMargin": round(float(decision["scoreMargin"]), 4),
                     "sampleCount": decision["sampleCount"],
+                    "livenessPassed": True,
+                    "livenessScore": liveness.score,
+                    "liveness": liveness.to_dict(),
                     "faceBox": face_box,
                 }
             else:
@@ -141,6 +181,9 @@ class FaceRecognitionService:
                     "threshold": round(float(decision["threshold"]), 4),
                     "scoreMargin": round(float(decision["scoreMargin"]), 4),
                     "rejectReason": decision["rejectReason"],
+                    "livenessPassed": True,
+                    "livenessScore": liveness.score,
+                    "liveness": liveness.to_dict(),
                     "faceBox": face_box,
                 }
 
@@ -176,6 +219,10 @@ class FaceRecognitionService:
 
         face = faces[0]
         self._validate_enrollment_face(face)
+        liveness = self._check_liveness(frame, face)
+        if self.liveness_require_for_enrollment and not liveness.passed:
+            raise ValueError(f"Face liveness check failed: {liveness.reject_reason or 'liveness_failed'}.")
+
         feature = self._face_embedding(face)
         return {
             "faceCount": len(faces),
@@ -183,6 +230,9 @@ class FaceRecognitionService:
             "dimension": int(len(feature)),
             "qualityScore": _face_quality_score(face),
             "enrollmentAccepted": True,
+            "livenessPassed": liveness.passed,
+            "livenessScore": liveness.score,
+            "liveness": liveness.to_dict(),
             "faceBox": _format_bbox(face.bbox),
             "modelName": self.model_name,
             "provider": self.providers[0] if self.providers else None,
@@ -255,6 +305,8 @@ class FaceRecognitionService:
             "enrollmentMinQualityScore": self.enrollment_min_quality_score,
             "enrollmentMinFaceSize": self.enrollment_min_face_size,
             "enrollmentMaxPoseYaw": self.enrollment_max_pose_yaw,
+            "liveness": self.liveness_detector.status(),
+            "livenessRequireForEnrollment": self.liveness_require_for_enrollment,
             "errors": self.load_errors,
         }
 
@@ -435,6 +487,11 @@ class FaceRecognitionService:
         if feature is None:
             feature = getattr(face, "embedding", None)
         return _normalize_vector(feature)
+
+    def _check_liveness(self, frame, face):
+        """Run RGB liveness on the detected face crop."""
+        face_crop = _crop_bbox(frame, face.bbox)
+        return self.liveness_detector.predict(face_crop)
 
     def _match(self, feature):
         """Find the most similar loaded FaceRecord for one feature."""
@@ -833,6 +890,22 @@ def _bbox_area(bbox):
     """Calculate bbox area from xyxy coordinates."""
     x1, y1, x2, y2 = _bbox_tuple(bbox)
     return max(0.0, x2 - x1) * max(0.0, y2 - y1)
+
+
+def _crop_bbox(frame, bbox):
+    """Crop bbox from frame with boundary clipping."""
+    if frame is None or not hasattr(frame, "shape"):
+        return None
+
+    height, width = frame.shape[:2]
+    x1, y1, x2, y2 = _bbox_tuple(bbox)
+    left = max(0, min(width, int(round(x1))))
+    top = max(0, min(height, int(round(y1))))
+    right = max(0, min(width, int(round(x2))))
+    bottom = max(0, min(height, int(round(y2))))
+    if right <= left or bottom <= top:
+        return None
+    return frame[top:bottom, left:right].copy()
 
 
 def _detection_bbox(detection):

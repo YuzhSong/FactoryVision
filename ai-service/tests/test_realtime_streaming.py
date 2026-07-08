@@ -242,7 +242,9 @@ class RealtimeStreamingTests(unittest.TestCase):
 
         self.assertFalse(any(result.get("type") == "STRANGER_ALERT" for result in reports[0]["results"]))
         self.assertFalse(any(result.get("type") == "STRANGER_ALERT" for result in reports[1]["results"]))
-        self.assertTrue(any(result.get("type") == "STRANGER_ALERT" for result in reports[2]["results"]))
+        stranger_alert = next(result for result in reports[2]["results"] if result.get("type") == "STRANGER_ALERT")
+        self.assertEqual(stranger_alert["category"], "abnormal_behavior")
+        self.assertNotIn("severityColor", stranger_alert)
 
     def test_frame_processor_emits_leave_and_return_presence_events(self):
         recognized = {
@@ -293,6 +295,8 @@ class RealtimeStreamingTests(unittest.TestCase):
 
         self.assertEqual(leave_events[0]["eventType"], "LEAVE")
         self.assertEqual(leave_events[0]["employeeId"], 1)
+        self.assertEqual(leave_events[0]["category"], "abnormal_behavior")
+        self.assertNotIn("severityColor", leave_events[0])
         self.assertEqual(return_events[0]["eventType"], "RETURN")
         self.assertEqual(return_events[0]["leaveDurationSeconds"], 10.0)
 

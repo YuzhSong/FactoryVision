@@ -5,6 +5,7 @@ from pathlib import Path
 import numpy as np
 
 from modules.face_recognition_service import FaceRecognitionService, _should_use_base_url
+from modules.liveness_detector import LivenessResult
 
 
 class FaceRecognitionServiceTests(unittest.TestCase):
@@ -134,6 +135,99 @@ class FaceRecognitionServiceTests(unittest.TestCase):
         self.assertEqual(delete_result["deleted"], 1)
         self.assertEqual(len(service.face_records), 1)
         self.assertEqual(service.face_records[0].employee_no, "E002")
+
+    def test_recognize_rejects_spoof_before_identity_match(self):
+        """Verify liveness failure prevents employee matching."""
+        liveness_detector = _FakeLivenessDetector(
+            LivenessResult(
+                enabled=True,
+                passed=False,
+                score=0.12,
+                threshold=0.55,
+                method="rgb_heuristic",
+                reject_reason="liveness_failed",
+            )
+        )
+        service = _FakeRecognizeService(liveness_detector=liveness_detector)
+        service.load_face_library(records=[{"employeeId": 1, "employeeNo": "E001", "featureVector": [1, 0, 0]}])
+
+        results = service.recognize(np.zeros((100, 100, 3), dtype=np.uint8), frame_id="frame-1")
+
+        self.assertEqual(len(results), 1)
+        self.assertFalse(results[0]["matched"])
+        self.assertEqual(results[0]["label"], "spoof")
+        self.assertEqual(results[0]["rejectReason"], "liveness_failed")
+        self.assertFalse(results[0]["livenessPassed"])
+        self.assertFalse(service.embedding_called)
+
+    def test_recognize_includes_liveness_metadata_when_passed(self):
+        """Verify passed liveness still allows normal identity matching."""
+        liveness_detector = _FakeLivenessDetector(
+            LivenessResult(
+                enabled=True,
+                passed=True,
+                score=0.91,
+                threshold=0.55,
+                method="rgb_heuristic",
+            )
+        )
+        service = _FakeRecognizeService(liveness_detector=liveness_detector)
+        service.load_face_library(records=[{"employeeId": 1, "employeeNo": "E001", "featureVector": [1, 0, 0]}])
+
+        results = service.recognize(np.zeros((100, 100, 3), dtype=np.uint8), frame_id="frame-1")
+
+        self.assertTrue(results[0]["matched"])
+        self.assertTrue(results[0]["livenessPassed"])
+        self.assertEqual(results[0]["livenessScore"], 0.91)
+        self.assertTrue(service.embedding_called)
+
+    def test_enrollment_can_require_liveness(self):
+        """Verify enrollment rejects a spoof when strict liveness is enabled."""
+        liveness_detector = _FakeLivenessDetector(
+            LivenessResult(
+                enabled=True,
+                passed=False,
+                score=0.1,
+                threshold=0.55,
+                method="rgb_heuristic",
+                reject_reason="liveness_failed",
+            )
+        )
+        service = _FakeRecognizeService(
+            liveness_detector=liveness_detector,
+            liveness_require_for_enrollment=True,
+        )
+
+        with self.assertRaises(ValueError):
+            service.extract_feature_details(np.zeros((100, 100, 3), dtype=np.uint8))
+
+class _FakeFace:
+    bbox = [10, 10, 90, 90]
+    det_score = 0.99
+
+
+class _FakeLivenessDetector:
+    def __init__(self, result):
+        self.result = result
+
+    def predict(self, _face_crop):
+        return self.result
+
+    def status(self):
+        return {"enabled": self.result.enabled, "threshold": self.result.threshold}
+
+
+class _FakeRecognizeService(FaceRecognitionService):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, similarity_threshold=0.45, **kwargs)
+        self.embedding_called = False
+
+    def _detect_faces(self, _frame):
+        return [_FakeFace()]
+
+    def _face_embedding(self, _face):
+        self.embedding_called = True
+        return np.asarray([1.0, 0.0, 0.0], dtype="float32")
 
 
 if __name__ == "__main__":

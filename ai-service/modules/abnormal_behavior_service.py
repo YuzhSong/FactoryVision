@@ -33,7 +33,11 @@ class AbnormalBehaviorService:
             half_precision=config.get("helmetHalfPrecision", "auto"),
             cudnn_benchmark=config.get("helmetCudnnBenchmark", True),
         )
-        self.zone_detector = ZoneDetector(zones=zones)
+        self.zone_detector = ZoneDetector(
+            zones=zones,
+            min_stay_seconds=config.get("zoneMinStaySeconds", 10.0),
+            state_ttl_seconds=config.get("zoneStateTtlSeconds", 30.0),
+        )
 
     def build_ai_report(self, camera_id, frame_id, person_detections, track_histories=None, timestamp=None):
         """Build one AI report with person detections and behavior warnings."""
@@ -42,7 +46,7 @@ class AbnormalBehaviorService:
         track_histories = track_histories or {}
 
         results.extend(person_detections)
-        results.extend(self.zone_detector.detect_intrusion(person_detections))
+        results.extend(self.zone_detector.detect_intrusion(person_detections, timestamp=timestamp))
 
         for detection in person_detections:
             track_id = detection.get("trackId")

@@ -3,6 +3,7 @@ import math
 
 from .abnormal_behavior_service import AbnormalBehaviorService
 from .employee_presence_detector import EmployeePresenceDetector
+from .event_classification import enrich_event_classification
 from .stranger_detector import StrangerDetector
 
 
@@ -99,7 +100,9 @@ class FrameProcessor:
             for result in report["results"]
             if result.get("type") != "PERSON_DETECTION"
         ]
-        report["results"] = person_results + face_results + stranger_results + presence_results + non_person_results
+        report["results"] = enrich_event_classification(
+            person_results + face_results + stranger_results + presence_results + non_person_results
+        )
         return report
 
     def reset(self):
