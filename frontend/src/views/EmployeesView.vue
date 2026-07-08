@@ -10,13 +10,24 @@ const dialogVisible = ref(false)
 const faceDialogVisible = ref(false)
 const saving = ref(false)
 const enrolling = ref(false)
-const cameraActive = ref(false)
-const cameraError = ref('')
-const capturedImage = ref('')
 const currentEmployee = ref(null)
-const videoRef = ref(null)
+const fileInputRefs = ref({})
+const activeCameraKey = ref('')
+const activeVideoRef = ref(null)
 const canvasRef = ref(null)
 let mediaStream = null
+
+const faceShotTypes = [
+  { key: 'front', label: '正脸', hint: '请保持正对镜头' },
+  { key: 'left', label: '左脸', hint: '请向左侧转头' },
+  { key: 'right', label: '右脸', hint: '请向右侧转头' },
+]
+
+const faceImages = reactive({
+  front: '',
+  left: '',
+  right: '',
+})
 
 const employeeForm = reactive({
   employeeNo: '',
@@ -68,57 +79,16 @@ const submitEmployee = async () => {
   }
 }
 
-const stopCamera = () => {
-  if (mediaStream) {
-    mediaStream.getTracks().forEach((track) => track.stop())
-    mediaStream = null
-  }
-  cameraActive.value = false
-}
-
-const startCamera = async () => {
-  cameraError.value = ''
-  capturedImage.value = ''
-
-  if (!navigator.mediaDevices?.getUserMedia) {
-    cameraError.value = '当前浏览器不支持摄像头录入'
-    return
-  }
-
-  try {
-    stopCamera()
-    mediaStream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: 'user', width: { ideal: 960 }, height: { ideal: 720 } },
-      audio: false,
-    })
-    await nextTick()
-    if (videoRef.value) {
-      videoRef.value.srcObject = mediaStream
-      await videoRef.value.play()
-    }
-    cameraActive.value = true
-  } catch (error) {
-    cameraError.value = '无法打开摄像头，请检查浏览器权限'
-  }
-}
-
-const captureFace = () => {
-  if (!videoRef.value || !canvasRef.value) return
-
-  const video = videoRef.value
-  const canvas = canvasRef.value
-  canvas.width = video.videoWidth || 960
-  canvas.height = video.videoHeight || 720
-  const context = canvas.getContext('2d')
-  context.drawImage(video, 0, 0, canvas.width, canvas.height)
-  capturedImage.value = canvas.toDataURL('image/jpeg', 0.9)
-  stopCamera()
+const resetFaceImages = () => {
+  faceShotTypes.forEach((item) => {
+    faceImages[item.key] = ''
+  })
 }
 
 const openFaceDialog = (employee) => {
   currentEmployee.value = employee
-  capturedImage.value = ''
-  cameraError.value = ''
+  stopCamera()
+  resetFaceImages()
   faceDialogVisible.value = true
 }
 
@@ -127,13 +97,101 @@ const closeFaceDialog = () => {
   faceDialogVisible.value = false
 }
 
+const setFileInputRef = (key, element) => {
+  if (element) {
+    fileInputRefs.value[key] = element
+  }
+}
+
+const openFilePicker = (key) => {
+  fileInputRefs.value[key]?.click()
+}
+
+const stopCamera = () => {
+  if (mediaStream) {
+    mediaStream.getTracks().forEach((track) => track.stop())
+    mediaStream = null
+  }
+  activeCameraKey.value = ''
+  activeVideoRef.value = null
+}
+
+const setActiveVideoRef = (element) => {
+  if (element) {
+    activeVideoRef.value = element
+  }
+}
+
+const startCameraFor = async (key) => {
+  if (!navigator.mediaDevices?.getUserMedia) {
+    ElMessage.warning('当前浏览器不支持摄像头拍摄')
+    return
+  }
+
+  try {
+    stopCamera()
+    activeCameraKey.value = key
+    await nextTick()
+    mediaStream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: 'user', width: { ideal: 960 }, height: { ideal: 720 } },
+      audio: false,
+    })
+    if (activeVideoRef.value) {
+      activeVideoRef.value.srcObject = mediaStream
+      await activeVideoRef.value.play()
+    }
+  } catch (error) {
+    stopCamera()
+    ElMessage.error(`无法打开摄像头：${error?.name || '请检查浏览器权限'}`)
+  }
+}
+
+const fileToDataUrl = (file) => new Promise((resolve, reject) => {
+  const reader = new FileReader()
+  reader.onload = () => resolve(reader.result)
+  reader.onerror = reject
+  reader.readAsDataURL(file)
+})
+
+const handleFaceFile = async (event, key) => {
+  const file = event.target.files?.[0]
+  event.target.value = ''
+
+  if (!file) return
+  if (!file.type.startsWith('image/')) {
+    ElMessage.warning('请选择图片文件')
+    return
+  }
+
+  faceImages[key] = await fileToDataUrl(file)
+}
+
+const clearFaceImage = (key) => {
+  faceImages[key] = ''
+}
+
+const captureCameraShot = (key) => {
+  if (!activeVideoRef.value || !canvasRef.value) return
+
+  const video = activeVideoRef.value
+  const canvas = canvasRef.value
+  canvas.width = video.videoWidth || 960
+  canvas.height = video.videoHeight || 720
+  const context = canvas.getContext('2d')
+  context.drawImage(video, 0, 0, canvas.width, canvas.height)
+  faceImages[key] = canvas.toDataURL('image/jpeg', 0.9)
+  stopCamera()
+}
+
 const submitFace = async () => {
   if (!currentEmployee.value?.id) {
     ElMessage.warning('请先选择员工')
     return
   }
-  if (!capturedImage.value) {
-    ElMessage.warning('请先拍摄人脸照片')
+
+  const missingShot = faceShotTypes.find((item) => !faceImages[item.key])
+  if (missingShot) {
+    ElMessage.warning(`请先录入${missingShot.label}照片`)
     return
   }
 
@@ -141,7 +199,12 @@ const submitFace = async () => {
   try {
     await faceApi.enroll({
       employeeId: currentEmployee.value.id,
-      imageBase64: capturedImage.value,
+      imageBase64: faceImages.front,
+      faceImages: {
+        front: faceImages.front,
+        left: faceImages.left,
+        right: faceImages.right,
+      },
     })
     ElMessage.success('人脸录入已提交')
     closeFaceDialog()
@@ -220,9 +283,8 @@ const submitFace = async () => {
     <el-dialog
       v-model="faceDialogVisible"
       title="人脸录入"
-      width="680px"
+      width="860px"
       class="face-enroll-dialog"
-      @closed="stopCamera"
     >
       <div class="face-enroll">
         <div class="face-enroll__target">
@@ -231,28 +293,75 @@ const submitFace = async () => {
           <el-tag v-if="!currentEmployee?.id" type="warning" size="small">需先保存员工</el-tag>
         </div>
 
-        <div class="face-camera">
-          <video v-show="cameraActive && !capturedImage" ref="videoRef" muted playsinline />
-          <img v-if="capturedImage" :src="capturedImage" alt="已拍摄的人脸照片" />
-          <div v-if="!cameraActive && !capturedImage" class="face-camera__empty">
-            <span>摄像头未开启</span>
-            <small>点击下方按钮后，工作人员可直接通过本机摄像头录入人脸。</small>
+        <div class="face-shot-grid">
+          <div v-for="item in faceShotTypes" :key="item.key" class="face-shot-card">
+            <div class="face-shot-card__head">
+              <strong>{{ item.label }}</strong>
+              <span>{{ item.hint }}</span>
+            </div>
+
+            <button type="button" class="face-shot-window" @click="startCameraFor(item.key)">
+              <video
+                v-if="activeCameraKey === item.key"
+                :ref="setActiveVideoRef"
+                muted
+                playsinline
+                autoplay
+              />
+              <img v-else-if="faceImages[item.key]" :src="faceImages[item.key]" :alt="`${item.label}照片`" />
+              <span v-else class="face-shot-empty">
+                <b>+</b>
+                <small>{{ item.label }}照片</small>
+              </span>
+              <i v-if="activeCameraKey === item.key || faceImages[item.key]" class="face-shot-guide"></i>
+            </button>
+
+            <input
+              :ref="(element) => setFileInputRef(item.key, element)"
+              class="face-file-input"
+              type="file"
+              accept="image/*"
+              capture="user"
+              @change="handleFaceFile($event, item.key)"
+            />
+
+            <div class="face-shot-actions">
+              <el-button
+                v-if="activeCameraKey === item.key"
+                size="small"
+                type="primary"
+                @click="captureCameraShot(item.key)"
+              >
+                拍下
+              </el-button>
+              <el-button
+                v-else
+                size="small"
+                type="primary"
+                plain
+                @click="startCameraFor(item.key)"
+              >
+                拍摄
+              </el-button>
+              <el-button
+                v-if="activeCameraKey === item.key"
+                size="small"
+                @click="stopCamera"
+              >
+                取消拍摄
+              </el-button>
+              <el-button
+                v-else
+                size="small"
+                @click="openFilePicker(item.key)"
+              >
+                上传
+              </el-button>
+              <el-button size="small" :disabled="!faceImages[item.key]" @click="clearFaceImage(item.key)">
+                清除
+              </el-button>
+            </div>
           </div>
-          <div class="face-frame"></div>
-        </div>
-
-        <el-alert
-          v-if="cameraError"
-          :title="cameraError"
-          type="warning"
-          show-icon
-          :closable="false"
-        />
-
-        <div class="face-actions">
-          <el-button @click="startCamera">打开摄像头</el-button>
-          <el-button type="primary" :disabled="!cameraActive" @click="captureFace">拍摄照片</el-button>
-          <el-button :disabled="!capturedImage" @click="capturedImage = ''">重新拍摄</el-button>
         </div>
         <canvas ref="canvasRef" class="capture-canvas"></canvas>
       </div>
@@ -261,7 +370,7 @@ const submitFace = async () => {
         <el-button
           type="primary"
           :loading="enrolling"
-          :disabled="!currentEmployee?.id || !capturedImage"
+          :disabled="!currentEmployee?.id || faceShotTypes.some((item) => !faceImages[item.key])"
           @click="submitFace"
         >
           提交录入
