@@ -63,9 +63,9 @@ export const alerts = [
 ]
 
 export const employees = [
-  { id: 1, employeeNo: 'E001', name: '张三', department: '生产部', position: '班组长', status: 'active' },
-  { id: 2, employeeNo: 'E002', name: '李四', department: '设备部', position: '巡检员', status: 'active' },
-  { id: 3, employeeNo: 'E003', name: '王五', department: '仓储部', position: '操作员', status: 'inactive' },
+  { id: 1, employeeNo: 'E001', name: '张三', department: '生产部', position: '班组长', phone: '13800000001', status: 'active' },
+  { id: 2, employeeNo: 'E002', name: '李四', department: '设备部', position: '巡检员', phone: '13800000002', status: 'active' },
+  { id: 3, employeeNo: 'E003', name: '王五', department: '仓储部', position: '操作员', phone: '13800000003', status: 'inactive' },
 ]
 
 export const zones = [
