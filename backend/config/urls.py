@@ -17,4 +17,5 @@ urlpatterns = [
     path("api/events/", include("apps.events.urls")),
     path("api/attendance/", include("apps.attendance.urls")),
     path("api/ai-results/", include("apps.ai_results.urls")),
+    path("api/face/", include("apps.face.urls")),
 ]

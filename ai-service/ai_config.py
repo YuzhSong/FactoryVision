@@ -66,6 +66,7 @@ class Config:
     PERSON_TRACK_IOU_THRESHOLD = float(os.getenv("PERSON_TRACK_IOU_THRESHOLD", "0.3"))
     PERSON_TRACK_MAX_MISSED_FRAMES = int(os.getenv("PERSON_TRACK_MAX_MISSED_FRAMES", "15"))
     HELMET_MODEL_PATH = os.getenv("HELMET_MODEL_PATH", str(MODEL_DIR / "helmet" / "helmet.pt"))
+    HELMET_MODEL_PROVIDER = os.getenv("HELMET_MODEL_PROVIDER", "opensource").strip().lower()
     HELMET_DEVICE = os.getenv("HELMET_DEVICE", YOLO_DEVICE)
     HELMET_IMAGE_SIZE = int(os.getenv("HELMET_IMAGE_SIZE", str(YOLO_IMAGE_SIZE)))
     HELMET_HALF_PRECISION = os.getenv("HELMET_HALF_PRECISION", YOLO_HALF_PRECISION)
@@ -73,6 +74,14 @@ class Config:
     HELMET_CONFIDENCE_THRESHOLD = float(os.getenv("HELMET_CONFIDENCE_THRESHOLD", "0.35"))
     HELMET_IOU_THRESHOLD = float(os.getenv("HELMET_IOU_THRESHOLD", "0.45"))
     HELMET_WARNING_THRESHOLD = float(os.getenv("HELMET_WARNING_THRESHOLD", "0.6"))
+    HELMET_MATCH_UPPER_RATIO = float(os.getenv("HELMET_MATCH_UPPER_RATIO", "0.65"))
+    HELMET_CLASS_IDS = tuple(
+        int(value.strip())
+        for value in os.getenv("HELMET_CLASS_IDS", "1,2").split(",")
+        if value.strip()
+    )
+    HELMET_CLASS_ID = int(os.getenv("HELMET_CLASS_ID", "1"))
+    NO_HELMET_CLASS_ID = int(os.getenv("NO_HELMET_CLASS_ID", "2"))
 
     FACE_MODEL_NAME = os.getenv("FACE_MODEL_NAME", "buffalo_l")
     FACE_DETECTION_SIZE = _parse_size(os.getenv("FACE_DETECTION_SIZE", "640,640"), (640, 640))

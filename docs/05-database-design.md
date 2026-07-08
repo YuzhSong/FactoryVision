@@ -67,8 +67,7 @@ erDiagram
 | `employee_id` | bigint | 否 | 否 | 关联员工 ID |
 | `feature_vector` | json / longtext | 否 | 否 | 人脸特征向量 |
 | `image_path` | varchar(255) | 是 | 否 | 原始人脸图片路径 |
-| `quality_score` | decimal(5,4) | 是 | 否 | 图片质量评分 |
-| `model_version` | varchar(64) | 是 | 否 | 特征模型版本 |
+| `face_type` | varchar(32) | 是 | 否 | 人脸角度，如 front、left、right |
 | `created_at` | datetime | 否 | 否 | 创建时间 |
 
 ## camera

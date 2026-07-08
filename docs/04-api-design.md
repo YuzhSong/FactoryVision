@@ -328,7 +328,7 @@ GET /api/employees/
 | Method | `GET` |
 | 状态 | planned |
 
-请求参数：通用分页参数，可增加 `department`、`status`。
+请求参数：通用分页参数，可增加 `keyword`（模糊匹配姓名或工号）、`department`、`status`。
 
 请求示例：
 
@@ -414,7 +414,7 @@ GET /api/employees/list/?page=1&pageSize=20&status=active
 
 | 项 | 内容 |
 | --- | --- |
-| 接口说明 | 为员工录入人脸图片并生成特征 |
+| 接口说明 | 为员工批量录入人脸图片（必须 3 张，正脸/左脸/右脸各一张）并生成特征 |
 | URL | `/api/face/enroll/` |
 | Method | `POST` |
 | 状态 | planned |
@@ -424,14 +424,25 @@ GET /api/employees/list/?page=1&pageSize=20&status=active
 | 参数 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
 | `employeeId` | number | 是 | 员工 ID |
-| `image` | file/base64 | 是 | 人脸图片 |
+| `faces` | array | 是 | 人脸图片数组，必须包含 3 项，faceType 分别为 front、left、right |
+
+`faces` 数组每项的字段：
+
+| 参数 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `imageBase64` | string | 是 | 人脸图片 base64 |
+| `faceType` | string | 是 | `front`（正面）、`left`（左侧）、`right`（右侧） |
 
 请求示例：
 
 ```json
 {
   "employeeId": 1,
-  "imageBase64": "data:image/jpeg;base64,..."
+  "faces": [
+    {"imageBase64": "data:image/jpeg;base64,...", "faceType": "front"},
+    {"imageBase64": "data:image/jpeg;base64,...", "faceType": "left"},
+    {"imageBase64": "data:image/jpeg;base64,...", "faceType": "right"}
+  ]
 }
 ```
 
@@ -442,14 +453,22 @@ GET /api/employees/list/?page=1&pageSize=20&status=active
   "code": 200,
   "message": "success",
   "data": {
-    "faceFeatureId": 1,
-    "qualityScore": 0.92
+    "results": [
+      {"faceType": "front", "faceFeatureId": 1},
+      {"faceType": "left",  "faceFeatureId": 2},
+      {"faceType": "right", "faceFeatureId": 3}
+    ]
   },
   "requestId": "uuid"
 }
 ```
 
-状态说明：图片无人脸或质量过低返回 `422`。
+状态说明：
+
+- 全部通过才写入数据库，任意一张失败则整体回滚，返回 `422` 并指明失败原因。
+- `faces` 数组不足 3 张或 faceType 缺失返回 `400`。
+- 图片无人脸返回 `422`，质量过低返回 `422`，AI 服务不可用返回 `500`。
+- 质量判断由 AI Service 内部完成，后端不存储质量分数。
 
 ## Cameras 摄像头接口
 

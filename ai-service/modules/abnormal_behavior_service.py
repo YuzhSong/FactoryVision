@@ -26,12 +26,17 @@ class AbnormalBehaviorService:
         self.helmet_detector = HelmetDetector(
             confidence_threshold=config.get("helmetConfidenceThreshold", 0.6),
             model_path=config.get("helmetModelPath"),
+            provider=config.get("helmetModelProvider", "opensource"),
             detection_confidence_threshold=config.get("helmetDetectionConfidenceThreshold", 0.35),
             iou_threshold=config.get("helmetIouThreshold", 0.45),
             device=config.get("helmetDevice", "auto"),
             image_size=config.get("helmetImageSize", 640),
             half_precision=config.get("helmetHalfPrecision", "auto"),
             cudnn_benchmark=config.get("helmetCudnnBenchmark", True),
+            match_upper_ratio=config.get("helmetMatchUpperRatio", 0.65),
+            class_ids=config.get("helmetClassIds", (1, 2)),
+            helmet_class_id=config.get("helmetClassId", 1),
+            no_helmet_class_id=config.get("noHelmetClassId", 2),
         )
         self.zone_detector = ZoneDetector(
             zones=zones,
