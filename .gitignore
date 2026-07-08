@@ -16,6 +16,16 @@ frontend/dist/
 backend/db.sqlite3
 backend/staticfiles/
 
+# AI service local runtime files
+ai-service/data/uploads/
+ai-service/data/outputs/
+ai-service/data/*.log
+ai-service/data/*.mp4
+ai-service/data/*.avi
+ai-service/data/*.mov
+ai-service/data/*.mkv
+ai-service/models/*.pt
+
 # OS files
 .DS_Store
 Thumbs.db
