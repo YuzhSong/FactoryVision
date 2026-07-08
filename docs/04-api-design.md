@@ -312,7 +312,7 @@ GET /api/employees/
 
 状态说明：当前只用于证明路由存在。
 
-### 员工列表
+### 员工列表 
 
 | 项 | 内容 |
 | --- | --- |
@@ -343,6 +343,8 @@ GET /api/employees/list/?page=1&pageSize=20&status=active
         "employeeNo": "E001",
         "name": "张三",
         "department": "生产部",
+        "position": "操作员",
+        "phone": "13800000000",
         "status": "active"
       }
     ]
@@ -369,6 +371,7 @@ GET /api/employees/list/?page=1&pageSize=20&status=active
 | `employeeNo` | string | 是 | 工号 |
 | `name` | string | 是 | 姓名 |
 | `department` | string | 否 | 部门 |
+| `position` | string | 否 | 岗位 |
 | `phone` | string | 否 | 手机号 |
 
 请求示例：
@@ -378,6 +381,7 @@ GET /api/employees/list/?page=1&pageSize=20&status=active
   "employeeNo": "E001",
   "name": "张三",
   "department": "生产部",
+  "position": "操作员",
   "phone": "13800000000"
 }
 ```
