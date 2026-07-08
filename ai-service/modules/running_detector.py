@@ -27,12 +27,17 @@ class RunningDetector:
 
         return {
             "type": "RUNNING_ALERT",
+            "event_type": "running",
             "trackId": latest.get("trackId"),
             "isRunning": is_running,
             "pixelSpeed": round(pixel_speed, 2),
+            "speed": round(pixel_speed, 2),
             "threshold": self.speed_threshold,
             "durationFrames": len(over_threshold),
             "level": self._get_level(is_running, pixel_speed),
+            "bbox": latest.get("bbox"),
+            "confidence": 0.85 if is_running else 0.0,
+            "message": "检测到疑似奔跑行为" if is_running else "未检测到奔跑行为",
         }
 
     def _get_recent_history(self, track_history):
@@ -61,7 +66,7 @@ class RunningDetector:
 
     def _get_point(self, entry):
         """Extract center or foot point from one history entry."""
-        point = entry.get("centerPoint") or entry.get("footPoint")
+        point = entry.get("center") or entry.get("centerPoint") or entry.get("footPoint")
         if isinstance(point, dict):
             return (point.get("x", 0), point.get("y", 0))
         if isinstance(point, (list, tuple)) and len(point) == 2:

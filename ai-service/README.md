@@ -1,11 +1,12 @@
 # AI Service
 
-FastAPI-based AI service for smart factory video-frame analysis. This service consumes camera stream URLs or uploaded images, runs CUDA-accelerated YOLO person detection, optionally runs InsightFace employee recognition, and reports structured AI results to the backend API.
+FastAPI-based AI service for smart factory video-frame analysis. This service consumes camera stream URLs or uploaded images, runs CUDA-accelerated YOLO person detection, optionally runs InsightFace employee recognition, draws detection boxes with OpenCV, pushes processed RTMP video back to SRS through FFmpeg, and reports structured AI results to the backend API.
 
 ## Boundary
 
 - `ai-service` reads frames from a provided `streamUrl` or local video path.
-- `ai-service` does not implement MediaMTX, Nginx-RTMP, camera pushing, stream forwarding, or database writes.
+- `ai-service` can pull raw RTMP from SRS and push an AI processed RTMP stream back to SRS.
+- `ai-service` does not implement SRS, camera pushing, or database writes.
 - Employee, camera, zone, and AI-result integration should go through backend HTTP APIs.
 
 ## Quick Start
@@ -26,7 +27,7 @@ The CUDA requirements install PyTorch wheels for CUDA 12.8. On an RTX 4060 envir
 
 ```powershell
 .\.venv\Scripts\python.exe .\scripts\check_cuda_yolo.py
-.\.venv\Scripts\python.exe -m compileall app.py config.py modules scripts
+.\.venv\Scripts\python.exe -m compileall app.py ai_config.py modules scripts
 .\.venv\Scripts\python.exe -m unittest discover -s tests
 ```
 
@@ -41,6 +42,73 @@ The CUDA requirements install PyTorch wheels for CUDA 12.8. On an RTX 4060 envir
 - `POST /detect/person`: uploaded image or `imagePath`, returns `PERSON_DETECTION`.
 - `POST /detect/frame`: uploaded image or `imagePath`, returns combined AI report.
 - `POST /process/stream`: process a limited number of frames from `streamUrl` or backend camera config. When `cameraId` and face recognition are enabled, it loads employee face records from backend by default.
+- `POST /streams/start`: start continuous RTMP input -> AI boxed RTMP output processing.
+- `POST /streams/stop`: stop continuous processed stream output.
+- `GET /streams/status`: current processed stream task status.
+
+## Processed Stream Demo
+
+Default demo flow:
+
+```text
+rtmp://81.70.90.222:1935/live/1
+  -> AI Service
+  -> rtmp://81.70.90.222:1935/live/1_detected
+  -> https://webrtc.rainycode.cn:8443/live/1_detected.flv
+```
+
+The continuous processed stream is optimized for real-time playback rather than
+processing every old frame. It uses two loops:
+
+- Capture loop: continuously reads the raw RTMP stream and overwrites one
+  `latest_frame` slot.
+- Process loop: copies only the newest available frame, processes it, draws
+  boxes/metrics, and pushes it to `rtmp://81.70.90.222:1935/live/1_detected`.
+
+If processing is slower than capture, old unprocessed frames are dropped. This
+prevents the processed stream from drifting tens of seconds behind the phone
+camera. The service exposes `dropped_frames`, `capture_fps`, `process_fps`,
+`process_time_ms`, `latest_frame_age_ms`, and `output_fps` from
+`GET /streams/status`, and overlays the same live debug data on the video.
+
+Detection does not have to run on every output frame. By default the service
+runs heavier detection every 5 input frames and reuses the latest detection
+result for intermediate frames, so the output stream can continue while latency
+stays bounded.
+
+Behavior algorithms can still keep lightweight history. `FrameProcessor` stores
+only recent structured track points per `trackId`:
+
+```python
+track_history = {
+    "t-1": [
+        {
+            "timestamp": "2026-07-08T03:00:00+08:00",
+            "center": [120.0, 240.0],
+            "bbox": [100.0, 120.0, 240.0, 360.0],
+        }
+    ]
+}
+```
+
+Each track keeps only the latest `MAX_HISTORY_POINTS` entries. Full frames and
+image queues are not stored for speed, running, fall, or zone logic.
+
+Use `mode=test` first to verify the whole stream path with a synthetic box:
+
+```powershell
+curl -X POST http://127.0.0.1:9000/streams/start `
+  -H "Content-Type: application/json" `
+  -d "{\"mode\":\"test\"}"
+```
+
+Switch to detection mode after the stream path is stable:
+
+```powershell
+curl -X POST http://127.0.0.1:9000/streams/start `
+  -H "Content-Type: application/json" `
+  -d "{\"mode\":\"detect\",\"includeFaces\":false}"
+```
 
 ## Face Library
 
@@ -87,3 +155,14 @@ For camera processing, `POST /process/stream` automatically uses the same backen
 - `BACKEND_ZONE_LIST_PATH`: default `/zones/`.
 - `BACKEND_AI_REPORT_PATH`: default `/ai-results/report/`.
 - `STREAM_MAX_FRAMES_PER_REQUEST`: safety limit for `/process/stream`.
+- `STREAM_INPUT_URL`: default `rtmp://81.70.90.222:1935/live/1`.
+- `STREAM_OUTPUT_URL`: default `rtmp://81.70.90.222:1935/live/1_detected`.
+- `STREAM_PLAY_URL`: default `webrtc://webrtc.rainycode.cn:8443/live/1_detected`.
+- `STREAM_PROCESS_MODE`: `test` or `detect`, default `detect`.
+- `STREAM_FFMPEG_PATH`: default `ffmpeg`; required for `/streams/start`.
+- `OUTPUT_FPS` / `STREAM_OUTPUT_FPS`: default `10`.
+- `FRAME_DETECT_INTERVAL`: default `5`; run heavier detection every N input frames.
+- `MAX_HISTORY_POINTS`: default `5`; per-track lightweight history length.
+- `INPUT_WIDTH`: default `640`; resize continuous-stream frames before processing.
+- `INPUT_HEIGHT`: default `360`; resize continuous-stream frames before processing.
+- `RUNNING_SPEED_THRESHOLD`: default `120.0`; pixel/second threshold for running alerts.

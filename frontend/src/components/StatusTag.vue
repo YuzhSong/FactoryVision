@@ -20,6 +20,10 @@ const map = {
   low: { label: '低危', type: 'info' },
   normal: { label: '正常', type: 'success' },
   abnormal: { label: '异常', type: 'warning' },
+  idle: { label: '待播放', type: 'info' },
+  connecting: { label: '连接中', type: 'warning' },
+  connected: { label: '播放中', type: 'success' },
+  error: { label: '错误', type: 'danger' },
 }
 
 const tag = map[props.value] || { label: props.value, type: 'info' }

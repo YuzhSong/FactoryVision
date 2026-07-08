@@ -11,6 +11,7 @@ from modules.dependencies import check_dependencies
 from modules.face_recognition_service import FaceRecognitionService
 from modules.frame_processor import FrameProcessor
 from modules.person_detector import PersonDetector
+from modules.processed_stream_service import ProcessedStreamService
 from modules.stream_reader import StreamReader
 
 
@@ -51,11 +52,29 @@ face_service = FaceRecognitionService(
 frame_processor = FrameProcessor(
     person_detector=person_detector,
     face_service=face_service,
+    history_limit=Config.MAX_HISTORY_POINTS,
+    abnormal_config={"runningSpeedThreshold": Config.RUNNING_SPEED_THRESHOLD},
+)
+
+processed_stream_service = ProcessedStreamService(
+    frame_processor=frame_processor,
+    backend_client=backend_client,
+    default_input_url=Config.STREAM_INPUT_URL,
+    default_output_url=Config.STREAM_OUTPUT_URL,
+    default_play_url=Config.STREAM_PLAY_URL,
+    default_mode=Config.STREAM_PROCESS_MODE,
+    default_report_to_backend=Config.STREAM_REPORT_TO_BACKEND,
+    reconnect_attempts=Config.STREAM_RECONNECT_ATTEMPTS,
+    reconnect_delay_seconds=Config.STREAM_RECONNECT_DELAY_SECONDS,
+    output_fps=Config.STREAM_OUTPUT_FPS,
+    ffmpeg_path=Config.STREAM_FFMPEG_PATH,
+    detect_interval=Config.FRAME_DETECT_INTERVAL,
+    input_width=Config.INPUT_WIDTH,
+    input_height=Config.INPUT_HEIGHT,
 )
 
 
 def create_app() -> FastAPI:
-    """Create and configure the FastAPI application instance."""
     app = FastAPI(
         title="Smart Factory AI Service",
         description="Video-frame analysis, person detection, face recognition, and behavior reporting service.",
@@ -64,7 +83,6 @@ def create_app() -> FastAPI:
 
     @app.get("/health", tags=["system"])
     def health_check():
-        """Return service health and face-library status."""
         return {
             "service": Config.SERVICE_NAME,
             "status": "ok",
@@ -75,20 +93,35 @@ def create_app() -> FastAPI:
 
     @app.get("/dependencies", tags=["system"])
     def dependencies_check():
-        """Return installed dependency and CUDA status."""
         return {
             "service": Config.SERVICE_NAME,
             "dependencies": check_dependencies(),
         }
 
+    @app.post("/streams/start", tags=["stream"])
+    async def start_processed_stream(request: Request):
+        try:
+            payload = await _payload(request)
+            status = processed_stream_service.start(payload)
+        except Exception as exc:
+            return _error_response(exc)
+
+        return {"code": 200, "message": "success", "data": status}
+
+    @app.post("/streams/stop", tags=["stream"])
+    def stop_processed_stream():
+        return {"code": 200, "message": "success", "data": processed_stream_service.stop()}
+
+    @app.get("/streams/status", tags=["stream"])
+    def processed_stream_status():
+        return {"code": 200, "message": "success", "data": processed_stream_service.status()}
+
     @app.get("/faces/status", tags=["faces"])
     def face_status():
-        """Return current InsightFace model and face-library status."""
         return {"code": 200, "message": "success", "data": face_service.status()}
 
     @app.post("/faces/reload", tags=["faces"])
     async def reload_faces(request: Request):
-        """Reload face library from local payload/files or backend employee data."""
         try:
             payload = await _payload(request)
             result = _reload_face_library(payload)
@@ -105,7 +138,6 @@ def create_app() -> FastAPI:
         frame_id_form: Any = Form(default=None, alias="frameId"),
         image_path_form: str | None = Form(default=None, alias="imagePath"),
     ):
-        """Detect people from uploaded image or image_path; cameraId/frameId are optional."""
         try:
             payload = await _payload(request)
             frame = await _read_frame(image=image, image_path=image_path_form or payload.get("imagePath"))
@@ -136,7 +168,6 @@ def create_app() -> FastAPI:
         include_faces_form: Any = Form(default=None, alias="includeFaces"),
         reload_faces_form: Any = Form(default=None, alias="reloadFaces"),
     ):
-        """Run full frame pipeline from image/imagePath with optional face recognition."""
         try:
             payload = await _payload(request)
             frame = await _read_frame(image=image, image_path=image_path_form or payload.get("imagePath"))
@@ -161,7 +192,6 @@ def create_app() -> FastAPI:
 
     @app.post("/process/stream", tags=["stream"])
     async def process_stream(request: Request):
-        """Process limited frames from streamUrl or cameraId and optionally report results."""
         reader = None
         try:
             payload = await _payload(request)
@@ -220,7 +250,6 @@ app = create_app()
 
 
 async def _payload(request: Request) -> dict:
-    """Read JSON request body when content-type is application/json."""
     content_type = request.headers.get("content-type", "")
     if "application/json" not in content_type:
         return {}
@@ -230,7 +259,6 @@ async def _payload(request: Request) -> dict:
 
 
 async def _read_frame(image: UploadFile | None = None, image_path: str | None = None):
-    """Decode frame from UploadFile image or local image_path."""
     try:
         import cv2
         import numpy as np
@@ -257,7 +285,6 @@ async def _read_frame(image: UploadFile | None = None, image_path: str | None = 
 
 
 def _reload_face_library(payload):
-    """Reload face records using payload fields such as source, records, employees, or paths."""
     source = payload.get("source", "local")
     if source == "backend":
         records = backend_client.list_face_records(status=payload.get("status", "active"))
@@ -277,7 +304,6 @@ def _reload_face_library(payload):
 
 
 def _maybe_load_faces_for_stream(payload, include_faces):
-    """Auto-load backend face records before stream processing when needed."""
     if not include_faces:
         return face_service.status()
 
@@ -294,7 +320,6 @@ def _maybe_load_faces_for_stream(payload, include_faces):
 
 
 def _should_load_faces_from_backend(payload):
-    """Decide whether stream processing should load employee faces from backend."""
     if "loadFacesFromBackend" in payload:
         return _to_bool(payload.get("loadFacesFromBackend"))
 
@@ -308,7 +333,6 @@ def _should_load_faces_from_backend(payload):
 
 
 def _resolve_zones(payload, camera_id):
-    """Resolve zones from payload or backend by camera_id."""
     zones = payload.get("zones")
     if isinstance(zones, list):
         return zones
@@ -320,7 +344,6 @@ def _resolve_zones(payload, camera_id):
 
 
 def _resolve_stream_source(payload):
-    """Resolve streamUrl directly or by looking up cameraId from backend."""
     camera_id = payload.get("cameraId")
     stream_url = payload.get("streamUrl")
     if stream_url:
@@ -340,7 +363,6 @@ def _resolve_stream_source(payload):
 
 
 def _bounded_frame_count(value):
-    """Clamp requested frame count to configured stream safety limit."""
     try:
         requested = int(value)
     except (TypeError, ValueError):
@@ -350,7 +372,6 @@ def _bounded_frame_count(value):
 
 
 def _to_bool(value):
-    """Convert common form/json truthy values to bool."""
     if isinstance(value, bool):
         return value
     if value is None:
@@ -361,7 +382,6 @@ def _to_bool(value):
 
 
 def _to_number(value):
-    """Convert numeric-looking value to int, otherwise keep original value."""
     if value in (None, ""):
         return None
     try:
@@ -371,7 +391,6 @@ def _to_number(value):
 
 
 def _first_present(*values):
-    """Return the first value that is not None."""
     for value in values:
         if value is not None:
             return value
@@ -379,7 +398,6 @@ def _first_present(*values):
 
 
 def _error_response(exc: Exception):
-    """Build consistent JSON error response from an exception."""
     return JSONResponse(
         status_code=500,
         content={"code": 500, "message": str(exc), "data": None},

@@ -22,6 +22,13 @@
 当前 AI 服务已实现：
 
 - `GET /health`: implemented
+- `GET /dependencies`: implemented
+- `POST /detect/person`: implemented
+- `POST /detect/frame`: implemented
+- `POST /process/stream`: implemented
+- `POST /streams/start`: implemented
+- `POST /streams/stop`: implemented
+- `GET /streams/status`: implemented
 - `GET /docs`: implemented
 - `GET /openapi.json`: implemented
 
@@ -987,6 +994,82 @@ GET /api/ai-results/
 ```
 
 状态说明：后端根据结果类型生成事件日志和告警。
+
+## AI Service Stream 带框流控制接口
+
+以下接口由 AI Service 提供，默认服务地址为 `http://127.0.0.1:9000`。这些接口不属于 Django 后端 `/api/` 路由。
+
+### 启动带框视频流处理
+
+| 项 | 内容 |
+| --- | --- |
+| 接口说明 | 启动后台任务，从原始 RTMP 流拉帧，检测并画框后回推带框 RTMP 流 |
+| URL | `/streams/start` |
+| Method | `POST` |
+| 状态 | implemented |
+
+请求参数：
+
+| 参数 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `cameraId` | number/string | 否 | 摄像头 ID，默认 `1` |
+| `streamUrl` / `inputUrl` | string | 否 | 原始输入流，默认 `rtmp://81.70.90.222:1935/live/1` |
+| `outputUrl` | string | 否 | AI 带框输出流，默认 `rtmp://81.70.90.222:1935/live/1_detected` |
+| `playUrl` | string | 否 | 前端播放地址，默认 `webrtc://webrtc.rainycode.cn:8443/live/1_detected` |
+| `mode` | string | 否 | `detect` 使用真实检测，`test` 仅画测试框 |
+| `includeFaces` | boolean | 否 | 是否执行人脸识别 |
+| `reportToBackend` | boolean | 否 | 是否将结构化结果上报后端 |
+| `maxFrames` | number | 否 | 调试用最大处理帧数，不传则持续运行 |
+
+请求示例：
+
+```json
+{
+  "cameraId": 1,
+  "streamUrl": "rtmp://81.70.90.222:1935/live/1",
+  "outputUrl": "rtmp://81.70.90.222:1935/live/1_detected",
+  "playUrl": "webrtc://webrtc.rainycode.cn:8443/live/1_detected",
+  "mode": "detect",
+  "includeFaces": false,
+  "reportToBackend": false
+}
+```
+
+响应示例：
+
+```json
+{
+  "code": 200,
+  "message": "success",
+  "data": {
+    "camera_id": 1,
+    "input_url": "rtmp://81.70.90.222:1935/live/1",
+    "output_url": "rtmp://81.70.90.222:1935/live/1_detected",
+    "play_url": "webrtc://webrtc.rainycode.cn:8443/live/1_detected",
+    "mode": "detect",
+    "running": true,
+    "processed_frames": 0
+  }
+}
+```
+
+### 停止带框视频流处理
+
+| 项 | 内容 |
+| --- | --- |
+| 接口说明 | 停止当前后台流处理任务 |
+| URL | `/streams/stop` |
+| Method | `POST` |
+| 状态 | implemented |
+
+### 查询带框视频流处理状态
+
+| 项 | 内容 |
+| --- | --- |
+| 接口说明 | 查询当前 AI 带框流任务运行状态、处理帧数和错误信息 |
+| URL | `/streams/status` |
+| Method | `GET` |
+| 状态 | implemented |
 
 ## WebSocket 接口
 

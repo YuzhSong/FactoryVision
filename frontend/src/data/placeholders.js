@@ -1,7 +1,7 @@
 export const systemStatus = [
   { label: 'Backend', value: 'healthy', type: 'success' },
-  { label: 'AI Service', value: 'planned', type: 'warning' },
-  { label: 'Video Stream', value: 'planned', type: 'info' },
+  { label: 'AI Service', value: 'processed stream', type: 'success' },
+  { label: 'Video Stream', value: 'SRS online', type: 'success' },
 ]
 
 export const cameras = [
@@ -9,8 +9,9 @@ export const cameras = [
     id: 1,
     name: '一号车间入口',
     location: '一号车间',
-    streamUrl: 'rtsp://example/camera-01',
-    playUrl: 'http://127.0.0.1:8888/camera-01/index.m3u8',
+    streamUrl: 'rtmp://81.70.90.222:1935/live/1',
+    detectedStreamUrl: 'rtmp://81.70.90.222:1935/live/1_detected',
+    playUrl: 'webrtc://webrtc.rainycode.cn:8443/live/1_detected',
     status: 'online',
   },
   {
