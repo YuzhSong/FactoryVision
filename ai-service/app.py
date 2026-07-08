@@ -65,6 +65,7 @@ frame_processor = FrameProcessor(
     abnormal_config={
         "runningSpeedThreshold": Config.RUNNING_SPEED_THRESHOLD,
         "helmetModelPath": Config.HELMET_MODEL_PATH,
+        "helmetModelProvider": Config.HELMET_MODEL_PROVIDER,
         "helmetDetectionConfidenceThreshold": Config.HELMET_CONFIDENCE_THRESHOLD,
         "helmetIouThreshold": Config.HELMET_IOU_THRESHOLD,
         "helmetConfidenceThreshold": Config.HELMET_WARNING_THRESHOLD,
@@ -72,6 +73,10 @@ frame_processor = FrameProcessor(
         "helmetImageSize": Config.HELMET_IMAGE_SIZE,
         "helmetHalfPrecision": Config.HELMET_HALF_PRECISION,
         "helmetCudnnBenchmark": Config.HELMET_CUDNN_BENCHMARK,
+        "helmetMatchUpperRatio": Config.HELMET_MATCH_UPPER_RATIO,
+        "helmetClassIds": Config.HELMET_CLASS_IDS,
+        "helmetClassId": Config.HELMET_CLASS_ID,
+        "noHelmetClassId": Config.NO_HELMET_CLASS_ID,
         "fallRatioThreshold": Config.FALL_RATIO_THRESHOLD,
         "fallConfirmFrames": Config.FALL_CONFIRM_FRAMES,
         "fallMinConfidence": Config.FALL_MIN_CONFIDENCE,
