@@ -10,6 +10,7 @@ from django.db import transaction
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
+from drf_spectacular.utils import OpenApiExample, extend_schema
 
 from apps.employees.models import Employee
 from common.response import api_response
@@ -58,6 +59,82 @@ def _call_ai_extract(image_base64: str) -> list:
     raise ValueError(msg)
 
 
+@extend_schema(
+    summary="人脸录入",
+    description="批量录入 3 张人脸图片（正脸/左脸/右脸），全部通过才写入数据库。该接口需要 Bearer JWT 认证。",
+    request=FaceEnrollSerializer,
+    responses={
+        200: None,
+        400: None,
+        404: None,
+        422: None,
+        500: None,
+    },
+    examples=[
+        OpenApiExample(
+            "Enroll request",
+            value={
+                "employeeId": 1,
+                "faces": [
+                    {"imageBase64": "data:image/jpeg;base64,...", "faceType": "front"},
+                    {"imageBase64": "data:image/jpeg;base64,...", "faceType": "left"},
+                    {"imageBase64": "data:image/jpeg;base64,...", "faceType": "right"},
+                ],
+            },
+            request_only=True,
+        ),
+        OpenApiExample(
+            "Enroll success",
+            value={
+                "code": 200,
+                "message": "success",
+                "data": {
+                    "results": [
+                        {"faceType": "front", "faceFeatureId": 1},
+                        {"faceType": "left", "faceFeatureId": 2},
+                        {"faceType": "right", "faceFeatureId": 3},
+                    ]
+                },
+                "requestId": "uuid",
+            },
+            response_only=True,
+            status_codes=["200"],
+        ),
+        OpenApiExample(
+            "Employee not found",
+            value={
+                "code": 404,
+                "message": "员工不存在",
+                "data": None,
+                "requestId": "uuid",
+            },
+            response_only=True,
+            status_codes=["404"],
+        ),
+        OpenApiExample(
+            "No face detected",
+            value={
+                "code": 422,
+                "message": "未检测到人脸",
+                "data": None,
+                "requestId": "uuid",
+            },
+            response_only=True,
+            status_codes=["422"],
+        ),
+        OpenApiExample(
+            "AI unavailable",
+            value={
+                "code": 500,
+                "message": "AI 服务暂不可用，请稍后重试",
+                "data": None,
+                "requestId": "uuid",
+            },
+            response_only=True,
+            status_codes=["500"],
+        ),
+    ],
+)
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
 def face_enroll_view(request):
