@@ -200,6 +200,106 @@ sequenceDiagram
     Backend-->>Client: eventIds, alertIds
 ```
 
+## 人脸编码提取接口
+
+Django 后端在员工人脸录入时调用此接口，获取 128 维人脸特征编码。
+
+调用方：**Django Backend**
+
+### 接口定义
+
+| 项 | 内容 |
+| --- | --- |
+| 接口说明 | 提取单张图片的人脸编码 |
+| URL | `/faces/extract` |
+| Method | `POST` |
+| 状态 | planned |
+
+### 请求参数
+
+| 参数 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `imageBase64` | string | 是 | 人脸图片 base64，支持 data URL 前缀 |
+
+请求示例：
+
+```json
+{
+  "imageBase64": "data:image/jpeg;base64,/9j/4AAQ..."
+}
+```
+
+### 响应
+
+成功（检测到合格人脸）：
+
+```json
+{
+  "code": 200,
+  "data": {
+    "featureVector": [0.12, -0.34, 0.56, "..."]
+  }
+}
+```
+
+失败——未检测到人脸：
+
+```json
+{
+  "code": 422,
+  "message": "未检测到人脸",
+  "data": null
+}
+```
+
+失败——图片质量不足（det_score 低于阈值）：
+
+```json
+{
+  "code": 422,
+  "message": "图片质量不足",
+  "data": null
+}
+```
+
+失败——图片无法解码：
+
+```json
+{
+  "code": 400,
+  "message": "无法解码图片",
+  "data": null
+}
+```
+
+### 处理流程
+
+```
+Django 传入 imageBase64
+    │
+    ├── _load_image → 自动识别 base64 → 解码为 BGR 帧
+    │
+    ├── _detect_faces → InsightFace 检测
+    │       │
+    │       ├── 0 个人脸 → HTTP 422 "未检测到人脸"
+    │       │
+    │       └── 检测到人脸 → 获取 det_score
+    │               │
+    │               ├── det_score < 阈值 → HTTP 422 "图片质量不足"
+    │               │
+    │               └── det_score >= 阈值 → _face_embedding()
+    │                       │
+    │                       └── HTTP 200 {featureVector: [归一化 128 维向量]}
+    │
+    └── cv2.imdecode 失败 → HTTP 400 "无法解码图片"
+```
+
+### 设计约束
+
+1. 质量阈值由 AI Service 内部控制，不对外暴露。
+2. AI Service 不存储图片和编码，处理完即丢弃。
+3. 此接口仅供 Django 后端内部调用，前端不直接访问。
+
 ## 带框视频流流程
 
 ```mermaid
