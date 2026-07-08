@@ -1,0 +1,1160 @@
+{
+    "openapi": "3.0.3",
+    "info": {
+        "title": "Smart Factory Vision API",
+        "version": "0.1.0",
+        "description": "API skeleton for Smart Factory Real-time Video Analysis and Safety Monitoring System."
+    },
+    "paths": {
+        "/api/ai-results/": {
+            "get": {
+                "operationId": "api_ai_results_retrieve",
+                "description": "返回 AI 结果模块当前占位状态，用于确认路由和模块边界存在。",
+                "summary": "AI 结果模块占位接口",
+                "tags": [
+                    "api"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    },
+                    {}
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/AIResultPlaceholder"
+                                },
+                                "examples": {
+                                    "AIResultsPlaceholder": {
+                                        "value": {
+                                            "code": 200,
+                                            "message": "AI results module placeholder",
+                                            "data": {
+                                                "module": "ai_results",
+                                                "status": "placeholder"
+                                            },
+                                            "requestId": "uuid"
+                                        },
+                                        "summary": "AI results placeholder"
+                                    }
+                                }
+                            }
+                        },
+                        "description": ""
+                    }
+                }
+            }
+        },
+        "/api/ai-results/report/": {
+            "post": {
+                "operationId": "api_ai_results_report_create",
+                "description": "AI 服务向后端上报单帧检测结果。当前接口校验 payload，并返回已接收结果数量。",
+                "summary": "上报 AI 分析结果",
+                "tags": [
+                    "api"
+                ],
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/AIResultReport"
+                            },
+                            "examples": {
+                                "AIReportRequest": {
+                                    "value": {
+                                        "cameraId": 1,
+                                        "frameId": "frame-001",
+                                        "timestamp": "2026-07-08T10:00:00+08:00",
+                                        "results": [
+                                            {
+                                                "type": "PERSON_DETECTION",
+                                                "trackId": "t-1",
+                                                "bbox": {
+                                                    "x": 120,
+                                                    "y": 80,
+                                                    "w": 180,
+                                                    "h": 320
+                                                }
+                                            }
+                                        ]
+                                    },
+                                    "summary": "AI report request"
+                                }
+                            }
+                        },
+                        "application/x-www-form-urlencoded": {
+                            "schema": {
+                                "$ref": "#/components/schemas/AIResultReport"
+                            }
+                        },
+                        "multipart/form-data": {
+                            "schema": {
+                                "$ref": "#/components/schemas/AIResultReport"
+                            }
+                        }
+                    },
+                    "required": true
+                },
+                "security": [
+                    {
+                        "jwtAuth": []
+                    },
+                    {}
+                ],
+                "responses": {
+                    "200": {
+                        "description": "No response body"
+                    },
+                    "400": {
+                        "description": "No response body"
+                    }
+                }
+            }
+        },
+        "/api/attendance/": {
+            "get": {
+                "operationId": "api_attendance_retrieve",
+                "description": "返回考勤模块当前占位状态，用于确认路由和模块边界存在。",
+                "summary": "考勤模块占位接口",
+                "tags": [
+                    "api"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    },
+                    {}
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/AttendancePlaceholder"
+                                },
+                                "examples": {
+                                    "AttendancePlaceholder": {
+                                        "value": {
+                                            "code": 200,
+                                            "message": "Attendance module placeholder",
+                                            "data": {
+                                                "module": "attendance",
+                                                "status": "placeholder"
+                                            },
+                                            "requestId": "uuid"
+                                        },
+                                        "summary": "Attendance placeholder"
+                                    }
+                                }
+                            }
+                        },
+                        "description": ""
+                    }
+                }
+            }
+        },
+        "/api/auth/": {
+            "get": {
+                "operationId": "api_auth_retrieve",
+                "description": "返回用户模块当前占位状态，用于确认路由和模块边界存在。",
+                "summary": "用户模块占位接口",
+                "tags": [
+                    "api"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    },
+                    {}
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/UserPlaceholder"
+                                },
+                                "examples": {
+                                    "UsersPlaceholder": {
+                                        "value": {
+                                            "code": 200,
+                                            "message": "Users module placeholder",
+                                            "data": {
+                                                "module": "users",
+                                                "status": "placeholder"
+                                            },
+                                            "requestId": "uuid"
+                                        },
+                                        "summary": "Users placeholder"
+                                    }
+                                }
+                            }
+                        },
+                        "description": ""
+                    }
+                }
+            }
+        },
+        "/api/auth/login/": {
+            "post": {
+                "operationId": "api_auth_login_create",
+                "description": "使用用户名和密码登录。认证成功后返回 Bearer JWT token 和用户信息。",
+                "summary": "用户登录",
+                "tags": [
+                    "api"
+                ],
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/Login"
+                            },
+                            "examples": {
+                                "LoginRequest": {
+                                    "value": {
+                                        "username": "admin",
+                                        "password": "password"
+                                    },
+                                    "summary": "Login request"
+                                }
+                            }
+                        },
+                        "application/x-www-form-urlencoded": {
+                            "schema": {
+                                "$ref": "#/components/schemas/Login"
+                            }
+                        },
+                        "multipart/form-data": {
+                            "schema": {
+                                "$ref": "#/components/schemas/Login"
+                            }
+                        }
+                    },
+                    "required": true
+                },
+                "security": [
+                    {
+                        "jwtAuth": []
+                    },
+                    {}
+                ],
+                "responses": {
+                    "200": {
+                        "description": "No response body"
+                    },
+                    "400": {
+                        "description": "No response body"
+                    },
+                    "401": {
+                        "description": "No response body"
+                    },
+                    "403": {
+                        "description": "No response body"
+                    }
+                }
+            }
+        },
+        "/api/auth/logout/": {
+            "post": {
+                "operationId": "api_auth_logout_create",
+                "description": "JWT 无状态登出接口。后端返回成功，前端负责清理本地 token。该接口需要 Bearer JWT 认证。",
+                "summary": "用户登出",
+                "tags": [
+                    "api"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "No response body"
+                    },
+                    "401": {
+                        "description": "No response body"
+                    }
+                }
+            }
+        },
+        "/api/auth/me/": {
+            "get": {
+                "operationId": "api_auth_me_retrieve",
+                "description": "返回当前 Bearer JWT 对应的用户信息。该接口需要 Bearer JWT 认证。",
+                "summary": "获取当前用户",
+                "tags": [
+                    "api"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/User"
+                                },
+                                "examples": {
+                                    "CurrentUser": {
+                                        "value": {
+                                            "code": 200,
+                                            "message": "success",
+                                            "data": {
+                                                "id": 1,
+                                                "username": "admin",
+                                                "role": "admin"
+                                            },
+                                            "requestId": "uuid"
+                                        },
+                                        "summary": "Current user"
+                                    }
+                                }
+                            }
+                        },
+                        "description": ""
+                    },
+                    "401": {
+                        "description": "No response body"
+                    }
+                }
+            }
+        },
+        "/api/cameras/": {
+            "get": {
+                "operationId": "api_cameras_retrieve",
+                "description": "返回摄像头模块当前占位状态，用于确认路由和模块边界存在。",
+                "summary": "摄像头模块占位接口",
+                "tags": [
+                    "api"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    },
+                    {}
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/CameraPlaceholder"
+                                },
+                                "examples": {
+                                    "CamerasPlaceholder": {
+                                        "value": {
+                                            "code": 200,
+                                            "message": "Cameras module placeholder",
+                                            "data": {
+                                                "module": "cameras",
+                                                "status": "placeholder"
+                                            },
+                                            "requestId": "uuid"
+                                        },
+                                        "summary": "Cameras placeholder"
+                                    }
+                                }
+                            }
+                        },
+                        "description": ""
+                    }
+                }
+            }
+        },
+        "/api/employees/": {
+            "get": {
+                "operationId": "api_employees_retrieve",
+                "description": "返回员工模块当前占位状态，用于确认路由和模块边界存在。",
+                "summary": "员工模块占位接口",
+                "tags": [
+                    "api"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    },
+                    {}
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/EmployeePlaceholder"
+                                },
+                                "examples": {
+                                    "EmployeesPlaceholder": {
+                                        "value": {
+                                            "code": 200,
+                                            "message": "Employees module placeholder",
+                                            "data": {
+                                                "module": "employees",
+                                                "status": "placeholder"
+                                            },
+                                            "requestId": "uuid"
+                                        },
+                                        "summary": "Employees placeholder"
+                                    }
+                                }
+                            }
+                        },
+                        "description": ""
+                    }
+                }
+            },
+            "post": {
+                "operationId": "api_employees_create",
+                "description": "新增员工档案。工号重复时返回 409。",
+                "summary": "创建员工",
+                "tags": [
+                    "api"
+                ],
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/EmployeeCreate"
+                            },
+                            "examples": {
+                                "CreateEmployeeRequest": {
+                                    "value": {
+                                        "employeeNo": "E001",
+                                        "name": "张三",
+                                        "department": "生产部",
+                                        "position": "操作员",
+                                        "phone": "13800000000"
+                                    },
+                                    "summary": "Create employee request"
+                                }
+                            }
+                        },
+                        "application/x-www-form-urlencoded": {
+                            "schema": {
+                                "$ref": "#/components/schemas/EmployeeCreate"
+                            }
+                        },
+                        "multipart/form-data": {
+                            "schema": {
+                                "$ref": "#/components/schemas/EmployeeCreate"
+                            }
+                        }
+                    },
+                    "required": true
+                },
+                "security": [
+                    {
+                        "jwtAuth": []
+                    },
+                    {}
+                ],
+                "responses": {
+                    "200": {
+                        "description": "No response body"
+                    },
+                    "400": {
+                        "description": "No response body"
+                    },
+                    "409": {
+                        "description": "No response body"
+                    }
+                }
+            }
+        },
+        "/api/employees/list/": {
+            "get": {
+                "operationId": "api_employees_list_list",
+                "description": "查询员工档案列表。该接口需要 Bearer JWT 认证。",
+                "summary": "查询员工列表",
+                "parameters": [
+                    {
+                        "in": "query",
+                        "name": "department",
+                        "schema": {
+                            "type": "string"
+                        },
+                        "description": "部门筛选，可选"
+                    },
+                    {
+                        "in": "query",
+                        "name": "page",
+                        "schema": {
+                            "type": "integer"
+                        },
+                        "description": "页码，正整数，默认 1"
+                    },
+                    {
+                        "in": "query",
+                        "name": "pageSize",
+                        "schema": {
+                            "type": "integer"
+                        },
+                        "description": "每页数量，正整数，默认 20"
+                    },
+                    {
+                        "in": "query",
+                        "name": "status",
+                        "schema": {
+                            "type": "string"
+                        },
+                        "description": "员工状态，可选：active/inactive"
+                    }
+                ],
+                "tags": [
+                    "api"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "array",
+                                    "items": {
+                                        "$ref": "#/components/schemas/EmployeeList"
+                                    }
+                                },
+                                "examples": {
+                                    "EmployeeListResponse": {
+                                        "value": [
+                                            {
+                                                "code": 200,
+                                                "message": "success",
+                                                "data": {
+                                                    "total": 1,
+                                                    "items": [
+                                                        {
+                                                            "id": 1,
+                                                            "employeeNo": "E001",
+                                                            "name": "张三",
+                                                            "department": "生产部",
+                                                            "position": "操作员",
+                                                            "phone": "13800000000",
+                                                            "status": "active"
+                                                        }
+                                                    ]
+                                                },
+                                                "requestId": "uuid"
+                                            }
+                                        ],
+                                        "summary": "Employee list response"
+                                    }
+                                }
+                            }
+                        },
+                        "description": ""
+                    },
+                    "400": {
+                        "description": "No response body"
+                    },
+                    "401": {
+                        "description": "No response body"
+                    }
+                }
+            }
+        },
+        "/api/events/": {
+            "get": {
+                "operationId": "api_events_retrieve",
+                "description": "返回事件模块当前占位状态，用于确认路由和模块边界存在。",
+                "summary": "事件模块占位接口",
+                "tags": [
+                    "api"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    },
+                    {}
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/EventPlaceholder"
+                                },
+                                "examples": {
+                                    "EventsPlaceholder": {
+                                        "value": {
+                                            "code": 200,
+                                            "message": "Events module placeholder",
+                                            "data": {
+                                                "module": "events",
+                                                "status": "placeholder"
+                                            },
+                                            "requestId": "uuid"
+                                        },
+                                        "summary": "Events placeholder"
+                                    }
+                                }
+                            }
+                        },
+                        "description": ""
+                    }
+                }
+            }
+        },
+        "/api/health/": {
+            "get": {
+                "operationId": "api_health_retrieve",
+                "description": "返回后端服务健康状态。",
+                "summary": "后端健康检查",
+                "tags": [
+                    "api"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    },
+                    {}
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/HealthCheck"
+                                },
+                                "examples": {
+                                    "HealthCheck": {
+                                        "value": {
+                                            "code": 200,
+                                            "message": "Backend service is healthy",
+                                            "data": {
+                                                "service": "backend",
+                                                "status": "ok",
+                                                "stage": "skeleton"
+                                            },
+                                            "requestId": "uuid"
+                                        },
+                                        "summary": "Health check"
+                                    }
+                                }
+                            }
+                        },
+                        "description": ""
+                    }
+                }
+            }
+        },
+        "/api/users/": {
+            "get": {
+                "operationId": "api_users_retrieve",
+                "description": "返回用户模块当前占位状态，用于确认路由和模块边界存在。",
+                "summary": "用户模块占位接口",
+                "tags": [
+                    "api"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    },
+                    {}
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/UserPlaceholder"
+                                },
+                                "examples": {
+                                    "UsersPlaceholder": {
+                                        "value": {
+                                            "code": 200,
+                                            "message": "Users module placeholder",
+                                            "data": {
+                                                "module": "users",
+                                                "status": "placeholder"
+                                            },
+                                            "requestId": "uuid"
+                                        },
+                                        "summary": "Users placeholder"
+                                    }
+                                }
+                            }
+                        },
+                        "description": ""
+                    }
+                }
+            }
+        },
+        "/api/users/login/": {
+            "post": {
+                "operationId": "api_users_login_create",
+                "description": "使用用户名和密码登录。认证成功后返回 Bearer JWT token 和用户信息。",
+                "summary": "用户登录",
+                "tags": [
+                    "api"
+                ],
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/Login"
+                            },
+                            "examples": {
+                                "LoginRequest": {
+                                    "value": {
+                                        "username": "admin",
+                                        "password": "password"
+                                    },
+                                    "summary": "Login request"
+                                }
+                            }
+                        },
+                        "application/x-www-form-urlencoded": {
+                            "schema": {
+                                "$ref": "#/components/schemas/Login"
+                            }
+                        },
+                        "multipart/form-data": {
+                            "schema": {
+                                "$ref": "#/components/schemas/Login"
+                            }
+                        }
+                    },
+                    "required": true
+                },
+                "security": [
+                    {
+                        "jwtAuth": []
+                    },
+                    {}
+                ],
+                "responses": {
+                    "200": {
+                        "description": "No response body"
+                    },
+                    "400": {
+                        "description": "No response body"
+                    },
+                    "401": {
+                        "description": "No response body"
+                    },
+                    "403": {
+                        "description": "No response body"
+                    }
+                }
+            }
+        },
+        "/api/users/logout/": {
+            "post": {
+                "operationId": "api_users_logout_create",
+                "description": "JWT 无状态登出接口。后端返回成功，前端负责清理本地 token。该接口需要 Bearer JWT 认证。",
+                "summary": "用户登出",
+                "tags": [
+                    "api"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "No response body"
+                    },
+                    "401": {
+                        "description": "No response body"
+                    }
+                }
+            }
+        },
+        "/api/users/me/": {
+            "get": {
+                "operationId": "api_users_me_retrieve",
+                "description": "返回当前 Bearer JWT 对应的用户信息。该接口需要 Bearer JWT 认证。",
+                "summary": "获取当前用户",
+                "tags": [
+                    "api"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/User"
+                                },
+                                "examples": {
+                                    "CurrentUser": {
+                                        "value": {
+                                            "code": 200,
+                                            "message": "success",
+                                            "data": {
+                                                "id": 1,
+                                                "username": "admin",
+                                                "role": "admin"
+                                            },
+                                            "requestId": "uuid"
+                                        },
+                                        "summary": "Current user"
+                                    }
+                                }
+                            }
+                        },
+                        "description": ""
+                    },
+                    "401": {
+                        "description": "No response body"
+                    }
+                }
+            }
+        },
+        "/api/zones/": {
+            "get": {
+                "operationId": "api_zones_retrieve",
+                "description": "返回区域模块当前占位状态，用于确认路由和模块边界存在。",
+                "summary": "区域模块占位接口",
+                "tags": [
+                    "api"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    },
+                    {}
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ZonePlaceholder"
+                                },
+                                "examples": {
+                                    "ZonesPlaceholder": {
+                                        "value": {
+                                            "code": 200,
+                                            "message": "Zones module placeholder",
+                                            "data": {
+                                                "module": "zones",
+                                                "status": "placeholder"
+                                            },
+                                            "requestId": "uuid"
+                                        },
+                                        "summary": "Zones placeholder"
+                                    }
+                                }
+                            }
+                        },
+                        "description": ""
+                    }
+                }
+            }
+        }
+    },
+    "components": {
+        "schemas": {
+            "AIResultPlaceholder": {
+                "type": "object",
+                "properties": {
+                    "module": {
+                        "type": "string",
+                        "default": "ai_results"
+                    },
+                    "status": {
+                        "type": "string",
+                        "default": "placeholder"
+                    }
+                }
+            },
+            "AIResultReport": {
+                "type": "object",
+                "properties": {
+                    "cameraId": {
+                        "type": "integer",
+                        "minimum": 1
+                    },
+                    "frameId": {
+                        "type": "string"
+                    },
+                    "timestamp": {
+                        "type": "string",
+                        "format": "date-time"
+                    },
+                    "results": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "additionalProperties": {}
+                        }
+                    }
+                },
+                "required": [
+                    "cameraId",
+                    "frameId",
+                    "results",
+                    "timestamp"
+                ]
+            },
+            "AttendancePlaceholder": {
+                "type": "object",
+                "properties": {
+                    "module": {
+                        "type": "string",
+                        "default": "attendance"
+                    },
+                    "status": {
+                        "type": "string",
+                        "default": "placeholder"
+                    }
+                }
+            },
+            "CameraPlaceholder": {
+                "type": "object",
+                "properties": {
+                    "module": {
+                        "type": "string",
+                        "default": "cameras"
+                    },
+                    "status": {
+                        "type": "string",
+                        "default": "placeholder"
+                    }
+                }
+            },
+            "EmployeeCreate": {
+                "type": "object",
+                "description": "创建员工——参数校验。",
+                "properties": {
+                    "employeeNo": {
+                        "type": "string",
+                        "maxLength": 64
+                    },
+                    "name": {
+                        "type": "string",
+                        "maxLength": 64
+                    },
+                    "department": {
+                        "type": "string",
+                        "default": "",
+                        "maxLength": 128
+                    },
+                    "position": {
+                        "type": "string",
+                        "default": "",
+                        "maxLength": 128
+                    },
+                    "phone": {
+                        "type": "string",
+                        "default": "",
+                        "maxLength": 32
+                    }
+                },
+                "required": [
+                    "employeeNo",
+                    "name"
+                ]
+            },
+            "EmployeeList": {
+                "type": "object",
+                "description": "员工列表输出。",
+                "properties": {
+                    "id": {
+                        "type": "integer",
+                        "readOnly": true
+                    },
+                    "employeeNo": {
+                        "type": "string"
+                    },
+                    "name": {
+                        "type": "string",
+                        "readOnly": true,
+                        "title": "姓名"
+                    },
+                    "department": {
+                        "type": "string",
+                        "readOnly": true,
+                        "title": "部门"
+                    },
+                    "position": {
+                        "type": "string",
+                        "readOnly": true,
+                        "title": "岗位"
+                    },
+                    "phone": {
+                        "type": "string",
+                        "readOnly": true,
+                        "title": "手机号"
+                    },
+                    "status": {
+                        "allOf": [
+                            {
+                                "$ref": "#/components/schemas/StatusEnum"
+                            }
+                        ],
+                        "readOnly": true,
+                        "title": "状态"
+                    }
+                },
+                "required": [
+                    "department",
+                    "employeeNo",
+                    "id",
+                    "name",
+                    "phone",
+                    "position",
+                    "status"
+                ]
+            },
+            "EmployeePlaceholder": {
+                "type": "object",
+                "description": "保留原占位序列化器，供占位接口使用。",
+                "properties": {
+                    "module": {
+                        "type": "string",
+                        "default": "employees"
+                    },
+                    "status": {
+                        "type": "string",
+                        "default": "placeholder"
+                    }
+                }
+            },
+            "EventPlaceholder": {
+                "type": "object",
+                "properties": {
+                    "module": {
+                        "type": "string",
+                        "default": "events"
+                    },
+                    "status": {
+                        "type": "string",
+                        "default": "placeholder"
+                    }
+                }
+            },
+            "HealthCheck": {
+                "type": "object",
+                "properties": {
+                    "service": {
+                        "type": "string",
+                        "default": "backend"
+                    },
+                    "status": {
+                        "type": "string",
+                        "default": "ok"
+                    },
+                    "stage": {
+                        "type": "string",
+                        "default": "skeleton"
+                    }
+                }
+            },
+            "Login": {
+                "type": "object",
+                "description": "登录请求参数校验。",
+                "properties": {
+                    "username": {
+                        "type": "string",
+                        "maxLength": 150
+                    },
+                    "password": {
+                        "type": "string",
+                        "maxLength": 128
+                    }
+                },
+                "required": [
+                    "password",
+                    "username"
+                ]
+            },
+            "RoleEnum": {
+                "enum": [
+                    "admin",
+                    "operator"
+                ],
+                "type": "string",
+                "description": "* `admin` - 管理员\n* `operator` - 安保员"
+            },
+            "StatusEnum": {
+                "enum": [
+                    "active",
+                    "inactive"
+                ],
+                "type": "string",
+                "description": "* `active` - 在职\n* `inactive` - 停用"
+            },
+            "User": {
+                "type": "object",
+                "description": "用户信息输出。",
+                "properties": {
+                    "id": {
+                        "type": "integer",
+                        "readOnly": true
+                    },
+                    "username": {
+                        "type": "string",
+                        "readOnly": true,
+                        "title": "用户名",
+                        "description": "必填；长度为150个字符或以下；只能包含字母、数字、特殊字符“@”、“.”、“-”和“_”。"
+                    },
+                    "role": {
+                        "allOf": [
+                            {
+                                "$ref": "#/components/schemas/RoleEnum"
+                            }
+                        ],
+                        "readOnly": true,
+                        "title": "角色"
+                    }
+                },
+                "required": [
+                    "id",
+                    "role",
+                    "username"
+                ]
+            },
+            "UserPlaceholder": {
+                "type": "object",
+                "description": "保留原占位序列化器，供占位接口使用。",
+                "properties": {
+                    "module": {
+                        "type": "string",
+                        "default": "users"
+                    },
+                    "status": {
+                        "type": "string",
+                        "default": "placeholder"
+                    }
+                }
+            },
+            "ZonePlaceholder": {
+                "type": "object",
+                "properties": {
+                    "module": {
+                        "type": "string",
+                        "default": "zones"
+                    },
+                    "status": {
+                        "type": "string",
+                        "default": "placeholder"
+                    }
+                }
+            }
+        },
+        "securitySchemes": {
+            "jwtAuth": {
+                "type": "http",
+                "scheme": "bearer",
+                "bearerFormat": "JWT"
+            }
+        }
+    }
+}
