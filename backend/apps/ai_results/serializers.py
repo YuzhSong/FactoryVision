@@ -7,10 +7,11 @@ class AIResultPlaceholderSerializer(serializers.Serializer):
 
 
 class AIResultReportSerializer(serializers.Serializer):
-    cameraId = serializers.IntegerField(min_value=1)
-    frameId = serializers.CharField()
+    cameraId = serializers.CharField()
+    frameId = serializers.CharField(required=False, allow_blank=True, default="")
     timestamp = serializers.DateTimeField()
     results = serializers.ListField(child=serializers.DictField(), allow_empty=True)
+    eventMedia = serializers.ListField(child=serializers.DictField(), required=False, default=list)
 
 
 class HealthCheckSerializer(serializers.Serializer):
