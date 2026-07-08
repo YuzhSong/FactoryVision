@@ -12,6 +12,14 @@ from .serializers import (
 )
 
 
+def _parse_positive_int(value):
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed > 0 else None
+
+
 @api_view(["GET", "POST"])
 def employee_root_view(request):
     """
@@ -67,8 +75,16 @@ def employee_list_view(request):
     参数: page, pageSize, department(可选), status(可选)
     返回: total + items
     """
-    page = int(request.query_params.get("page", 1))
-    page_size = int(request.query_params.get("pageSize", 20))
+    page = _parse_positive_int(request.query_params.get("page", 1))
+    page_size = _parse_positive_int(request.query_params.get("pageSize", 20))
+    if page is None or page_size is None:
+        return api_response(
+            code=400,
+            message="分页参数必须为正整数",
+            data=None,
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
     department = request.query_params.get("department", "")
     emp_status = request.query_params.get("status", "")
 
