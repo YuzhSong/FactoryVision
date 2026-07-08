@@ -328,7 +328,7 @@ GET /api/employees/
 | Method | `GET` |
 | 状态 | planned |
 
-请求参数：通用分页参数，可增加 `department`、`status`。
+请求参数：通用分页参数，可增加 `keyword`（模糊匹配姓名或工号）、`department`、`status`。
 
 请求示例：
 

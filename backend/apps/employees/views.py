@@ -1,3 +1,4 @@
+from django.db import models
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
@@ -132,10 +133,11 @@ def employee_root_view(request):
 
 @extend_schema(
     summary="查询员工列表",
-    description="查询员工档案列表。该接口需要 Bearer JWT 认证。",
+    description="查询员工档案列表，支持按关键词模糊匹配姓名或工号。该接口需要 Bearer JWT 认证。",
     parameters=[
         OpenApiParameter("page", OpenApiTypes.INT, OpenApiParameter.QUERY, description="页码，正整数，默认 1"),
         OpenApiParameter("pageSize", OpenApiTypes.INT, OpenApiParameter.QUERY, description="每页数量，正整数，默认 20"),
+        OpenApiParameter("keyword", OpenApiTypes.STR, OpenApiParameter.QUERY, description="关键词，模糊匹配姓名或工号，可选"),
         OpenApiParameter("department", OpenApiTypes.STR, OpenApiParameter.QUERY, description="部门筛选，可选"),
         OpenApiParameter("status", OpenApiTypes.STR, OpenApiParameter.QUERY, description="员工状态，可选：active/inactive"),
     ],
@@ -189,7 +191,7 @@ def employee_list_view(request):
     查询员工列表（分页）。
 
     GET /api/employees/list/
-    参数: page, pageSize, department(可选), status(可选)
+    参数: page, pageSize, keyword(可选), department(可选), status(可选)
     返回: total + items
     """
     page = _parse_positive_int(request.query_params.get("page", 1))
@@ -202,11 +204,16 @@ def employee_list_view(request):
             status=status.HTTP_400_BAD_REQUEST,
         )
 
+    keyword = request.query_params.get("keyword", "")
     department = request.query_params.get("department", "")
     emp_status = request.query_params.get("status", "")
 
     qs = Employee.objects.all()
 
+    if keyword:
+        qs = qs.filter(
+            models.Q(name__icontains=keyword) | models.Q(employee_no__icontains=keyword)
+        )
     if department:
         qs = qs.filter(department=department)
     if emp_status:
