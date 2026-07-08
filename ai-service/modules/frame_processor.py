@@ -41,6 +41,12 @@ class FrameProcessor:
             self.abnormal_service.zone_detector.set_zones(zones)
 
         person_results = self.person_detector.detect(frame, frame_id=frame_id)
+        helmet_results = self.abnormal_service.helmet_detector.detect(
+            frame,
+            person_detections=person_results,
+            frame_id=frame_id,
+        )
+        self._apply_helmet_results(person_results, helmet_results)
         self._update_track_histories(person_results, timestamp=timestamp, frame_index=frame_index, fps=fps)
 
         report = self.abnormal_service.build_ai_report(
@@ -126,6 +132,17 @@ class FrameProcessor:
 
         return math.dist(previous_center, current_center) / elapsed_seconds
 
+    def _apply_helmet_results(self, person_results, helmet_results):
+        """Attach best helmet status per track to person detections."""
+        helmet_by_track = _best_helmet_by_track(helmet_results)
+        for detection in person_results:
+            helmet = helmet_by_track.get(detection.get("trackId"))
+            if not helmet:
+                continue
+            detection["helmetStatus"] = helmet.get("helmetStatus")
+            detection["helmetConfidence"] = helmet.get("helmetConfidence")
+            detection["helmetClassName"] = helmet.get("className")
+
 
 def _bbox_to_list(bbox):
     if isinstance(bbox, dict):
@@ -171,3 +188,24 @@ def _parse_timestamp(value):
         return datetime.fromisoformat(normalized).timestamp()
     except ValueError:
         return None
+
+
+def _best_helmet_by_track(helmet_results):
+    """Pick the strongest helmet result for each person track."""
+    best_by_track = {}
+    for result in helmet_results or []:
+        track_id = result.get("trackId")
+        if not track_id:
+            continue
+
+        current = best_by_track.get(track_id)
+        if current is None or _helmet_priority(result) > _helmet_priority(current):
+            best_by_track[track_id] = result
+    return best_by_track
+
+
+def _helmet_priority(result):
+    """Prioritize no-helmet detections, then confidence."""
+    severity = 1 if result.get("helmetStatus") == "no_helmet" else 0
+    confidence = float(result.get("helmetConfidence") or 0)
+    return severity, confidence

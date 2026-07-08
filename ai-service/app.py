@@ -53,7 +53,17 @@ frame_processor = FrameProcessor(
     person_detector=person_detector,
     face_service=face_service,
     history_limit=Config.MAX_HISTORY_POINTS,
-    abnormal_config={"runningSpeedThreshold": Config.RUNNING_SPEED_THRESHOLD},
+    abnormal_config={
+        "runningSpeedThreshold": Config.RUNNING_SPEED_THRESHOLD,
+        "helmetModelPath": Config.HELMET_MODEL_PATH,
+        "helmetDetectionConfidenceThreshold": Config.HELMET_CONFIDENCE_THRESHOLD,
+        "helmetIouThreshold": Config.HELMET_IOU_THRESHOLD,
+        "helmetConfidenceThreshold": Config.HELMET_WARNING_THRESHOLD,
+        "helmetDevice": Config.HELMET_DEVICE,
+        "helmetImageSize": Config.HELMET_IMAGE_SIZE,
+        "helmetHalfPrecision": Config.HELMET_HALF_PRECISION,
+        "helmetCudnnBenchmark": Config.HELMET_CUDNN_BENCHMARK,
+    },
 )
 
 processed_stream_service = ProcessedStreamService(
