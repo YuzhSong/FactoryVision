@@ -2,6 +2,8 @@ from datetime import datetime, timezone
 import math
 
 from .abnormal_behavior_service import AbnormalBehaviorService
+from .employee_presence_detector import EmployeePresenceDetector
+from .stranger_detector import StrangerDetector
 
 
 class FrameProcessor:
@@ -18,7 +20,18 @@ class FrameProcessor:
         """Initialize frame processor with detectors, zones, and history settings."""
         self.person_detector = person_detector
         self.face_service = face_service
+        abnormal_config = abnormal_config or {}
         self.abnormal_service = AbnormalBehaviorService(zones=zones or [], config=abnormal_config)
+        self.stranger_detector = StrangerDetector(
+            confirm_frames=abnormal_config.get("strangerConfirmFrames", 3),
+            cooldown_seconds=abnormal_config.get("strangerCooldownSeconds", 30.0),
+            match_distance_threshold=abnormal_config.get("strangerMatchDistanceThreshold", 80.0),
+            state_ttl_seconds=abnormal_config.get("strangerStateTtlSeconds", 10.0),
+        )
+        self.employee_presence_detector = EmployeePresenceDetector(
+            absence_timeout_seconds=abnormal_config.get("employeeAbsenceTimeoutSeconds", 60.0),
+            min_similarity=abnormal_config.get("employeePresenceMinSimilarity", 0.0),
+        )
         self.track_histories = {}
         self.history_limit = history_limit
 
@@ -65,17 +78,35 @@ class FrameProcessor:
                 frame_id=frame_id,
             )
 
+        presence_results = []
+        if include_faces and self.face_service is not None:
+            presence_results = self.employee_presence_detector.detect(
+                face_results,
+                camera_id=camera_id,
+                frame_id=frame_id,
+                timestamp=timestamp,
+            )
+
+        stranger_results = self.stranger_detector.detect(
+            face_results,
+            camera_id=camera_id,
+            frame_id=frame_id,
+            timestamp=timestamp,
+        )
+
         non_person_results = [
             result
             for result in report["results"]
             if result.get("type") != "PERSON_DETECTION"
         ]
-        report["results"] = person_results + face_results + non_person_results
+        report["results"] = person_results + face_results + stranger_results + presence_results + non_person_results
         return report
 
     def reset(self):
         """Reset track history and person detector tracking state."""
         self.track_histories = {}
+        self.stranger_detector.reset()
+        self.employee_presence_detector.reset()
         if hasattr(self.person_detector, "reset_tracks"):
             self.person_detector.reset_tracks()
 
@@ -95,6 +126,9 @@ class FrameProcessor:
                 "center": center,
                 "bbox": bbox,
             }
+            keypoints = _extract_keypoints(detection)
+            if keypoints:
+                entry["keypoints"] = keypoints
             if frame_index is not None:
                 entry["frameIndex"] = frame_index
             if fps is not None:
@@ -165,6 +199,14 @@ def _center_to_list(center, bbox):
 
     x1, y1, x2, y2 = bbox
     return [(x1 + x2) / 2, (y1 + y2) / 2]
+
+
+def _extract_keypoints(detection):
+    """Keep pose keypoints in history when an upstream detector provides them."""
+    keypoints = detection.get("keypoints") or detection.get("poseKeypoints") or detection.get("pose")
+    if isinstance(keypoints, list):
+        return keypoints
+    return None
 
 
 def _elapsed_seconds(previous_timestamp, current_timestamp):

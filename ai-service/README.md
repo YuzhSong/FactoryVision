@@ -155,6 +155,12 @@ For camera processing, `POST /process/stream` automatically uses the same backen
 - `FACE_PROVIDER`: `auto`, `cuda`, or `cpu`. CUDA requires `onnxruntime-gpu`.
 - `FACE_LIBRARY_PATH`: local face library JSON path.
 - `FACE_IMAGE_DIR`: local employee image directory.
+- `FACE_MIN_SCORE_MARGIN`: default `0.03`; reject matches when best and second-best employee scores are too close.
+- `FACE_MIN_SAMPLES_PER_EMPLOYEE`: default `2`; employees below this sample count use a stricter threshold.
+- `FACE_SPARSE_SAMPLE_THRESHOLD_PENALTY`: default `0.03`; extra threshold added for sparse employee samples.
+- `FACE_ENROLLMENT_MIN_QUALITY_SCORE`: default `0.5`; reject low-confidence enrollment faces when detector score is available.
+- `FACE_ENROLLMENT_MIN_FACE_SIZE`: default `40`; reject enrollment faces whose smaller bbox side is below this pixel size.
+- `FACE_ENROLLMENT_MAX_POSE_YAW`: default `75`; reject enrollment faces with excessive yaw when pose metadata is available.
 - `AUTO_LOAD_FACES_FROM_BACKEND`: default `True` for `cameraId` stream processing.
 - `BACKEND_API_BASE_URL`: default `http://127.0.0.1:8000/api`.
 - `BACKEND_CAMERA_LIST_PATH`: default `/cameras/list/`.
@@ -173,7 +179,23 @@ For camera processing, `POST /process/stream` automatically uses the same backen
 - `STREAM_FFMPEG_PATH`: default `ffmpeg`; required for `/streams/start`.
 - `OUTPUT_FPS` / `STREAM_OUTPUT_FPS`: default `10`.
 - `FRAME_DETECT_INTERVAL`: default `5`; run heavier detection every N input frames.
+- `EVENT_MEDIA_ENABLED`: default `True`; save alert keyframes and short event clips during continuous stream processing.
+- `EVENT_MEDIA_DIR`: default `data/event_media`; local directory for event keyframes, clips, and manifests.
+- `EVENT_MEDIA_PRE_SECONDS`: default `3`; seconds of buffered frames to include before an event.
+- `EVENT_MEDIA_POST_SECONDS`: default `3`; seconds of frames to append after an event.
+- `EVENT_MEDIA_COOLDOWN_SECONDS`: default `10`; suppress repeated media bundles for the same event signature.
 - `MAX_HISTORY_POINTS`: default `5`; per-track lightweight history length.
 - `INPUT_WIDTH`: default `640`; resize continuous-stream frames before processing.
 - `INPUT_HEIGHT`: default `360`; resize continuous-stream frames before processing.
 - `RUNNING_SPEED_THRESHOLD`: default `120.0`; pixel/second threshold for running alerts.
+- `FALL_RATIO_THRESHOLD`: default `1.2`; bbox width/height fallback threshold for fall-like posture.
+- `FALL_CONFIRM_FRAMES`: default `5`; consecutive recent fall-like frames required before `FALL_ALERT`.
+- `FALL_MIN_CONFIDENCE`: default `0.6`; minimum confidence for high-level fall alerts.
+- `FALL_POSE_HORIZONTAL_ANGLE_THRESHOLD`: default `35`; body shoulder-to-hip angle from horizontal for pose-based fall detection.
+- `FALL_POSE_MIN_KEYPOINT_CONFIDENCE`: default `0.3`; minimum usable pose keypoint confidence.
+- `EMPLOYEE_ABSENCE_TIMEOUT_SECONDS`: default `60`; mark a recognized employee absent after this many seconds without a matched face.
+- `EMPLOYEE_PRESENCE_MIN_SIMILARITY`: default `0`; optional minimum face similarity required before updating presence state.
+- `STRANGER_CONFIRM_FRAMES`: default `3`; consecutive unknown-face observations required before `STRANGER_ALERT`.
+- `STRANGER_COOLDOWN_SECONDS`: default `30`; suppress repeated stranger alerts for the same approximate face location.
+- `STRANGER_MATCH_DISTANCE_THRESHOLD`: default `80`; pixel distance used to associate unknown faces across frames.
+- `STRANGER_STATE_TTL_SECONDS`: default `10`; remove stale unknown-face confirmation state after inactivity.

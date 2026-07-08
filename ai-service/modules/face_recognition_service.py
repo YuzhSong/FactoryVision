@@ -27,6 +27,12 @@ class FaceRecognitionService:
         model_name: str = "buffalo_l",
         model_root: str | Path | None = None,
         similarity_threshold: float = 0.45,
+        min_score_margin: float = 0.03,
+        min_samples_per_employee: int = 2,
+        sparse_sample_threshold_penalty: float = 0.03,
+        enrollment_min_quality_score: float = 0.5,
+        enrollment_min_face_size: int = 40,
+        enrollment_max_pose_yaw: float = 75.0,
         det_size: tuple[int, int] = (640, 640),
         provider: str = "auto",
         library_path: str | Path | None = None,
@@ -37,6 +43,12 @@ class FaceRecognitionService:
         self.model_name = model_name
         self.model_root = Path(model_root) if model_root else None
         self.similarity_threshold = similarity_threshold
+        self.min_score_margin = float(min_score_margin or 0)
+        self.min_samples_per_employee = max(1, int(min_samples_per_employee or 1))
+        self.sparse_sample_threshold_penalty = float(sparse_sample_threshold_penalty or 0)
+        self.enrollment_min_quality_score = float(enrollment_min_quality_score or 0)
+        self.enrollment_min_face_size = max(0, int(enrollment_min_face_size or 0))
+        self.enrollment_max_pose_yaw = float(enrollment_max_pose_yaw or 0)
         self.det_size = det_size
         self.provider = provider
         self.library_path = Path(library_path) if library_path else None
@@ -78,6 +90,9 @@ class FaceRecognitionService:
             "count": len(self.face_records),
             "errors": self.load_errors,
             "threshold": self.similarity_threshold,
+            "minScoreMargin": self.min_score_margin,
+            "minSamplesPerEmployee": self.min_samples_per_employee,
+            "sparseSampleThresholdPenalty": self.sparse_sample_threshold_penalty,
             "modelName": self.model_name,
         }
 
@@ -99,9 +114,9 @@ class FaceRecognitionService:
             if person_detections and not track_id:
                 continue
 
-            match, similarity = self._match(self._face_embedding(face))
+            match, similarity, decision = self._classify_match(self._face_embedding(face))
             face_box = _format_bbox(face.bbox)
-            if match and similarity >= self.similarity_threshold:
+            if match and decision["accepted"]:
                 result = {
                     "type": "FACE_RESULT",
                     "trackId": track_id,
@@ -110,6 +125,9 @@ class FaceRecognitionService:
                     "name": match.name,
                     "matched": True,
                     "similarity": round(float(similarity), 4),
+                    "threshold": round(float(decision["threshold"]), 4),
+                    "scoreMargin": round(float(decision["scoreMargin"]), 4),
+                    "sampleCount": decision["sampleCount"],
                     "faceBox": face_box,
                 }
             else:
@@ -120,6 +138,9 @@ class FaceRecognitionService:
                     "matched": False,
                     "label": "unknown",
                     "similarity": round(float(similarity), 4),
+                    "threshold": round(float(decision["threshold"]), 4),
+                    "scoreMargin": round(float(decision["scoreMargin"]), 4),
+                    "rejectReason": decision["rejectReason"],
                     "faceBox": face_box,
                 }
 
@@ -154,12 +175,14 @@ class FaceRecognitionService:
             raise ValueError(f"Multiple faces detected in image: {len(faces)}.")
 
         face = faces[0]
+        self._validate_enrollment_face(face)
         feature = self._face_embedding(face)
         return {
             "faceCount": len(faces),
             "featureVector": [round(float(value), 8) for value in feature.tolist()],
             "dimension": int(len(feature)),
             "qualityScore": _face_quality_score(face),
+            "enrollmentAccepted": True,
             "faceBox": _format_bbox(face.bbox),
             "modelName": self.model_name,
             "provider": self.providers[0] if self.providers else None,
@@ -195,6 +218,9 @@ class FaceRecognitionService:
             "updatedEmployees": len(employee_ids | employee_nos),
             "errors": self.load_errors,
             "threshold": self.similarity_threshold,
+            "minScoreMargin": self.min_score_margin,
+            "minSamplesPerEmployee": self.min_samples_per_employee,
+            "sparseSampleThresholdPenalty": self.sparse_sample_threshold_penalty,
             "modelName": self.model_name,
         }
 
@@ -223,6 +249,12 @@ class FaceRecognitionService:
             "modelName": self.model_name,
             "providers": self.providers,
             "threshold": self.similarity_threshold,
+            "minScoreMargin": self.min_score_margin,
+            "minSamplesPerEmployee": self.min_samples_per_employee,
+            "sparseSampleThresholdPenalty": self.sparse_sample_threshold_penalty,
+            "enrollmentMinQualityScore": self.enrollment_min_quality_score,
+            "enrollmentMinFaceSize": self.enrollment_min_face_size,
+            "enrollmentMaxPoseYaw": self.enrollment_max_pose_yaw,
             "errors": self.load_errors,
         }
 
@@ -421,6 +453,93 @@ class FaceRecognitionService:
 
         return best_record, max(0.0, best_similarity)
 
+    def _classify_match(self, feature):
+        """Classify one face feature with margin and sparse-sample controls."""
+        scored_people = self._score_people(feature)
+        if not scored_people:
+            return None, 0.0, _match_decision(
+                accepted=False,
+                threshold=self.similarity_threshold,
+                score_margin=0.0,
+                sample_count=0,
+                reject_reason="empty_face_library",
+            )
+
+        best = scored_people[0]
+        second_score = scored_people[1]["score"] if len(scored_people) > 1 else -1.0
+        score_margin = best["score"] - second_score if second_score >= 0 else best["score"]
+        threshold = self._effective_threshold(best["sampleCount"])
+        reject_reason = None
+
+        if best["score"] < threshold:
+            reject_reason = "below_threshold"
+        elif second_score >= 0 and score_margin < self.min_score_margin:
+            reject_reason = "ambiguous_match"
+
+        return best["record"], max(0.0, best["score"]), _match_decision(
+            accepted=reject_reason is None,
+            threshold=threshold,
+            score_margin=max(0.0, score_margin),
+            sample_count=best["sampleCount"],
+            reject_reason=reject_reason,
+        )
+
+    def _score_people(self, feature):
+        """Score each employee by its best registered face feature."""
+        if not self.face_records:
+            return []
+
+        import numpy as np
+
+        grouped = {}
+        for record in self.face_records:
+            key = _record_identity_key(record)
+            similarity = float(np.dot(feature, record.feature))
+            current = grouped.get(key)
+            if current is None:
+                grouped[key] = {"record": record, "score": similarity, "sampleCount": 1}
+                continue
+
+            current["sampleCount"] += 1
+            if similarity > current["score"]:
+                current["score"] = similarity
+                current["record"] = record
+
+        return sorted(grouped.values(), key=lambda item: item["score"], reverse=True)
+
+    def _effective_threshold(self, sample_count):
+        """Raise threshold for employees with too few registered samples."""
+        threshold = self.similarity_threshold
+        if sample_count < self.min_samples_per_employee:
+            threshold += self.sparse_sample_threshold_penalty
+        return threshold
+
+    def _validate_enrollment_face(self, face):
+        """Reject low-quality enrollment faces before storing features."""
+        quality_score = _face_quality_score(face)
+        if quality_score is not None and quality_score < self.enrollment_min_quality_score:
+            raise ValueError(
+                f"Face quality score {quality_score:.4f} is below "
+                f"{self.enrollment_min_quality_score:.4f}."
+            )
+
+        face_width, face_height = _bbox_size(face.bbox)
+        min_size = min(face_width, face_height)
+        if self.enrollment_min_face_size and min_size < self.enrollment_min_face_size:
+            raise ValueError(
+                f"Face size {min_size:.1f}px is below {self.enrollment_min_face_size}px."
+            )
+
+        pose_yaw = _face_pose_yaw(face)
+        if (
+            pose_yaw is not None
+            and self.enrollment_max_pose_yaw > 0
+            and abs(pose_yaw) > self.enrollment_max_pose_yaw
+        ):
+            raise ValueError(
+                f"Face yaw {pose_yaw:.1f} exceeds {self.enrollment_max_pose_yaw:.1f} degrees."
+            )
+
     def _assign_faces(self, faces, person_detections: list[dict]):
         """Assign detected faces to person detections by containment and IoU."""
         if not person_detections:
@@ -598,6 +717,26 @@ def _normalize_vector(feature):
     return vector / norm
 
 
+def _match_decision(accepted, threshold, score_margin, sample_count, reject_reason):
+    """Return a serializable face match decision."""
+    return {
+        "accepted": bool(accepted),
+        "threshold": float(threshold),
+        "scoreMargin": float(score_margin),
+        "sampleCount": int(sample_count),
+        "rejectReason": reject_reason,
+    }
+
+
+def _record_identity_key(record):
+    """Build an employee-level grouping key for multiple face samples."""
+    if record.employee_id not in (None, ""):
+        return ("employeeId", str(record.employee_id))
+    if record.employee_no not in (None, ""):
+        return ("employeeNo", str(record.employee_no))
+    return ("name", str(record.name))
+
+
 def _identity_sets_from_items(items):
     """Collect employee identities from records and expanded nested face records."""
     employee_ids = set()
@@ -621,6 +760,23 @@ def _face_quality_score(face):
     if score is None:
         return None
     return round(float(score), 4)
+
+
+def _bbox_size(bbox):
+    """Return bbox width and height."""
+    x1, y1, x2, y2 = _bbox_tuple(bbox)
+    return max(0.0, x2 - x1), max(0.0, y2 - y1)
+
+
+def _face_pose_yaw(face):
+    """Extract face yaw angle when the model provides pose metadata."""
+    pose = getattr(face, "pose", None)
+    if pose is None:
+        return None
+    try:
+        return float(pose[1])
+    except (TypeError, ValueError, IndexError):
+        return None
 
 
 def _looks_like_base64(value: str):

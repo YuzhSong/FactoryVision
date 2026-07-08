@@ -45,6 +45,12 @@ face_service = FaceRecognitionService(
     model_name=Config.FACE_MODEL_NAME,
     model_root=Config.INSIGHTFACE_ROOT,
     similarity_threshold=Config.FACE_SIMILARITY_THRESHOLD,
+    min_score_margin=Config.FACE_MIN_SCORE_MARGIN,
+    min_samples_per_employee=Config.FACE_MIN_SAMPLES_PER_EMPLOYEE,
+    sparse_sample_threshold_penalty=Config.FACE_SPARSE_SAMPLE_THRESHOLD_PENALTY,
+    enrollment_min_quality_score=Config.FACE_ENROLLMENT_MIN_QUALITY_SCORE,
+    enrollment_min_face_size=Config.FACE_ENROLLMENT_MIN_FACE_SIZE,
+    enrollment_max_pose_yaw=Config.FACE_ENROLLMENT_MAX_POSE_YAW,
     det_size=Config.FACE_DETECTION_SIZE,
     provider=Config.FACE_PROVIDER,
     library_path=Config.FACE_LIBRARY_PATH,
@@ -66,6 +72,17 @@ frame_processor = FrameProcessor(
         "helmetImageSize": Config.HELMET_IMAGE_SIZE,
         "helmetHalfPrecision": Config.HELMET_HALF_PRECISION,
         "helmetCudnnBenchmark": Config.HELMET_CUDNN_BENCHMARK,
+        "fallRatioThreshold": Config.FALL_RATIO_THRESHOLD,
+        "fallConfirmFrames": Config.FALL_CONFIRM_FRAMES,
+        "fallMinConfidence": Config.FALL_MIN_CONFIDENCE,
+        "fallPoseHorizontalAngleThreshold": Config.FALL_POSE_HORIZONTAL_ANGLE_THRESHOLD,
+        "fallPoseMinKeypointConfidence": Config.FALL_POSE_MIN_KEYPOINT_CONFIDENCE,
+        "employeeAbsenceTimeoutSeconds": Config.EMPLOYEE_ABSENCE_TIMEOUT_SECONDS,
+        "employeePresenceMinSimilarity": Config.EMPLOYEE_PRESENCE_MIN_SIMILARITY,
+        "strangerConfirmFrames": Config.STRANGER_CONFIRM_FRAMES,
+        "strangerCooldownSeconds": Config.STRANGER_COOLDOWN_SECONDS,
+        "strangerMatchDistanceThreshold": Config.STRANGER_MATCH_DISTANCE_THRESHOLD,
+        "strangerStateTtlSeconds": Config.STRANGER_STATE_TTL_SECONDS,
     },
 )
 
@@ -85,6 +102,11 @@ processed_stream_service = ProcessedStreamService(
     detect_interval=Config.FRAME_DETECT_INTERVAL,
     input_width=Config.INPUT_WIDTH,
     input_height=Config.INPUT_HEIGHT,
+    event_media_enabled=Config.EVENT_MEDIA_ENABLED,
+    event_media_dir=Config.EVENT_MEDIA_DIR,
+    event_media_pre_seconds=Config.EVENT_MEDIA_PRE_SECONDS,
+    event_media_post_seconds=Config.EVENT_MEDIA_POST_SECONDS,
+    event_media_cooldown_seconds=Config.EVENT_MEDIA_COOLDOWN_SECONDS,
 )
 
 runtime_cache = RuntimeCache()
