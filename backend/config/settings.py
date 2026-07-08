@@ -25,6 +25,7 @@ INSTALLED_APPS = [
     "apps.events",
     "apps.attendance",
     "apps.ai_results",
+    "apps.face",
 ]
 
 MIDDLEWARE = [

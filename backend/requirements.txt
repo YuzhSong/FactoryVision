@@ -4,3 +4,4 @@ django-cors-headers>=4.9,<5.0
 drf-spectacular>=0.28,<0.29
 drf-spectacular-sidecar>=2025.7.1
 djangorestframework-simplejwt>=5.4,<6.0
+requests>=2.32,<2.33
