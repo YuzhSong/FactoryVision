@@ -137,6 +137,84 @@ class FaceRecognitionService:
             raise ValueError("No face detected in image.")
         return self._face_embedding(faces[0])
 
+    def extract_feature_details(
+        self,
+        image,
+        image_base_url: str = "",
+        image_dir: str | Path | None = None,
+        require_single_face: bool = True,
+    ):
+        """Extract one face feature with enrollment metadata."""
+        base_dir = Path(image_dir) if image_dir else None
+        frame = self._load_image(image, image_base_url=image_base_url, base_dir=base_dir) if isinstance(image, (str, Path)) else image
+        faces = self._detect_faces(frame)
+        if not faces:
+            raise ValueError("No face detected in image.")
+        if require_single_face and len(faces) > 1:
+            raise ValueError(f"Multiple faces detected in image: {len(faces)}.")
+
+        face = faces[0]
+        feature = self._face_embedding(face)
+        return {
+            "faceCount": len(faces),
+            "featureVector": [round(float(value), 8) for value in feature.tolist()],
+            "dimension": int(len(feature)),
+            "qualityScore": _face_quality_score(face),
+            "faceBox": _format_bbox(face.bbox),
+            "modelName": self.model_name,
+            "provider": self.providers[0] if self.providers else None,
+        }
+
+    def upsert_face_library(
+        self,
+        records: list[dict] | None = None,
+        employee_items: list[dict] | None = None,
+        image_base_url: str | None = None,
+        image_dir: str | Path | None = None,
+    ):
+        """Add or replace employee face records without clearing the whole library."""
+        self.load_errors = []
+        incoming_items = []
+        if records:
+            incoming_items.extend(records)
+        if employee_items:
+            incoming_items.extend(employee_items)
+
+        employee_ids, employee_nos = _identity_sets_from_items(incoming_items)
+        self.delete_face_records(employee_ids=employee_ids, employee_nos=employee_nos)
+
+        selected_image_base_url = self.image_base_url if image_base_url is None else image_base_url
+        selected_image_dir = Path(image_dir) if image_dir else None
+        self._load_record_items(
+            incoming_items,
+            image_base_url=selected_image_base_url,
+            base_dir=selected_image_dir,
+        )
+        return {
+            "count": len(self.face_records),
+            "updatedEmployees": len(employee_ids | employee_nos),
+            "errors": self.load_errors,
+            "threshold": self.similarity_threshold,
+            "modelName": self.model_name,
+        }
+
+    def delete_face_records(self, employee_ids=None, employee_nos=None):
+        """Remove employee face records from the in-memory library."""
+        employee_ids = {str(value) for value in (employee_ids or []) if value not in (None, "")}
+        employee_nos = {str(value) for value in (employee_nos or []) if value not in (None, "")}
+        before_count = len(self.face_records)
+        self.face_records = [
+            record
+            for record in self.face_records
+            if str(record.employee_id) not in employee_ids and str(record.employee_no) not in employee_nos
+        ]
+        return {
+            "deleted": before_count - len(self.face_records),
+            "count": len(self.face_records),
+            "employeeIds": sorted(employee_ids),
+            "employeeNos": sorted(employee_nos),
+        }
+
     def status(self):
         """Return model, provider, threshold, and loaded face-library status."""
         return {
@@ -518,6 +596,31 @@ def _normalize_vector(feature):
     if norm <= 0:
         raise ValueError("Face feature vector norm is zero.")
     return vector / norm
+
+
+def _identity_sets_from_items(items):
+    """Collect employee identities from records and expanded nested face records."""
+    employee_ids = set()
+    employee_nos = set()
+    for item in items:
+        for expanded in _expand_record_item(item):
+            employee_id = _first(expanded, "employeeId", "employee_id", "id")
+            employee_no = _first(expanded, "employeeNo", "employee_no", "number", "no")
+            if employee_id not in (None, ""):
+                employee_ids.add(str(employee_id))
+            if employee_no not in (None, ""):
+                employee_nos.add(str(employee_no))
+    return employee_ids, employee_nos
+
+
+def _face_quality_score(face):
+    """Return a lightweight enrollment quality score from detector confidence."""
+    score = getattr(face, "det_score", None)
+    if score is None:
+        score = getattr(face, "score", None)
+    if score is None:
+        return None
+    return round(float(score), 4)
 
 
 def _looks_like_base64(value: str):

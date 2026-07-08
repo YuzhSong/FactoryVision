@@ -38,6 +38,12 @@ class Config:
     BACKEND_FACE_LIBRARY_PATH = os.getenv("BACKEND_FACE_LIBRARY_PATH", "")
     BACKEND_ZONE_LIST_PATH = os.getenv("BACKEND_ZONE_LIST_PATH", "/zones/")
     BACKEND_AI_REPORT_PATH = os.getenv("BACKEND_AI_REPORT_PATH", "/ai-results/report/")
+    BACKEND_BOOTSTRAP_PATH = os.getenv("BACKEND_BOOTSTRAP_PATH", "/ai/bootstrap/")
+    BACKEND_REALTIME_FRAME_RESULTS_PATH = os.getenv(
+        "BACKEND_REALTIME_FRAME_RESULTS_PATH",
+        "/realtime/frame-results/",
+    )
+    BOOTSTRAP_ON_STARTUP = os.getenv("BOOTSTRAP_ON_STARTUP", "False").lower() == "true"
 
     MODEL_DIR = Path(os.getenv("AI_MODEL_DIR", DEFAULT_MODEL_DIR))
     DATA_DIR = Path(os.getenv("AI_DATA_DIR", DEFAULT_DATA_DIR))
@@ -86,6 +92,7 @@ class Config:
     STREAM_PLAY_URL = os.getenv("STREAM_PLAY_URL", "webrtc://webrtc.rainycode.cn:8443/live/1_detected")
     STREAM_PROCESS_MODE = os.getenv("STREAM_PROCESS_MODE", "detect")
     STREAM_REPORT_TO_BACKEND = os.getenv("STREAM_REPORT_TO_BACKEND", "False").lower() == "true"
+    STREAM_REPORT_REALTIME_TO_BACKEND = os.getenv("STREAM_REPORT_REALTIME_TO_BACKEND", "False").lower() == "true"
     STREAM_OUTPUT_FPS = float(os.getenv("OUTPUT_FPS", os.getenv("STREAM_OUTPUT_FPS", "10")))
     STREAM_FFMPEG_PATH = os.getenv("STREAM_FFMPEG_PATH", "ffmpeg")
     FRAME_DETECT_INTERVAL = int(os.getenv("FRAME_DETECT_INTERVAL", "5"))

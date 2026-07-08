@@ -38,11 +38,18 @@ The CUDA requirements install PyTorch wheels for CUDA 12.8. On an RTX 4060 envir
 - `GET /openapi.json`: OpenAPI schema.
 - `GET /dependencies`: Python package and CUDA availability check.
 - `GET /faces/status`: current InsightFace library/model status.
+- `POST /faces/extract`: extract one employee face embedding from upload, image URL, base64, or local path.
 - `POST /faces/reload`: load employees from local JSON/images or backend.
+- `GET /cache/status`: current runtime cache and face-library status.
+- `POST /cache/reload`: reload runtime cache from backend bootstrap or provided payload.
+- `POST /cache/employees/upsert`: add or replace employee face records in AI memory.
+- `POST /cache/employees/delete`: remove employee face records from AI memory.
+- `POST /cache/cameras/reload`: reload camera config cache.
+- `POST /cache/zones/reload`: reload zone config cache.
 - `POST /detect/person`: uploaded image or `imagePath`, returns `PERSON_DETECTION`.
 - `POST /detect/frame`: uploaded image or `imagePath`, returns combined AI report.
-- `POST /process/stream`: process a limited number of frames from `streamUrl` or backend camera config. When `cameraId` and face recognition are enabled, it loads employee face records from backend by default.
-- `POST /streams/start`: start continuous RTMP input -> AI boxed RTMP output processing.
+- `POST /process/stream`: process a limited number of frames from `streamUrl` or backend camera config. When `cameraId` and face recognition are enabled, it loads employee face records from backend by default. Set `reportRealtimeToBackend=true` to post frame-level results to the backend realtime endpoint.
+- `POST /streams/start`: start continuous RTMP input -> AI boxed RTMP output processing. Set `reportRealtimeToBackend=true` to report frame-level results for WebSocket broadcast.
 - `POST /streams/stop`: stop continuous processed stream output.
 - `GET /streams/status`: current processed stream task status.
 
@@ -154,11 +161,15 @@ For camera processing, `POST /process/stream` automatically uses the same backen
 - `BACKEND_EMPLOYEE_LIST_PATH`: default `/employees/list/`.
 - `BACKEND_ZONE_LIST_PATH`: default `/zones/`.
 - `BACKEND_AI_REPORT_PATH`: default `/ai-results/report/`.
+- `BACKEND_BOOTSTRAP_PATH`: default `/ai/bootstrap/`.
+- `BACKEND_REALTIME_FRAME_RESULTS_PATH`: default `/realtime/frame-results/`.
+- `BOOTSTRAP_ON_STARTUP`: default `False`; when `True`, fetch backend bootstrap data at FastAPI startup.
 - `STREAM_MAX_FRAMES_PER_REQUEST`: safety limit for `/process/stream`.
 - `STREAM_INPUT_URL`: default `rtmp://81.70.90.222:1935/live/1`.
 - `STREAM_OUTPUT_URL`: default `rtmp://81.70.90.222:1935/live/1_detected`.
 - `STREAM_PLAY_URL`: default `webrtc://webrtc.rainycode.cn:8443/live/1_detected`.
 - `STREAM_PROCESS_MODE`: `test` or `detect`, default `detect`.
+- `STREAM_REPORT_REALTIME_TO_BACKEND`: default `False`; when `True`, continuous stream tasks post frame-level results to `BACKEND_REALTIME_FRAME_RESULTS_PATH`.
 - `STREAM_FFMPEG_PATH`: default `ffmpeg`; required for `/streams/start`.
 - `OUTPUT_FPS` / `STREAM_OUTPUT_FPS`: default `10`.
 - `FRAME_DETECT_INTERVAL`: default `5`; run heavier detection every N input frames.

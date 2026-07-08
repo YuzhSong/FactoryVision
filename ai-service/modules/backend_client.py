@@ -14,6 +14,8 @@ class BackendClient:
         face_library_path: str = "",
         zone_list_path: str = "/zones/list/",
         ai_report_path: str = "/ai-results/report/",
+        bootstrap_path: str = "/ai/bootstrap/",
+        realtime_frame_results_path: str = "/realtime/frame-results/",
     ):
         """Initialize backend client with base URL, timeout, token, and API paths."""
         self.base_url = base_url.rstrip("/")
@@ -23,6 +25,8 @@ class BackendClient:
         self.face_library_path = face_library_path
         self.zone_list_path = zone_list_path
         self.ai_report_path = ai_report_path
+        self.bootstrap_path = bootstrap_path
+        self.realtime_frame_results_path = realtime_frame_results_path
         self.session = requests.Session()
 
         if token:
@@ -84,6 +88,20 @@ class BackendClient:
         """Post one AI report payload to the backend report endpoint."""
         response = self.session.post(
             self._build_url(self.ai_report_path),
+            json=payload,
+            timeout=self.timeout_seconds,
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def get_bootstrap(self):
+        """Fetch backend bootstrap data for AI runtime cache warmup."""
+        return self.get_json(self.bootstrap_path)
+
+    def report_realtime_frame_results(self, payload: dict):
+        """Post one realtime frame result payload for backend WebSocket broadcast."""
+        response = self.session.post(
+            self._build_url(self.realtime_frame_results_path),
             json=payload,
             timeout=self.timeout_seconds,
         )

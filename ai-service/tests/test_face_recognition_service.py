@@ -62,6 +62,33 @@ class FaceRecognitionServiceTests(unittest.TestCase):
 
         self.assertFalse(should_use_base_url)
 
+    def test_upsert_and_delete_face_records_update_library(self):
+        """Verify employee cache upsert replaces stale feature records."""
+        service = FaceRecognitionService(similarity_threshold=0.45)
+        service.load_face_library(
+            employee_items=[
+                {"id": 1, "employeeNo": "E001", "faceFeatures": [{"featureVector": [1.0, 0.0, 0.0]}]},
+                {"id": 2, "employeeNo": "E002", "faceFeatures": [{"featureVector": [0.0, 1.0, 0.0]}]},
+            ]
+        )
+
+        result = service.upsert_face_library(
+            employee_items=[
+                {"id": 1, "employeeNo": "E001", "faceFeatures": [{"featureVector": [0.0, 0.0, 1.0]}]},
+            ]
+        )
+
+        employee_one_records = [record for record in service.face_records if str(record.employee_id) == "1"]
+        self.assertEqual(result["count"], 2)
+        self.assertEqual(len(employee_one_records), 1)
+        self.assertGreater(float(employee_one_records[0].feature[2]), 0.99)
+
+        delete_result = service.delete_face_records(employee_ids=[1])
+
+        self.assertEqual(delete_result["deleted"], 1)
+        self.assertEqual(len(service.face_records), 1)
+        self.assertEqual(service.face_records[0].employee_no, "E002")
+
 
 if __name__ == "__main__":
     unittest.main()

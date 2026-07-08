@@ -60,6 +60,7 @@ class ProcessedStreamService:
         default_play_url: str = Config.STREAM_PLAY_URL,
         default_mode: str = Config.STREAM_PROCESS_MODE,
         default_report_to_backend: bool = Config.STREAM_REPORT_TO_BACKEND,
+        default_report_realtime_to_backend: bool = Config.STREAM_REPORT_REALTIME_TO_BACKEND,
         reconnect_attempts: int = Config.STREAM_RECONNECT_ATTEMPTS,
         reconnect_delay_seconds: float = Config.STREAM_RECONNECT_DELAY_SECONDS,
         output_fps: float = Config.STREAM_OUTPUT_FPS,
@@ -76,6 +77,7 @@ class ProcessedStreamService:
         self.default_play_url = default_play_url
         self.default_mode = default_mode
         self.default_report_to_backend = default_report_to_backend
+        self.default_report_realtime_to_backend = default_report_realtime_to_backend
         self.reconnect_attempts = reconnect_attempts
         self.reconnect_delay_seconds = reconnect_delay_seconds
         self.output_fps = output_fps
@@ -233,6 +235,9 @@ class ProcessedStreamService:
     def _process_loop(self, payload: dict, writer, output_fps: float):
         include_faces = _to_bool(payload.get("includeFaces", True))
         report_to_backend = _to_bool(payload.get("reportToBackend", self.default_report_to_backend))
+        report_realtime_to_backend = _to_bool(
+            payload.get("reportRealtimeToBackend", self.default_report_realtime_to_backend)
+        )
         max_frames = _optional_positive_int(payload.get("maxFrames"))
         zones = payload.get("zones") if isinstance(payload.get("zones"), list) else None
         last_report = {"results": []}
@@ -254,6 +259,7 @@ class ProcessedStreamService:
                 writer,
                 include_faces,
                 report_to_backend,
+                report_realtime_to_backend,
                 zones,
                 last_report,
             )
@@ -291,6 +297,7 @@ class ProcessedStreamService:
         writer,
         include_faces: bool,
         report_to_backend: bool,
+        report_realtime_to_backend: bool,
         zones: list[dict] | None,
         last_report: dict,
     ):
@@ -320,6 +327,8 @@ class ProcessedStreamService:
         output_frame = self.annotator.draw_debug_overlay(output_frame, overlay)
         if should_detect and report_to_backend and report.get("results") and self.backend_client is not None:
             self.backend_client.report_ai_results(report)
+        if should_detect and report_realtime_to_backend and self.backend_client is not None:
+            self.backend_client.report_realtime_frame_results(self._with_playback_url(report))
         return output_frame, last_report
 
     def _publish_latest_frame(self, packet):
@@ -387,6 +396,12 @@ class ProcessedStreamService:
         if self.output_fps > 0:
             return self.output_fps
         return input_fps or 20
+
+    def _with_playback_url(self, report):
+        payload = dict(report)
+        if self._status.play_url:
+            payload["playbackUrl"] = self._status.play_url
+        return payload
 
 
 def _now():
