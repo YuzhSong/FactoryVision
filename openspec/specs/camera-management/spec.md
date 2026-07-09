@@ -4,11 +4,14 @@
 
 ---
 
-## Requirement: Camera Registration and Management
+## Purpose
+Defines the expected behavior, constraints, and acceptance scenarios for Camera Management in the Factory Vision system.
+## Requirements
+### Requirement: Camera Registration and Management
 
 The system SHALL provide a camera management module for registering, listing, and configuring camera devices that feed video streams into the AI processing pipeline.
 
-### Scenario: Access camera management page — [Status: Implemented — Static UI]
+#### Scenario: Access camera management page — [Status: Implemented — Static UI]
 
 - GIVEN the user is authenticated and navigates to `/cameras`
 - WHEN the CamerasView page renders
@@ -17,26 +20,41 @@ The system SHALL provide a camera management module for registering, listing, an
 - AND a filter row SHALL be present with status selector and search input
 - AND an "新增摄像头" dialog SHALL render form fields: 名称, 位置, 拉流地址 (streamUrl), 播放地址 (playUrl)
 
-### Scenario: List cameras — [Status: Planned]
+#### Scenario: List cameras — [Status: Planned]
 
 - GIVEN camera records exist in the database
 - WHEN `GET /api/cameras/list/` is called (authenticated)
 - THEN the backend SHALL return a paginated list of cameras with fields: `id`, `name`, `location`, `streamUrl`, `playUrl`, `status`
 
-### Scenario: Create a camera — [Status: Planned]
+#### Scenario: Create a camera — [Status: Planned]
 
 - GIVEN a valid camera configuration payload
 - WHEN `POST /api/cameras/` is called
 - **Permission model:** TBD — whether this endpoint requires authentication (`IsAuthenticated`) or admin-only access is a future design decision. The backend endpoint is not yet implemented, so this spec does not prescribe a permission rule at this stage.
 - THEN a new camera record SHALL be created
 
-### Scenario: Camera placeholder status — [Status: Implemented — Backend Placeholder]
+#### Scenario: Camera placeholder status — [Status: Implemented — Backend Placeholder]
 
 - GIVEN the backend cameras module is running
 - WHEN `GET /api/cameras/` is called
 - THEN the response SHALL return `{"code": 200, "data": {"module": "cameras", "status": "placeholder"}}`
 
 ---
+
+### Requirement: Frontend camera list integration
+
+The camera management frontend SHALL display camera data from the implemented backend camera list API.
+
+#### Scenario: Load camera list
+
+- **GIVEN** the user opens `/cameras`
+- **WHEN** `GET /api/cameras/list/` succeeds
+- **THEN** the camera table SHALL render backend `items`
+- **AND** status filter SHALL be passed as a query param when selected
+- **AND** unsupported create/edit actions SHALL remain marked as planned
+
+## Purpose
+Defines the expected behavior, constraints, and acceptance scenarios for Camera Management in the Factory Vision system.
 
 ## Camera Data Model — [Status: Planned]
 
@@ -52,6 +70,9 @@ The system SHALL provide a camera management module for registering, listing, an
 
 ---
 
+## Purpose
+Defines the expected behavior, constraints, and acceptance scenarios for Camera Management in the Factory Vision system.
+
 ## Hardcoded Reference Data (Current Frontend State)
 
 The frontend currently uses hardcoded camera entries from `data/placeholders.js`:
@@ -64,6 +85,9 @@ The frontend currently uses hardcoded camera entries from `data/placeholders.js`
 
 ---
 
+## Purpose
+Defines the expected behavior, constraints, and acceptance scenarios for Camera Management in the Factory Vision system.
+
 ## Constraints
 
 - The camera `streamUrl` is used by `StreamReader` (OpenCV `cv2.VideoCapture`) for RTMP/RTSP ingest.
@@ -71,6 +95,9 @@ The frontend currently uses hardcoded camera entries from `data/placeholders.js`
 - The AI service `BackendClient` resolves camera sources from the backend API — currently falling back to environment variable defaults since no camera API exists.
 
 ---
+
+## Purpose
+Defines the expected behavior, constraints, and acceptance scenarios for Camera Management in the Factory Vision system.
 
 ## 变更说明
 
