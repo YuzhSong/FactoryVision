@@ -31,6 +31,13 @@ class Alert(models.Model):
         CLOSED = "closed", "Closed"
 
     event = models.OneToOneField(AIEvent, on_delete=models.CASCADE, related_name="alert")
+    system_event = models.OneToOneField(
+        "events.Event",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="alert",
+    )
     camera = models.ForeignKey(
         "cameras.Camera",
         on_delete=models.SET_NULL,

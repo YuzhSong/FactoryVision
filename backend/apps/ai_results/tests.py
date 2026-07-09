@@ -4,6 +4,7 @@ from rest_framework.test import APIClient
 from apps.ai_results.models import AIEvent, Alert
 from apps.cameras.models import Camera
 from apps.employees.models import Employee
+from apps.events.models import Event
 from apps.zones.models import Zone
 
 
@@ -43,8 +44,14 @@ class AIResultsReportTests(TestCase):
         self.assertEqual(response.data["data"]["rejectedResults"], 0)
         self.assertEqual(str(response.data["data"]["cameraId"]), str(self.camera.id))
         self.assertEqual(response.data["data"]["frameId"], "frame-0001")
+        self.assertEqual(Event.objects.count(), 1)
         self.assertEqual(AIEvent.objects.count(), 1)
         self.assertEqual(Alert.objects.count(), 0)
+        event = Event.objects.get()
+        self.assertEqual(response.data["data"]["eventIds"], [event.id])
+        self.assertEqual(event.event_type, "PERSON_DETECTION")
+        self.assertEqual(event.severity, Event.Severity.INFO)
+        self.assertEqual(event.track_id, "t-1")
 
     def test_report_endpoint_persists_helmet_warning_event_and_alert(self):
         response = self.client.post(
@@ -71,15 +78,20 @@ class AIResultsReportTests(TestCase):
         self.assertEqual(response.data["data"]["acceptedResults"], 1)
         self.assertEqual(response.data["data"]["rejectedResults"], 0)
         self.assertEqual(len(response.data["data"]["eventIds"]), 1)
+        self.assertEqual(len(response.data["data"]["aiEventIds"]), 1)
         self.assertEqual(len(response.data["data"]["alertIds"]), 1)
 
-        event = AIEvent.objects.get()
+        event = Event.objects.get()
+        ai_event = AIEvent.objects.get()
         alert = Alert.objects.get()
         self.assertEqual(event.camera, self.camera)
         self.assertEqual(event.event_type, "HELMET_WARNING")
         self.assertEqual(event.confidence, 0.91)
         self.assertEqual(event.snapshot_path, "events/cam-a/frame-0002.jpg")
-        self.assertEqual(alert.event, event)
+        self.assertEqual(event.severity, "high")
+        self.assertEqual(ai_event.event_type, "HELMET_WARNING")
+        self.assertEqual(alert.event, ai_event)
+        self.assertEqual(alert.system_event, event)
         self.assertEqual(alert.level, "high")
         self.assertEqual(alert.status, Alert.Status.PENDING)
 

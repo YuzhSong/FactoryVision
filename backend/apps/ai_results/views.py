@@ -7,6 +7,7 @@ from apps.cameras.models import Camera
 from apps.cameras.serializers import CameraListSerializer
 from apps.employees.models import Employee
 from apps.employees.serializers import EmployeeListSerializer
+from apps.events.models import Event
 from apps.zones.models import Zone
 from apps.zones.serializers import ZoneListSerializer
 from common.response import api_response
@@ -93,7 +94,8 @@ def placeholder_view(_request):
                 "code": 200,
                 "message": "AI results accepted",
                 "data": {
-                    "eventIds": [],
+                    "eventIds": [1],
+                    "aiEventIds": [1],
                     "alertIds": [],
                     "acceptedResults": 1,
                     "cameraId": 1,
@@ -127,6 +129,7 @@ def report_ai_results(request):
         )
 
     event_ids = []
+    ai_event_ids = []
     alert_ids = []
     rejected_results = 0
 
@@ -137,22 +140,40 @@ def report_ai_results(request):
                 rejected_results += 1
                 continue
 
-            event = AIEvent.objects.create(
+            event = Event.objects.create(
                 camera=camera,
                 camera_identifier=str(validated["cameraId"]),
                 frame_id=validated.get("frameId", ""),
                 event_type=result_type,
-                confidence=_extract_confidence(result),
+                source=Event.Source.AI_SERVICE,
+                severity=_event_severity(result_type, result),
+                status=Event.Status.NEW,
+                occurred_at=validated["timestamp"],
+                track_id=_extract_track_id(result),
                 bbox=_extract_bbox(result),
+                confidence=_extract_confidence(result),
                 snapshot_path=_extract_snapshot_path(result, validated.get("eventMedia", [])),
                 payload=result,
-                occurred_at=validated["timestamp"],
             )
             event_ids.append(event.id)
 
+            ai_event = AIEvent.objects.create(
+                camera=camera,
+                camera_identifier=str(validated["cameraId"]),
+                frame_id=event.frame_id,
+                event_type=event.event_type,
+                confidence=event.confidence,
+                bbox=event.bbox,
+                snapshot_path=event.snapshot_path,
+                payload=result,
+                occurred_at=event.occurred_at,
+            )
+            ai_event_ids.append(ai_event.id)
+
             if _should_create_alert(result_type):
                 alert = Alert.objects.create(
-                    event=event,
+                    event=ai_event,
+                    system_event=event,
                     camera=camera,
                     event_type=result_type,
                     level=str(result.get("level") or _default_level(result_type)),
@@ -168,6 +189,7 @@ def report_ai_results(request):
         message="AI results accepted",
         data={
             "eventIds": event_ids,
+            "aiEventIds": ai_event_ids,
             "alertIds": alert_ids,
             "acceptedResults": len(event_ids),
             "rejectedResults": rejected_results,
@@ -249,6 +271,11 @@ def _extract_bbox(result):
     return bbox if isinstance(bbox, dict) else {}
 
 
+def _extract_track_id(result):
+    value = result.get("trackId") or result.get("track_id") or result.get("id")
+    return "" if value is None else str(value)
+
+
 def _extract_snapshot_path(result, event_media):
     for key in ("snapshotPath", "snapshotUrl", "imagePath"):
         value = result.get(key)
@@ -275,6 +302,15 @@ def _default_level(result_type):
     if result_type == "EMPLOYEE_RETURNED":
         return "low"
     return "medium"
+
+
+def _event_severity(result_type, result):
+    level = str(result.get("level") or "").lower()
+    if level in {choice.value for choice in Event.Severity}:
+        return level
+    if _should_create_alert(result_type):
+        return _default_level(result_type)
+    return Event.Severity.INFO
 
 
 def _alert_title(result_type):
