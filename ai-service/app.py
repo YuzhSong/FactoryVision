@@ -3,6 +3,7 @@ from typing import Any
 
 from fastapi import FastAPI, File, Form, Request, UploadFile
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 import uvicorn
 
 from ai_config import Config
@@ -172,7 +173,7 @@ def create_app() -> FastAPI:
     def face_status():
         return {"code": 200, "message": "success", "data": face_service.status()}
 
-    @app.post("/faces/extract", tags=["faces"])
+    @app.post("/faces/extract", tags=["faces"], response_model=FaceExtractResponse)
     async def extract_face_feature(
         request: Request,
         image: UploadFile | None = File(default=None),
@@ -413,6 +414,23 @@ def create_app() -> FastAPI:
         }
 
     return app
+
+
+class FaceExtractDetail(BaseModel):
+    faceCount: int = 1
+    featureVector: list[float] = [0.12, -0.34]
+    dimension: int = 512
+    qualityScore: float = 0.92
+    enrollmentAccepted: bool = True
+    faceBox: dict[str, float] | None = None
+    modelName: str = "buffalo_l"
+    provider: str = "CPUExecutionProvider"
+
+
+class FaceExtractResponse(BaseModel):
+    code: int = 200
+    message: str = "success"
+    data: FaceExtractDetail
 
 
 app = create_app()

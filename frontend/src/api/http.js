@@ -3,7 +3,7 @@ import axios from 'axios'
 const http = axios.create({
   // Default to same-origin `/api` so local phone access can reuse the Vite dev server proxy.
   baseURL: import.meta.env.VITE_API_BASE_URL || '/api',
-  timeout: 10000,
+  timeout: 60000,
 })
 
 http.interceptors.request.use((config) => {
