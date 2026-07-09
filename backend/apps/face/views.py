@@ -47,7 +47,7 @@ def _call_ai_extract(image_base64: str) -> list:
         resp = requests.post(
             f"{AI_SERVICE_URL}/faces/extract",
             json={"imageBase64": image_base64},
-            timeout=10,
+            timeout=60,
         )
     except requests.RequestException:
         raise RuntimeError("AI 服务不可用")
