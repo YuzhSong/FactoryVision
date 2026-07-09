@@ -8,6 +8,7 @@ __pycache__/
 *.py[cod]
 .venv/
 venv/
+ai-service/.venv311/
 
 # Frontend dependencies and build output
 frontend/node_modules/
@@ -20,3 +21,9 @@ backend/staticfiles/
 # OS files
 .DS_Store
 Thumbs.db
+
+# Local runtime artifacts and test outputs
+.codex-runlogs/
+ai-service/data/event_media/
+ai-service/models/helmet/*.pt
+yolov8n.pt
