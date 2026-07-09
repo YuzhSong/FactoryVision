@@ -23,6 +23,15 @@
 
 - `GET /health`: implemented
 - `GET /dependencies`: implemented
+- `GET /faces/status`: implemented
+- `POST /faces/extract`: implemented
+- `POST /faces/reload`: implemented
+- `GET /cache/status`: implemented
+- `POST /cache/reload`: implemented
+- `POST /cache/employees/upsert`: implemented
+- `POST /cache/employees/delete`: implemented
+- `POST /cache/cameras/reload`: implemented
+- `POST /cache/zones/reload`: implemented
 - `POST /detect/person`: implemented
 - `POST /detect/frame`: implemented
 - `POST /process/stream`: implemented
@@ -32,7 +41,16 @@
 - `GET /docs`: implemented
 - `GET /openapi.json`: implemented
 
-除上述 implemented / placeholder 外，本文档中设计的业务接口均为 `planned`。
+说明：AI 服务的 Swagger 地址为 `http://127.0.0.1:9000/docs`，不属于 Django 后端 `/api/` 路由。除上述 implemented / placeholder 外，本文档中设计的业务接口均为 `planned`。
+
+AI-service 当前会在告警类结果上补充机器可读 `category` 字段：
+
+| category | 说明 | 典型 type |
+| --- | --- | --- |
+| `abnormal_behavior` | 异常行为或安全违规 | `HELMET_WARNING`、`ZONE_WARNING`、`RUNNING_ALERT`、`STRANGER_ALERT`、`EMPLOYEE_PRESENCE_EVENT` |
+| `emergency_event` | 紧急事件 | `FALL_ALERT`、预留 `FIRE_ALERT`、`SMOKE_ALERT`、`WATER_LEAK_ALERT`、`FLOODING_ALERT` |
+
+AI-service 不输出前端颜色字段。Vue 告警中心应通过 Django 返回的 `type` 或 `category` 自行决定展示颜色。
 
 ## 统一返回格式
 

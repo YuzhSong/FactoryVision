@@ -9,6 +9,34 @@ FastAPI-based AI service for smart factory video-frame analysis. This service co
 - `ai-service` does not implement SRS, camera pushing, or database writes.
 - Employee, camera, zone, and AI-result integration should go through backend HTTP APIs.
 
+## Current Status
+
+Implemented on the AI side:
+
+- Person detection: `PERSON_DETECTION`.
+- Face recognition, face feature extraction, face-library reload, and employee cache upsert/delete.
+- Basic RGB liveness detection for static-image and flat-photo spoof defense.
+- Stranger confirmation alert: `STRANGER_ALERT`.
+- Helmet violation alert: `HELMET_WARNING`.
+- Dangerous-zone alert after entering/near-edge stay, default 10 seconds: `ZONE_WARNING`.
+- Fall alert with pose keypoints first and bbox fallback: `FALL_ALERT`.
+- Running alert based on per-track pixel speed: `RUNNING_ALERT`.
+- Employee leave/return event: `EMPLOYEE_PRESENCE_EVENT`.
+- Event media recording for alert keyframes and short replay clips.
+
+Known gaps outside or beyond the current AI implementation:
+
+- Frontend polygon-zone drawing and backend zone persistence are not complete.
+- Backend face enrollment -> AI feature extraction -> feature persistence -> AI cache refresh is not complete.
+- Backend alert persistence, alert handling, DingTalk notification, and escalation are not complete.
+- Video replay and AI face-swap spoof defense are not complete; current liveness is only a basic RGB first stage.
+- Realtime structured annotation WebSocket is not complete. Realtime video display currently uses processed video stream playback.
+
+Event classification:
+
+- AI-service only emits machine-readable `category`: `abnormal_behavior` or `emergency_event`.
+- AI-service does not emit frontend display colors. Django/Vue should decide how to color alert rows based on `type` or `category`.
+
 ## Quick Start
 
 ```powershell

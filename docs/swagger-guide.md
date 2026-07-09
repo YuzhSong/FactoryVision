@@ -14,13 +14,15 @@ Swagger 不是业务功能页面，而是开发阶段使用的接口管理工具
 
 ## 2. 本项目 Swagger 地址
 
+### Django 后端 Swagger
+
 启动后端后访问：
 
 ```text
 http://127.0.0.1:8000/api/docs/
 ```
 
-OpenAPI schema 地址：
+后端 OpenAPI schema 地址：
 
 ```text
 http://127.0.0.1:8000/api/schema/
@@ -32,6 +34,33 @@ http://127.0.0.1:8000/api/schema/
 docs/api/openapi.yaml
 docs/api/openapi.json
 ```
+
+### AI-service Swagger
+
+启动 AI 服务后访问：
+
+```text
+http://127.0.0.1:9000/docs
+```
+
+AI-service OpenAPI schema 地址：
+
+```text
+http://127.0.0.1:9000/openapi.json
+```
+
+启动命令：
+
+```powershell
+cd ai-service
+.\.venv\Scripts\python.exe -m uvicorn app:app --host 0.0.0.0 --port 9000 --reload
+```
+
+说明：
+
+- Django Swagger 管理后端业务接口，例如登录、员工、摄像头、AI 结果上报。
+- AI-service Swagger 管理算法服务接口，例如 `/faces/extract`、`/detect/frame`、`/streams/start`。
+- 两套 Swagger 都可以截图作为接口管理证据，但 `docs/api/openapi.yaml` 和 `docs/api/openapi.json` 当前是 Django 后端生成的接口文档。
 
 ## 3. 后端同学如何使用
 
@@ -149,9 +178,11 @@ docs/api/openapi.json
 
 为了证明项目真实使用 Swagger，建议准备：
 
-- Swagger UI 页面截图。
+- Django Swagger UI 页面截图。
+- AI-service Swagger UI 页面截图。
 - 登录接口测试截图。
 - 一个需要 token 的接口测试截图。
+- AI-service `/health` 或 `/faces/status` 测试截图。
 - `docs/api/openapi.yaml`。
 - `docs/api/openapi.json`。
 - 后端 `@extend_schema` 注解代码截图。
