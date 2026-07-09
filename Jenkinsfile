@@ -19,7 +19,85 @@ pipeline {
         }
 
         // ==================================================================
-        // Stage 2: Backend Check
+        // Stage 2: Environment Check
+        // 输出 CI 环境关键工具版本信息（Python、pip、Node、npm、Docker）
+        // Docker 与 Docker Compose 缺失不会导致流水线失败
+        // ==================================================================
+        stage('Environment Check') {
+            steps {
+                echo '========================================'
+                echo '  Stage: Environment Check'
+                echo '  输出 CI 环境关键工具版本信息'
+                echo '========================================'
+
+                // Python 版本
+                echo '[Env Check] Python version:'
+                script {
+                    if (isUnix()) {
+                        sh 'python --version'
+                    } else {
+                        bat 'python --version'
+                    }
+                }
+
+                // pip 版本
+                echo '[Env Check] pip version:'
+                script {
+                    if (isUnix()) {
+                        sh 'pip --version'
+                    } else {
+                        bat 'pip --version'
+                    }
+                }
+
+                // Node 版本
+                echo '[Env Check] Node version:'
+                script {
+                    if (isUnix()) {
+                        sh 'node --version'
+                    } else {
+                        bat 'node --version'
+                    }
+                }
+
+                // npm 版本
+                echo '[Env Check] npm version:'
+                script {
+                    if (isUnix()) {
+                        sh 'npm --version'
+                    } else {
+                        bat 'npm --version'
+                    }
+                }
+
+                // Docker 版本（可选：缺失不失败）
+                echo '[Env Check] Docker version:'
+                script {
+                    def dockerStatus = isUnix() ?
+                        sh(script: 'docker --version', returnStatus: true) :
+                        bat(script: 'docker --version', returnStatus: true)
+                    if (dockerStatus != 0) {
+                        echo '[Env Check] Docker is NOT installed or not available in PATH'
+                    }
+                }
+
+                // Docker Compose 版本（可选：缺失不失败）
+                echo '[Env Check] Docker Compose version:'
+                script {
+                    def composeStatus = isUnix() ?
+                        sh(script: 'docker compose version', returnStatus: true) :
+                        bat(script: 'docker compose version', returnStatus: true)
+                    if (composeStatus != 0) {
+                        echo '[Env Check] Docker Compose is NOT installed or not available in PATH'
+                    }
+                }
+
+                echo '[Env Check] 环境检查完成'
+            }
+        }
+
+        // ==================================================================
+        // Stage 3: Backend Check
         // 检查 Django 项目配置是否正确（不运行测试）
         // ==================================================================
         stage('Backend Check') {
@@ -51,7 +129,7 @@ pipeline {
         }
 
         // ==================================================================
-        // Stage 3: Backend Test
+        // Stage 4: Backend Test
         // 运行 Django 单元测试（8 个 tests.py，覆盖各 app）
         // ==================================================================
         stage('Backend Test') {
@@ -75,7 +153,7 @@ pipeline {
         }
 
         // ==================================================================
-        // Stage 4: Frontend Build
+        // Stage 5: Frontend Build
         // 构建 Vue 3 + Vite 前端项目
         // 注意：不运行 npm lint / npm test，因为 package.json 中暂未配置
         // ==================================================================
@@ -108,7 +186,52 @@ pipeline {
         }
 
         // ==================================================================
-        // Stage 5: AI Service Test
+        // Stage 6: Docker Compose Config Check
+        // 验证 docker-compose.yml 语法（不做构建、不启动容器）
+        // docker-compose.yml 缺失时失败；Docker 不可用时跳过检查
+        // ==================================================================
+        stage('Docker Compose Config Check') {
+            steps {
+                echo '========================================'
+                echo '  Stage: Docker Compose Config Check'
+                echo '  验证 docker-compose.yml 语法'
+                echo '========================================'
+
+                // 检查 docker-compose.yml 是否存在
+                script {
+                    def fileExists = isUnix() ?
+                        sh(script: 'test -f docker-compose.yml && echo yes || echo no', returnStdout: true).trim() :
+                        bat(script: '@echo off && if exist docker-compose.yml (echo yes) else (echo no)', returnStdout: true).trim()
+                    if (fileExists != 'yes') {
+                        error '[Docker Compose Config] docker-compose.yml 文件不存在，流水线中止！'
+                    }
+                    echo '[Docker Compose Config] docker-compose.yml 文件存在'
+                }
+
+                // 尝试执行 docker compose config
+                script {
+                    def dockerExists = isUnix() ?
+                        sh(script: 'command -v docker >/dev/null 2>&1 && echo yes || echo no', returnStdout: true).trim() :
+                        bat(script: '@echo off && where docker >nul 2>&1 && echo yes || echo no', returnStdout: true).trim()
+                    if (dockerExists == 'yes') {
+                        echo '[Docker Compose Config] Docker 可用，执行 docker compose config...'
+                        if (isUnix()) {
+                            sh 'docker compose config'
+                        } else {
+                            bat 'docker compose config'
+                        }
+                        echo '[Docker Compose Config] docker compose config 验证通过'
+                    } else {
+                        echo 'Docker is not available, skip docker-compose config check.'
+                    }
+                }
+
+                echo '[Docker Compose Config] 语法检查阶段结束'
+            }
+        }
+
+        // ==================================================================
+        // Stage 7: AI Service Test
         // 运行 AI 服务（FastAPI）的单元测试
         // 使用 unittest discover 自动发现 tests/ 目录下的测试用例
         // ==================================================================
@@ -141,7 +264,7 @@ pipeline {
         }
 
         // ==================================================================
-        // Stage 6: Archive Artifacts
+        // Stage 8: Archive Artifacts
         // 归档前端构建产物 (dist/) 及其他日志
         // 归档失败不影响主流程（try-catch 保护）
         // ==================================================================
@@ -165,7 +288,7 @@ pipeline {
         }
 
         // ==================================================================
-        // Stage 7: Docker Build（预留）
+        // Stage 9: Docker Build（预留）
         // 当前为占位阶段，后续需为三个服务分别创建 Dockerfile
         // ==================================================================
         stage('Docker Build') {
@@ -201,7 +324,7 @@ pipeline {
         }
 
         // ==================================================================
-        // Stage 8: Deploy Test Environment（预留）
+        // Stage 10: Deploy Test Environment（预留）
         // 当前为占位阶段，后续需完善部署配置
         // ==================================================================
         stage('Deploy Test Environment') {
