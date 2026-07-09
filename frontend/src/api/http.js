@@ -1,7 +1,8 @@
 import axios from 'axios'
 
 const http = axios.create({
-  baseURL: import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000/api',
+  // Default to same-origin `/api` so local phone access can reuse the Vite dev server proxy.
+  baseURL: import.meta.env.VITE_API_BASE_URL || '/api',
   timeout: 10000,
 })
 
