@@ -1,5 +1,6 @@
 import unittest
 from unittest.mock import patch
+import numpy as np
 
 try:
     from fastapi.testclient import TestClient
@@ -88,7 +89,7 @@ class _FakeStreamReader:
             "Packet",
             (),
             {
-                "frame": object(),
+                "frame": np.zeros((1280, 720, 3), dtype=np.uint8),
                 "frame_id": "frame-000001",
                 "timestamp": "2026-07-07T10:00:00+08:00",
                 "frame_index": 1,

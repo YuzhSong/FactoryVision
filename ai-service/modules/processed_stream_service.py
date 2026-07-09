@@ -13,6 +13,7 @@ from .stream_writer import FFmpegStreamWriter
 
 
 logger = logging.getLogger("uvicorn.error")
+FIXED_CAMERA_ROTATION = 270
 
 
 @dataclass
@@ -39,6 +40,9 @@ class StreamTaskStatus:
     output_fps: float = Config.STREAM_OUTPUT_FPS
     event_media_count: int = 0
     last_event_media: dict | None = None
+    input_frame_shape: list[int] | None = None
+    normalized_frame_shape: list[int] | None = None
+    output_frame_size: list[int] | None = None
 
 
 @dataclass
@@ -194,6 +198,15 @@ class ProcessedStreamService:
             output_fps = self._resolve_output_fps(first_packet.fps)
             with self._lock:
                 self._status.output_fps = output_fps
+                self._status.output_frame_size = [width, height]
+
+            logger.info(
+                "fixed_camera_mode rotation=270 input_shape=%s normalized_shape=%s output_size=%sx%s",
+                self._status.input_frame_shape,
+                self._status.normalized_frame_shape,
+                width,
+                height,
+            )
 
             self._publish_latest_frame(first_packet)
             self._capture_thread = threading.Thread(target=self._capture_loop, args=(reader,), daemon=True)
@@ -413,14 +426,22 @@ class ProcessedStreamService:
         return event_media
 
     def _prepare_packet(self, packet):
-        if not self.input_width or not self.input_height:
-            return packet
         try:
             import cv2
         except ImportError:
             return packet
 
-        packet.frame = cv2.resize(packet.frame, (self.input_width, self.input_height))
+        original_shape = list(packet.frame.shape[:2])
+        frame = normalize_camera_frame(packet.frame)
+        normalized_shape = list(frame.shape[:2])
+        if self.input_width and self.input_height:
+            frame = _resize_landscape_frame(frame, self.input_width, self.input_height, cv2)
+        packet.frame = frame
+        output_height, output_width = frame.shape[:2]
+        with self._lock:
+            self._status.input_frame_shape = original_shape
+            self._status.normalized_frame_shape = normalized_shape
+            self._status.output_frame_size = [output_width, output_height]
         return packet
 
     def _should_detect(self):
@@ -436,6 +457,7 @@ class ProcessedStreamService:
                 "dropped_frames": self._status.dropped_frames,
                 "frame_age_ms": round(frame_age_ms, 2),
                 "playback_mode": "detected stream",
+                "rotation": FIXED_CAMERA_ROTATION,
             }
 
     def _resolve_output_fps(self, input_fps):
@@ -452,6 +474,32 @@ class ProcessedStreamService:
 
 def _now():
     return datetime.now(timezone.utc).astimezone().isoformat()
+
+
+def normalize_camera_frame(frame):
+    try:
+        import cv2
+    except ImportError:
+        return frame
+    return cv2.rotate(frame, cv2.ROTATE_90_COUNTERCLOCKWISE)
+
+
+def _resize_landscape_frame(frame, target_width: int, target_height: int, cv2_module):
+    source_height, source_width = frame.shape[:2]
+    if source_width <= 0 or source_height <= 0:
+        return frame
+
+    scale = min(target_width / source_width, target_height / source_height)
+    if scale <= 0:
+        return frame
+
+    resized_width = _ensure_even(max(2, int(round(source_width * scale))))
+    resized_height = _ensure_even(max(2, int(round(source_height * scale))))
+    return cv2_module.resize(frame, (resized_width, resized_height))
+
+
+def _ensure_even(value: int):
+    return value if value % 2 == 0 else max(2, value - 1)
 
 
 def _to_bool(value):

@@ -11,7 +11,7 @@ from modules.dependencies import check_dependencies
 from modules.face_recognition_service import FaceRecognitionService
 from modules.frame_processor import FrameProcessor
 from modules.person_detector import PersonDetector
-from modules.processed_stream_service import ProcessedStreamService
+from modules.processed_stream_service import ProcessedStreamService, normalize_camera_frame
 from modules.runtime_cache import RuntimeCache
 from modules.stream_reader import StreamReader
 
@@ -381,6 +381,7 @@ def create_app() -> FastAPI:
             report_responses = []
             realtime_report_responses = []
             for packet in reader.iter_frames(max_frames=max_frames, sample_interval=sample_interval):
+                packet.frame = normalize_camera_frame(packet.frame)
                 report = frame_processor.process_frame(
                     packet.frame,
                     camera_id=_to_number(camera_id),

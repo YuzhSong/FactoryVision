@@ -2,11 +2,12 @@ from django.contrib import admin
 from django.urls import include, path
 from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView
 
-from apps.ai_results.views import health_check
+from apps.ai_results.views import ai_bootstrap, health_check
 
 urlpatterns = [
     path("admin/", admin.site.urls),
     path("api/health/", health_check, name="health-check"),
+    path("api/ai/bootstrap/", ai_bootstrap, name="ai-bootstrap"),
     path("api/schema/", SpectacularAPIView.as_view(), name="schema"),
     path("api/docs/", SpectacularSwaggerView.as_view(url_name="schema"), name="swagger-ui"),
     path("api/auth/", include("apps.users.urls")),

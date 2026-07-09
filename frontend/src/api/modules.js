@@ -61,6 +61,9 @@ export const zonesApi = {
   getPlaceholder() {
     return http.get('/zones/')
   },
+  list(params = {}) {
+    return http.get('/zones/list/', { params })
+  },
   save(data) {
     return http.post('/zones/', data)
   },

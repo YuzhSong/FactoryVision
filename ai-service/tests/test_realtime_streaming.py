@@ -1,7 +1,8 @@
 import unittest
+import numpy as np
 
 from modules.frame_processor import FrameProcessor
-from modules.processed_stream_service import LatestFrameSnapshot, ProcessedStreamService
+from modules.processed_stream_service import LatestFrameSnapshot, ProcessedStreamService, normalize_camera_frame
 
 
 class _FakeDetector:
@@ -109,6 +110,31 @@ class _FakePoseDetector(_FakeDetector):
 
 
 class RealtimeStreamingTests(unittest.TestCase):
+    def test_normalize_camera_frame_rotates_counterclockwise(self):
+        base = np.array([[1, 2, 3], [4, 5, 6]], dtype=np.uint8)
+        frame = np.dstack([base, base, base])
+
+        rotated = normalize_camera_frame(frame)
+
+        self.assertEqual(rotated.shape[:2], (3, 2))
+        self.assertTrue(
+            np.array_equal(
+                rotated[:, :, 0],
+                np.array([[3, 6], [2, 5], [1, 4]], dtype=np.uint8),
+            )
+        )
+
+    def test_prepare_packet_rotates_before_resize_and_keeps_landscape_output(self):
+        service = ProcessedStreamService(frame_processor=None, input_width=640, input_height=360)
+        packet = type("Packet", (), {"frame": np.zeros((1280, 720, 3), dtype=np.uint8)})()
+
+        prepared = service._prepare_packet(packet)
+
+        self.assertEqual(prepared.frame.shape[:2], (360, 640))
+        self.assertEqual(service.status()["input_frame_shape"], [1280, 720])
+        self.assertEqual(service.status()["normalized_frame_shape"], [720, 1280])
+        self.assertEqual(service.status()["output_frame_size"], [640, 360])
+
     def test_latest_frame_publish_drops_unprocessed_frames(self):
         service = ProcessedStreamService(frame_processor=None)
 
