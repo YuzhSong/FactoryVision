@@ -1,15 +1,17 @@
 <script setup>
-import { nextTick, reactive, ref } from 'vue'
+import { computed, nextTick, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import SectionHeader from '../components/SectionHeader.vue'
 import StatusTag from '../components/StatusTag.vue'
-import { employees } from '../data/placeholders'
 import { employeesApi, faceApi } from '../api/modules'
 
 const dialogVisible = ref(false)
 const faceDialogVisible = ref(false)
 const saving = ref(false)
 const enrolling = ref(false)
+const loading = ref(false)
+const employeeRows = ref([])
+const employeeTotal = ref(0)
 const currentEmployee = ref(null)
 const fileInputRefs = ref({})
 const activeCameraKey = ref('')
@@ -27,6 +29,14 @@ const faceImages = reactive({
   front: '',
   left: '',
   right: '',
+})
+
+const filters = reactive({
+  keyword: '',
+  department: '',
+  status: '',
+  page: 1,
+  pageSize: 20,
 })
 
 const employeeForm = reactive({
@@ -52,6 +62,37 @@ const openCreateDialog = () => {
   dialogVisible.value = true
 }
 
+const departmentOptions = computed(() => {
+  const values = employeeRows.value.map((item) => item.department).filter(Boolean)
+  return [...new Set(['生产部', '设备部', '仓储部', ...values])]
+})
+
+const loadEmployees = async () => {
+  loading.value = true
+  try {
+    const response = await employeesApi.list({
+      page: filters.page,
+      pageSize: filters.pageSize,
+      keyword: filters.keyword || undefined,
+      department: filters.department || undefined,
+      status: filters.status || undefined,
+    })
+    employeeRows.value = response?.data?.items || []
+    employeeTotal.value = response?.data?.total || 0
+  } catch (error) {
+    employeeRows.value = []
+    employeeTotal.value = 0
+    ElMessage.error(getApiErrorMessage(error, '员工列表加载失败'))
+  } finally {
+    loading.value = false
+  }
+}
+
+const queryEmployees = () => {
+  filters.page = 1
+  loadEmployees()
+}
+
 const submitEmployee = async () => {
   if (!employeeForm.employeeNo || !employeeForm.name) {
     ElMessage.warning('请填写工号和姓名')
@@ -63,6 +104,7 @@ const submitEmployee = async () => {
     const response = await employeesApi.create({ ...employeeForm })
     ElMessage.success('员工档案已提交')
     dialogVisible.value = false
+    await loadEmployees()
 
     if (response?.data?.id) {
       currentEmployee.value = {
@@ -170,6 +212,23 @@ const clearFaceImage = (key) => {
   faceImages[key] = ''
 }
 
+const getApiErrorMessage = (error, fallback) => {
+  const response = error?.response?.data
+  if (!response) return fallback
+  if (response.message && response.message !== '请求参数错误') return response.message
+
+  const detail = response.data
+  if (typeof detail === 'string') return detail
+  if (Array.isArray(detail)) return detail.join('；')
+  if (detail && typeof detail === 'object') {
+    return Object.entries(detail)
+      .map(([field, messages]) => `${field}: ${Array.isArray(messages) ? messages.join('；') : messages}`)
+      .join('；')
+  }
+
+  return response.message || fallback
+}
+
 const captureCameraShot = (key) => {
   if (!activeVideoRef.value || !canvasRef.value) return
 
@@ -199,43 +258,43 @@ const submitFace = async () => {
   try {
     await faceApi.enroll({
       employeeId: currentEmployee.value.id,
-      imageBase64: faceImages.front,
-      faceImages: {
-        front: faceImages.front,
-        left: faceImages.left,
-        right: faceImages.right,
-      },
+      faces: faceShotTypes.map((item) => ({
+        faceType: item.key,
+        imageBase64: faceImages[item.key],
+      })),
     })
     ElMessage.success('人脸录入已提交')
     closeFaceDialog()
   } catch (error) {
-    ElMessage.error(error?.response?.data?.message || '人脸录入接口暂不可用')
+    ElMessage.error(getApiErrorMessage(error, '人脸录入接口暂不可用'))
   } finally {
     enrolling.value = false
   }
 }
+
+onMounted(() => {
+  loadEmployees()
+})
 </script>
 
 <template>
   <div class="page-grid">
     <div class="panel table-panel">
-      <SectionHeader title="员工管理" description="员工档案与人脸录入接口 planned，当前保留页面和表单入口。">
+      <SectionHeader title="员工管理" description="员工档案已接入后端列表和创建接口，人脸录入使用三视角照片提交。">
         <el-button type="primary" @click="openCreateDialog">新增员工</el-button>
       </SectionHeader>
       <div class="filter-row">
-        <el-input placeholder="搜索姓名 / 工号" clearable />
-        <el-select placeholder="部门" clearable>
-          <el-option label="生产部" value="生产部" />
-          <el-option label="设备部" value="设备部" />
-          <el-option label="仓储部" value="仓储部" />
+        <el-input v-model="filters.keyword" placeholder="搜索姓名 / 工号" clearable @keyup.enter="queryEmployees" />
+        <el-select v-model="filters.department" placeholder="部门" clearable>
+          <el-option v-for="department in departmentOptions" :key="department" :label="department" :value="department" />
         </el-select>
-        <el-select placeholder="状态" clearable>
+        <el-select v-model="filters.status" placeholder="状态" clearable>
           <el-option label="在职" value="active" />
           <el-option label="停用" value="inactive" />
         </el-select>
-        <el-button type="primary">查询</el-button>
+        <el-button type="primary" @click="queryEmployees">查询</el-button>
       </div>
-      <el-table :data="employees" stripe>
+      <el-table v-loading="loading" :data="employeeRows" stripe>
         <el-table-column prop="employeeNo" label="工号" width="110" />
         <el-table-column prop="name" label="姓名" width="120" />
         <el-table-column prop="department" label="部门" width="130" />
@@ -254,6 +313,7 @@ const submitFace = async () => {
           </template>
         </el-table-column>
       </el-table>
+      <div class="placeholder-note">共 {{ employeeTotal }} 条员工记录</div>
     </div>
 
     <el-dialog v-model="dialogVisible" title="新增员工" width="520px">

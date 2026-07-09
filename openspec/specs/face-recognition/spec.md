@@ -4,18 +4,21 @@
 
 ---
 
-## Requirement: Face Recognition Service
+## Purpose
+Defines the expected behavior, constraints, and acceptance scenarios for Face Recognition in the Factory Vision system.
+## Requirements
+### Requirement: Face Recognition Service
 
 The system SHALL provide an AI-side face recognition service using InsightFace for face detection and feature extraction, with cosine similarity matching against a configurable face library. The service SHALL remain independent from the backend database implementation.
 
-### Scenario: Load face recognition model — [Status: Implemented]
+#### Scenario: Load face recognition model — [Status: Implemented]
 
 - GIVEN the `FaceRecognitionService` is instantiated with model name `"buffalo_l"` (default) and model root path from `INSIGHTFACE_HOME` env var
 - WHEN `_load_model()` is called (lazy-loaded on first use)
 - THEN the InsightFace `FaceAnalysis` model SHALL be initialized with detection size `(640, 640)` and the configured provider (`"auto"` by default, resolving to CUDA or CPU)
 - AND the model SHALL be ready for face detection and feature extraction
 
-### Scenario: Load face library from backend or local sources — [Status: Implemented]
+#### Scenario: Load face library from backend or local sources — [Status: Implemented]
 
 - GIVEN a `BackendClient` is configured with a face library path
 - WHEN `load_face_library(source="backend")` is called
@@ -25,7 +28,7 @@ The system SHALL provide an AI-side face recognition service using InsightFace f
 - AND face records may alternatively be loaded from a local JSON file (`library_path`) or image directory (`image_dir`)
 - **Note:** Backend has no dedicated face API endpoint — the `list_employees()` fallback is the currently effective data path. A future `/face/` endpoint should be added to serve face records directly.
 
-### Scenario: Match detected face against face library — [Status: Implemented]
+#### Scenario: Match detected face against face library — [Status: Implemented]
 
 - GIVEN a query face's normalized feature vector and a loaded face library
 - WHEN `_match(feature)` is called
@@ -33,7 +36,7 @@ The system SHALL provide an AI-side face recognition service using InsightFace f
 - AND SHALL return the `FaceRecord` with the highest similarity score
 - AND if the highest similarity is below `FACE_SIMILARITY_THRESHOLD` (default `0.45`), the match SHALL be discarded
 
-### Scenario: Recognize faces in a frame — [Status: Implemented]
+#### Scenario: Recognize faces in a frame — [Status: Implemented]
 
 - GIVEN a video frame and a list of person detections (with bounding boxes)
 - WHEN `recognize(frame, person_detections, frame_id, timestamp)` is called
@@ -42,7 +45,7 @@ The system SHALL provide an AI-side face recognition service using InsightFace f
 - AND SHALL match each assigned face against the face library
 - AND SHALL return a list of `FACE_RESULT` dicts containing `trackId`, `employeeId`, `employeeNo`, `employeeName`, `similarity`, and `bbox`
 
-### Scenario: Extract face feature from an image — [Status: Implemented]
+#### Scenario: Extract face feature from an image — [Status: Implemented]
 
 - GIVEN an image (file path, base64 string, URL, or numpy array)
 - WHEN `extract_feature(image)` is called
@@ -51,19 +54,41 @@ The system SHALL provide an AI-side face recognition service using InsightFace f
 - AND supported image formats SHALL be: `.jpg`, `.jpeg`, `.png`, `.bmp`, `.webp` (`SUPPORTED_IMAGE_SUFFIXES` in `face_recognition_service.py:8`)
 - AND HTTP image loading SHALL use a timeout of `10` seconds (`face_recognition_service.py:306`)
 
-### Scenario: Query face service status — [Status: Implemented]
+#### Scenario: Query face service status — [Status: Implemented]
 
 - GIVEN the face service is initialized
 - WHEN `GET /faces/status` is called on the AI service
 - THEN the response SHALL include model name, model loaded status, face library size, and similarity threshold
 
-### Scenario: Reload face library — [Status: Implemented]
+#### Scenario: Reload face library — [Status: Implemented]
 
 - GIVEN the face service is running
 - WHEN `POST /faces/reload` is called
 - THEN the service SHALL reload the face library from the configured backend source
 
 ---
+
+### Requirement: Backend face enrollment API
+
+The system SHALL accept employee face enrollment through a backend API that receives exactly three face images for one employee.
+
+#### Scenario: Enroll three face images
+
+- **GIVEN** a valid JWT access token and an existing employee
+- **WHEN** `POST /api/face/enroll/` is called with `employeeId` and `faces`
+- **THEN** `faces` SHALL contain exactly three items
+- **AND** each item SHALL contain `imageBase64` and `faceType`
+- **AND** the allowed `faceType` values SHALL be `front`, `left`, and `right`
+- **AND** the response SHALL return `results` with `faceType` and `faceFeatureId` for each saved face feature
+
+#### Scenario: Reject incomplete face enrollment
+
+- **GIVEN** the request body contains fewer or more than three face images
+- **WHEN** `POST /api/face/enroll/` is called
+- **THEN** the backend SHALL reject the request with a validation error
+
+## Purpose
+Defines the expected behavior, constraints, and acceptance scenarios for Face Recognition in the Factory Vision system.
 
 ## Planned Features (Not Yet Implemented)
 
@@ -73,6 +98,9 @@ The system SHALL provide an AI-side face recognition service using InsightFace f
 
 ---
 
+## Purpose
+Defines the expected behavior, constraints, and acceptance scenarios for Face Recognition in the Factory Vision system.
+
 ## Constraints
 
 - The face recognition service SHALL NOT write to the database directly — it communicates with the backend only through `BackendClient`.
@@ -81,6 +109,9 @@ The system SHALL provide an AI-side face recognition service using InsightFace f
 - `InsightFace` library auto-downloads the `buffalo_l` model package on first run. The model cache directory is controlled by `INSIGHTFACE_HOME` env var (default: `models/insightface`).
 
 ---
+
+## Purpose
+Defines the expected behavior, constraints, and acceptance scenarios for Face Recognition in the Factory Vision system.
 
 ## 变更说明
 
