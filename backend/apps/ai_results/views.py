@@ -146,6 +146,7 @@ def report_ai_results(request):
     event_ids = []
     alert_ids = []
     rejected_results = 0
+    _pushed_face_keys = set()
 
     with transaction.atomic():
         for result in validated["results"]:
@@ -171,31 +172,40 @@ def report_ai_results(request):
             )
             event_ids.append(event.id)
 
-            # 推送给 WebSocket 客户端
-            try:
-                channel_layer = get_channel_layer()
-                async_to_sync(channel_layer.group_send)(
-                    f"realtime_{validated['cameraId']}",
-                    {
-                        "type": "event.message",
-                        "data": {
-                            "type": "EVENT_CREATED",
-                            "cameraId": validated["cameraId"],
-                            "timestamp": str(validated["timestamp"]),
-                            "payload": {
-                                "eventId": event.id,
-                                "eventType": event.event_type,
-                                "severity": event.severity,
-                                "trackId": event.track_id,
-                                "bbox": event.bbox,
-                                "confidence": event.confidence,
-                                "occurredAt": str(event.occurred_at),
+            should_push = _should_create_alert(result_type)
+            if result_type == "FACE_RESULT" and result.get("matched") and result.get("employeeId"):
+                # 同一员工同一 trackId 只推一次
+                key = (event.track_id, str(result["employeeId"]))
+                if key not in _pushed_face_keys:
+                    _pushed_face_keys.add(key)
+                    should_push = True
+
+            if should_push:
+                # 推 WebSocket：告警级事件 + 员工首次识别（供考勤/实时事件流使用）
+                try:
+                    channel_layer = get_channel_layer()
+                    async_to_sync(channel_layer.group_send)(
+                        f"realtime_{validated['cameraId']}",
+                        {
+                            "type": "event.message",
+                            "data": {
+                                "type": "EVENT_CREATED",
+                                "cameraId": validated["cameraId"],
+                                "timestamp": str(validated["timestamp"]),
+                                "payload": {
+                                    "eventId": event.id,
+                                    "eventType": event.event_type,
+                                    "severity": event.severity,
+                                    "trackId": event.track_id,
+                                    "bbox": event.bbox,
+                                    "confidence": event.confidence,
+                                    "occurredAt": str(event.occurred_at),
+                                },
                             },
                         },
-                    },
-                )
-            except Exception:
-                pass  # WebSocket 推送失败不影响核心流程
+                    )
+                except Exception:
+                    pass  # WebSocket 推送失败不影响核心流程
 
             if _should_create_alert(result_type):
                 alert = Alert.objects.create(
