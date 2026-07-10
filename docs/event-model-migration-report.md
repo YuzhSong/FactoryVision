@@ -30,7 +30,9 @@
 
 ## 为什么迁移
 
-`AIEvent` 是为了先跑通 AIService 上报链路而建立的临时落库承接表。它已经包含 camera、event_type、occurred_at、bbox、confidence、snapshot_path、payload 等正式事件表常见字段。
+> Historical note: this report describes the completed compatibility transition. The later `remove-ai-event-compatibility` change ends that period: `AIEvent` is removed, `Event` is the only formal event model, and `Alert.event` directly references it.
+
+`AIEvent` was a temporary persistence target used to establish the AIService reporting chain. It stored camera, event type, occurrence time, bbox, confidence, snapshot, and raw payload.
 
 项目中已有 `events` app，但此前仍是占位模块。为了避免后续告警中心、事件审计、回放、检索都继续依赖 `ai_results` 下的临时模型，本轮将正式事件记录收敛到 `events.Event`，同时保留 `AIEvent` 作为兼容过渡。
 
