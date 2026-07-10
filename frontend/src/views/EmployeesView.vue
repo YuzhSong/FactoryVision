@@ -6,6 +6,7 @@ import StatusTag from '../components/StatusTag.vue'
 import { employeesApi, faceApi } from '../api/modules'
 
 const dialogVisible = ref(false)
+const editDialogVisible = ref(false)
 const faceDialogVisible = ref(false)
 const saving = ref(false)
 const enrolling = ref(false)
@@ -47,6 +48,16 @@ const employeeForm = reactive({
   phone: '',
 })
 
+const editForm = reactive({
+  id: null,
+  employeeNo: '',
+  name: '',
+  department: '',
+  position: '',
+  phone: '',
+  status: 'active',
+})
+
 const resetEmployeeForm = () => {
   Object.assign(employeeForm, {
     employeeNo: '',
@@ -60,6 +71,19 @@ const resetEmployeeForm = () => {
 const openCreateDialog = () => {
   resetEmployeeForm()
   dialogVisible.value = true
+}
+
+const openEditDialog = (employee) => {
+  Object.assign(editForm, {
+    id: employee.id,
+    employeeNo: employee.employeeNo || '',
+    name: employee.name || '',
+    department: employee.department || '',
+    position: employee.position || '',
+    phone: employee.phone || '',
+    status: employee.status || 'active',
+  })
+  editDialogVisible.value = true
 }
 
 const departmentOptions = computed(() => {
@@ -212,6 +236,20 @@ const clearFaceImage = (key) => {
   faceImages[key] = ''
 }
 
+const submitEmployeeEdit = () => {
+  if (!editForm.id) {
+    ElMessage.warning('请先选择员工')
+    return
+  }
+  if (!editForm.name) {
+    ElMessage.warning('请填写姓名')
+    return
+  }
+
+  ElMessage.warning('员工编辑接口 planned，当前仅保留编辑界面，待后端接口接入')
+  editDialogVisible.value = false
+}
+
 const getApiErrorMessage = (error, fallback) => {
   const response = error?.response?.data
   if (!response) return fallback
@@ -307,8 +345,8 @@ onMounted(() => {
           </template>
         </el-table-column>
         <el-table-column label="操作" width="150">
-          <template #default>
-            <el-button link type="primary">编辑</el-button>
+          <template #default="{ row }">
+            <el-button link type="primary" @click="openEditDialog(row)">编辑</el-button>
             <el-button link type="danger">停用</el-button>
           </template>
         </el-table-column>
@@ -337,6 +375,43 @@ onMounted(() => {
       <template #footer>
         <el-button @click="dialogVisible = false">取消</el-button>
         <el-button type="primary" :loading="saving" @click="submitEmployee">保存员工</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog v-model="editDialogVisible" title="编辑员工信息" width="560px">
+      <el-alert
+        class="dialog-alert"
+        title="后端员工编辑接口尚未实现，当前修改不会写入数据库。"
+        type="warning"
+        show-icon
+        :closable="false"
+      />
+      <el-form label-position="top" :model="editForm" class="edit-employee-form">
+        <el-form-item label="工号">
+          <el-input v-model="editForm.employeeNo" disabled />
+        </el-form-item>
+        <el-form-item label="姓名">
+          <el-input v-model="editForm.name" placeholder="请输入姓名" />
+        </el-form-item>
+        <el-form-item label="部门">
+          <el-input v-model="editForm.department" placeholder="请输入部门" />
+        </el-form-item>
+        <el-form-item label="职位">
+          <el-input v-model="editForm.position" placeholder="请输入职位" />
+        </el-form-item>
+        <el-form-item label="电话号码">
+          <el-input v-model="editForm.phone" placeholder="请输入电话号码" />
+        </el-form-item>
+        <el-form-item label="状态">
+          <el-select v-model="editForm.status" placeholder="请选择状态">
+            <el-option label="在职" value="active" />
+            <el-option label="停用" value="inactive" />
+          </el-select>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="editDialogVisible = false">取消</el-button>
+        <el-button type="primary" @click="submitEmployeeEdit">保存 planned</el-button>
       </template>
     </el-dialog>
 
