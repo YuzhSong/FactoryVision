@@ -18,6 +18,8 @@
 - `GET /api/zones/`: placeholder
 - `GET /api/zones/list/`: implemented
 - `POST /api/zones/`: implemented
+- `GET /api/alerts/list/`: implemented
+- `POST /api/alerts/{alertId}/handle/`: implemented
 - `GET /api/events/`: placeholder
 - `GET /api/attendance/`: placeholder
 - `GET /api/ai-results/`: placeholder
@@ -897,17 +899,28 @@ GET /api/events/list/?cameraId=1&eventType=ZONE_WARNING
 
 | 项 | 内容 |
 | --- | --- |
-| 接口说明 | 查询告警中心列表 |
+| 接口说明 | 查询告警中心列表，支持关键词、等级、状态和时间范围筛选 |
 | URL | `/api/alerts/list/` |
 | Method | `GET` |
-| 状态 | planned |
+| 状态 | implemented |
 
-请求参数：通用分页参数，可增加 `status`、`level`、`eventType`。
+请求参数：
+
+| 参数 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `keyword` | string | 否 | 模糊搜索告警标题 |
+| `severity` | string | 否 | 等级：info / low / medium / high |
+| `status` | string | 否 | 状态：pending / processing / closed |
+| `cameraId` | int | 否 | 摄像头 ID |
+| `startTime` | string | 否 | 开始时间，ISO 格式 |
+| `endTime` | string | 否 | 结束时间，ISO 格式 |
+| `page` | int | 否 | 页码，默认 1 |
+| `pageSize` | int | 否 | 每页数量，默认 20 |
 
 请求示例：
 
 ```http
-GET /api/alerts/list/?status=pending&level=high
+GET /api/alerts/list/?keyword=入侵&severity=high&status=pending&startTime=2026-07-01T00:00:00&endTime=2026-07-10T23:59:59&page=1&pageSize=20
 ```
 
 响应示例：
@@ -921,10 +934,14 @@ GET /api/alerts/list/?status=pending&level=high
     "items": [
       {
         "id": 1,
-        "eventId": 10,
         "title": "危险区域入侵",
-        "level": "high",
-        "status": "pending"
+        "eventType": "ZONE_INTRUSION",
+        "severity": "high",
+        "status": "pending",
+        "cameraId": 1,
+        "cameraName": "一号车间入口",
+        "occurredAt": "2026-07-10T14:05:03+08:00",
+        "description": "trackId t-1 进入危险设备区"
       }
     ]
   },
@@ -932,34 +949,49 @@ GET /api/alerts/list/?status=pending&level=high
 }
 ```
 
-状态说明：当前代码尚未建立 `alerts` Django app。
-
 ### 告警处置
 
 | 项 | 内容 |
 | --- | --- |
-| 接口说明 | 确认、处理或关闭告警 |
+| 接口说明 | 处置告警，更新状态（待处理→处理中→已关闭） |
 | URL | `/api/alerts/{alertId}/handle/` |
 | Method | `POST` |
-| 状态 | planned |
+| 状态 | implemented |
 
 请求参数：
 
 | 参数 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
-| `action` | string | 是 | `confirm`、`processing`、`close` |
-| `remark` | string | 否 | 处理说明 |
+| `status` | string | 是 | pending / processing / closed |
 
 请求示例：
 
 ```json
-{
-  "action": "close",
-  "remark": "现场确认已处理"
-}
+{"status": "processing"}
 ```
 
 响应示例：
+
+```json
+{
+  "code": 200,
+  "message": "success",
+  "data": {
+    "id": 1,
+    "title": "危险区域入侵",
+    "eventType": "ZONE_INTRUSION",
+    "severity": "high",
+    "status": "processing",
+    "cameraId": 1,
+    "cameraName": "一号车间入口",
+    "occurredAt": "2026-07-10T14:05:03+08:00",
+    "description": ""
+  },
+  "requestId": "uuid"
+}
+```
+
+状态说明：告警不存在返回 `404`。
 
 ```json
 {
