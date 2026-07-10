@@ -1,18 +1,29 @@
 from django.db import transaction
+from django.db.models import Count
+from django.db.models.functions import TruncHour
 from django.utils import timezone
 from rest_framework.decorators import api_view
-from drf_spectacular.utils import OpenApiExample, extend_schema
+from rest_framework import status as http_status
+from drf_spectacular.utils import OpenApiExample, OpenApiParameter, OpenApiTypes, extend_schema
 
 from apps.cameras.models import Camera
 from apps.cameras.serializers import CameraListSerializer
 from apps.employees.models import Employee
 from apps.employees.serializers import EmployeeListSerializer
+from apps.events.models import Event
 from apps.zones.models import Zone
 from apps.zones.serializers import ZoneListSerializer
 from common.response import api_response
 
-from .models import AIEvent, Alert
-from .serializers import AIResultPlaceholderSerializer, AIResultReportSerializer, HealthCheckSerializer
+from .models import Alert
+from .serializers import (
+    AIResultPlaceholderSerializer,
+    AIResultReportSerializer,
+    AlertHandleSerializer,
+    AlertSerializer,
+    DashboardSummarySerializer,
+    HealthCheckSerializer,
+)
 
 
 ALERT_EVENT_TYPES = {
@@ -35,6 +46,10 @@ DEFAULT_THRESHOLDS = {
     "stranger": {"similarity": 0.45},
     "face": {"similarity": 0.45},
 }
+
+DEFAULT_PAGE_SIZE = 20
+MAX_PAGE_SIZE = 100
+RECENT_ALERT_LIMIT = 5
 
 
 @extend_schema(
@@ -93,7 +108,7 @@ def placeholder_view(_request):
                 "code": 200,
                 "message": "AI results accepted",
                 "data": {
-                    "eventIds": [],
+                    "eventIds": [1],
                     "alertIds": [],
                     "acceptedResults": 1,
                     "cameraId": 1,
@@ -137,16 +152,20 @@ def report_ai_results(request):
                 rejected_results += 1
                 continue
 
-            event = AIEvent.objects.create(
+            event = Event.objects.create(
                 camera=camera,
                 camera_identifier=str(validated["cameraId"]),
                 frame_id=validated.get("frameId", ""),
                 event_type=result_type,
-                confidence=_extract_confidence(result),
+                source=Event.Source.AI_SERVICE,
+                severity=_event_severity(result_type, result),
+                status=Event.Status.NEW,
+                occurred_at=validated["timestamp"],
+                track_id=_extract_track_id(result),
                 bbox=_extract_bbox(result),
+                confidence=_extract_confidence(result),
                 snapshot_path=_extract_snapshot_path(result, validated.get("eventMedia", [])),
                 payload=result,
-                occurred_at=validated["timestamp"],
             )
             event_ids.append(event.id)
 
@@ -175,6 +194,124 @@ def report_ai_results(request):
             "frameId": validated.get("frameId", ""),
         },
     )
+
+
+def _parse_positive_int(value):
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed > 0 else None
+
+
+@extend_schema(
+    summary="List alerts",
+    description="Return paginated Alert records linked to formal Event records.",
+    parameters=[
+        OpenApiParameter("page", OpenApiTypes.INT, OpenApiParameter.QUERY, description="Positive page number; default 1."),
+        OpenApiParameter("pageSize", OpenApiTypes.INT, OpenApiParameter.QUERY, description="Page size from 1 to 100; default 20."),
+        OpenApiParameter("severity", OpenApiTypes.STR, OpenApiParameter.QUERY, description="Alert severity filter."),
+        OpenApiParameter("status", OpenApiTypes.STR, OpenApiParameter.QUERY, description="Alert status filter."),
+        OpenApiParameter("cameraId", OpenApiTypes.INT, OpenApiParameter.QUERY, description="Camera id filter."),
+    ],
+    responses={200: AlertSerializer(many=True), 400: None},
+)
+@api_view(["GET"])
+def alert_list_view(request):
+    page = _parse_positive_int(request.query_params.get("page", 1))
+    page_size = _parse_positive_int(request.query_params.get("pageSize", DEFAULT_PAGE_SIZE))
+    camera_id = request.query_params.get("cameraId")
+
+    if page is None or page_size is None or page_size > MAX_PAGE_SIZE:
+        return api_response(
+            code=400,
+            message="page and pageSize must be positive integers; pageSize must not exceed 100.",
+            data=None,
+            status=http_status.HTTP_400_BAD_REQUEST,
+        )
+    if camera_id and not str(camera_id).isdigit():
+        return api_response(
+            code=400,
+            message="cameraId must be a positive integer.",
+            data=None,
+            status=http_status.HTTP_400_BAD_REQUEST,
+        )
+
+    alerts = Alert.objects.select_related("event", "camera").all()
+    severity = request.query_params.get("severity")
+    alert_status = request.query_params.get("status")
+    if severity:
+        alerts = alerts.filter(event__severity=severity)
+    if alert_status:
+        alerts = alerts.filter(status=alert_status)
+    if camera_id:
+        alerts = alerts.filter(camera_id=int(camera_id))
+
+    total = alerts.count()
+    start = (page - 1) * page_size
+    items = AlertSerializer(alerts[start:start + page_size], many=True).data
+    return api_response(data={"total": total, "items": items}, message="success")
+
+
+@extend_schema(
+    summary="Handle alert",
+    description="Update an Alert status. The current model has no handler or handled-at fields.",
+    request=AlertHandleSerializer,
+    responses={200: AlertSerializer, 400: None, 404: None},
+)
+@api_view(["POST"])
+def alert_handle_view(request, alert_id):
+    serializer = AlertHandleSerializer(data=request.data)
+    if not serializer.is_valid():
+        return api_response(
+            code=400,
+            message="Invalid alert handling payload",
+            data=serializer.errors,
+            status=http_status.HTTP_400_BAD_REQUEST,
+        )
+
+    alert = Alert.objects.select_related("event", "camera").filter(id=alert_id).first()
+    if alert is None:
+        return api_response(
+            code=404,
+            message="Alert not found",
+            data=None,
+            status=http_status.HTTP_404_NOT_FOUND,
+        )
+
+    alert.status = serializer.validated_data["status"]
+    alert.save(update_fields=["status"])
+    return api_response(data=AlertSerializer(alert).data, message="success")
+
+
+@extend_schema(
+    summary="Dashboard summary",
+    description="Return database-backed operational counts, recent alerts, and today's hourly event trend.",
+    responses={200: DashboardSummarySerializer},
+)
+@api_view(["GET"])
+def dashboard_summary_view(_request):
+    today = timezone.localdate()
+    today_events = Event.objects.filter(occurred_at__date=today)
+    today_alerts = Alert.objects.filter(occurred_at__date=today)
+    event_trend = (
+        today_events.annotate(hour=TruncHour("occurred_at", tzinfo=timezone.get_current_timezone()))
+        .values("hour")
+        .annotate(count=Count("id"))
+        .order_by("hour")
+    )
+    recent_alerts = Alert.objects.select_related("event", "camera").all()[:RECENT_ALERT_LIMIT]
+    summary = {
+        "cameraCount": Camera.objects.count(),
+        "onlineCameraCount": Camera.objects.filter(status=Camera.Status.ONLINE).count(),
+        "employeeCount": Employee.objects.count(),
+        "todayEventCount": today_events.count(),
+        "todayAlertCount": today_alerts.count(),
+        "pendingAlertCount": Alert.objects.filter(status=Alert.Status.PENDING).count(),
+        "recentAlerts": recent_alerts,
+        "eventTrend": list(event_trend),
+    }
+    return api_response(data=DashboardSummarySerializer(summary).data, message="success")
 
 
 @extend_schema(
@@ -249,6 +386,11 @@ def _extract_bbox(result):
     return bbox if isinstance(bbox, dict) else {}
 
 
+def _extract_track_id(result):
+    value = result.get("trackId") or result.get("track_id") or result.get("id")
+    return "" if value is None else str(value)
+
+
 def _extract_snapshot_path(result, event_media):
     for key in ("snapshotPath", "snapshotUrl", "imagePath"):
         value = result.get(key)
@@ -275,6 +417,15 @@ def _default_level(result_type):
     if result_type == "EMPLOYEE_RETURNED":
         return "low"
     return "medium"
+
+
+def _event_severity(result_type, result):
+    level = str(result.get("level") or "").lower()
+    if level in {choice.value for choice in Event.Severity}:
+        return level
+    if _should_create_alert(result_type):
+        return _default_level(result_type)
+    return Event.Severity.INFO
 
 
 def _alert_title(result_type):
