@@ -29,8 +29,8 @@ class Command(BaseCommand):
             code="CAM-ENTRANCE-001",
             defaults={
                 "name": "一号车间入口摄像头",
-                "stream_url": "rtmp://127.0.0.1/live/entrance",
-                "processed_stream_url": "rtmp://127.0.0.1/live/entrance_ai",
+                "stream_url": "rtmp://81.70.90.222:1935/live/1",
+                "processed_stream_url": "rtmp://81.70.90.222:1935/live/1_detected",
                 "location": "一号车间入口",
                 "status": Camera.Status.ONLINE,
                 "enabled": True,
