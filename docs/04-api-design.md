@@ -10,6 +10,10 @@
 - `GET /api/auth/me/`: implemented
 - `GET /api/users/`: placeholder
 - `GET /api/employees/`: placeholder
+- `GET /api/employees/list/`: implemented
+- `POST /api/employees/`: implemented
+- `POST /api/face/enroll/`: implemented
+- `WS /ws/realtime/{cameraId}/`: implemented
 - `GET /api/cameras/`: placeholder
 - `GET /api/cameras/list/`: implemented
 - `POST /api/cameras/`: implemented
@@ -334,7 +338,7 @@ GET /api/employees/
 | 接口说明 | 查询员工档案 |
 | URL | `/api/employees/list/` |
 | Method | `GET` |
-| 状态 | planned |
+| 状态 | implemented |
 
 请求参数：通用分页参数，可增加 `keyword`（模糊匹配姓名或工号）、`department`、`status`。
 
@@ -377,7 +381,7 @@ GET /api/employees/list/?page=1&pageSize=20&status=active
 | 接口说明 | 新增员工档案 |
 | URL | `/api/employees/` |
 | Method | `POST` |
-| 状态 | planned |
+| 状态 | implemented |
 
 请求参数：
 
@@ -425,7 +429,7 @@ GET /api/employees/list/?page=1&pageSize=20&status=active
 | 接口说明 | 为员工批量录入人脸图片（必须 3 张，正脸/左脸/右脸各一张）并生成特征 |
 | URL | `/api/face/enroll/` |
 | Method | `POST` |
-| 状态 | planned |
+| 状态 | implemented |
 
 请求参数：
 
@@ -1272,7 +1276,7 @@ GET /api/ai-results/
 | 接口说明 | 向前端推送指定摄像头实时 AI 结果和告警状态 |
 | URL | `/ws/realtime/{cameraId}/` |
 | Method | WebSocket |
-| 状态 | planned |
+| 状态 | implemented |
 
 连接参数：
 
