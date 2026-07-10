@@ -86,7 +86,7 @@ py -3.14 -m venv .venv
 python -m pip install --upgrade pip
 pip install -r requirements.txt
 python manage.py migrate
-python manage.py runserver
+daphne config.asgi:application
 ```
 
 ### Frontend

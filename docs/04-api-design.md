@@ -1322,4 +1322,4 @@ GET /api/ai-results/
 }
 ```
 
-状态说明：当前代码未接入 Django Channels 或其他 WebSocket 实现。
+状态说明：已接入 Django Channels，AI 上报检测结果后自动推送给对应摄像头的 WebSocket 客户端。

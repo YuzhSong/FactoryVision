@@ -1,3 +1,5 @@
+from asgiref.sync import async_to_sync
+from channels.layers import get_channel_layer
 from django.db import transaction
 from django.db.models import Count, Q
 from django.db.models.functions import TruncHour
@@ -168,6 +170,32 @@ def report_ai_results(request):
                 payload=result,
             )
             event_ids.append(event.id)
+
+            # 推送给 WebSocket 客户端
+            try:
+                channel_layer = get_channel_layer()
+                async_to_sync(channel_layer.group_send)(
+                    f"realtime_{validated['cameraId']}",
+                    {
+                        "type": "event.message",
+                        "data": {
+                            "type": "EVENT_CREATED",
+                            "cameraId": validated["cameraId"],
+                            "timestamp": str(validated["timestamp"]),
+                            "payload": {
+                                "eventId": event.id,
+                                "eventType": event.event_type,
+                                "severity": event.severity,
+                                "trackId": event.track_id,
+                                "bbox": event.bbox,
+                                "confidence": event.confidence,
+                                "occurredAt": str(event.occurred_at),
+                            },
+                        },
+                    },
+                )
+            except Exception:
+                pass  # WebSocket 推送失败不影响核心流程
 
             if _should_create_alert(result_type):
                 alert = Alert.objects.create(
