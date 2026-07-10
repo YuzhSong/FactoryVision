@@ -1,110 +1,131 @@
 # Camera Management
 
-> **Status:** 新建 —— 后端占位/前端有静态 UI
+> **Status:** Implemented — 后端 CRUD + 前端列表/筛选已接入
 
 ---
 
 ## Purpose
 Defines the expected behavior, constraints, and acceptance scenarios for Camera Management in the Factory Vision system.
+
+---
+
 ## Requirements
-### Requirement: Camera Registration and Management
 
-The system SHALL provide a camera management module for registering, listing, and configuring camera devices that feed video streams into the AI processing pipeline.
+### Requirement: Camera list and search
 
-#### Scenario: Access camera management page — [Status: Implemented — Static UI]
+The backend SHALL provide a camera list endpoint with keyword search, status filtering, and pagination. AI Service SHALL receive full results when omitting pagination parameters.
 
-- GIVEN the user is authenticated and navigates to `/cameras`
-- WHEN the CamerasView page renders
-- THEN the frontend SHALL display a camera table with columns: 名称, 位置, 拉流地址, 播放地址, 状态
-- AND the table data SHALL come from hardcoded placeholder data (`data/placeholders.js`) — **Planned: fetch from backend API**
-- AND a filter row SHALL be present with status selector and search input
-- AND an "新增摄像头" dialog SHALL render form fields: 名称, 位置, 拉流地址 (streamUrl), 播放地址 (playUrl)
+#### Scenario: List all cameras
 
-#### Scenario: List cameras — [Status: Planned]
+- **GIVEN** camera records exist in the database
+- **WHEN** `GET /api/cameras/list/` is called without pagination parameters
+- **THEN** the backend SHALL return all cameras with fields: `id`, `name`, `code`, `streamUrl`, `processedStreamUrl`, `location`, `status`, `enabled`
+- **AND** AI Service SHALL use this endpoint to discover camera stream URLs
 
-- GIVEN camera records exist in the database
-- WHEN `GET /api/cameras/list/` is called (authenticated)
-- THEN the backend SHALL return a paginated list of cameras with fields: `id`, `name`, `location`, `streamUrl`, `playUrl`, `status`
+#### Scenario: Search and filter cameras
 
-#### Scenario: Create a camera — [Status: Planned]
+- **GIVEN** the user is on the camera management page
+- **WHEN** `GET /api/cameras/list/?keyword=车间&status=online&page=1&pageSize=20` is called
+- **THEN** the backend SHALL return paginated results filtered by keyword (matches name, code, or location) and status
+- **AND** status filter accepts `online`, `offline`, `disabled`
 
-- GIVEN a valid camera configuration payload
-- WHEN `POST /api/cameras/` is called
-- **Permission model:** TBD — whether this endpoint requires authentication (`IsAuthenticated`) or admin-only access is a future design decision. The backend endpoint is not yet implemented, so this spec does not prescribe a permission rule at this stage.
-- THEN a new camera record SHALL be created
+### Requirement: Camera creation
 
-#### Scenario: Camera placeholder status — [Status: Implemented — Backend Placeholder]
+The backend SHALL provide a camera creation endpoint with auto-generated code when not provided.
 
-- GIVEN the backend cameras module is running
-- WHEN `GET /api/cameras/` is called
-- THEN the response SHALL return `{"code": 200, "data": {"module": "cameras", "status": "placeholder"}}`
+#### Scenario: Create camera with explicit code
+
+- **GIVEN** the user is authenticated
+- **WHEN** `POST /api/cameras/` is called with `{name, code:"CAM001", streamUrl, processedStreamUrl, location}`
+- **THEN** the backend SHALL create a new camera record
+- **AND** return `{id, code}` with HTTP 200
+
+#### Scenario: Create camera without code
+
+- **GIVEN** the user is authenticated
+- **WHEN** `POST /api/cameras/` is called without a `code` field
+- **THEN** the backend SHALL auto-generate a code in `CAM00N` format
+- **AND** return `{id, code}` with HTTP 200
+
+#### Scenario: Duplicate code rejected
+
+- **GIVEN** a camera with code "CAM001" already exists
+- **WHEN** `POST /api/cameras/` is called with `code:"CAM001"`
+- **THEN** the backend SHALL return HTTP 409 with message "编码 CAM001 已存在"
+
+### Requirement: Camera editing
+
+The backend SHALL provide a camera update endpoint where all fields are optional.
+
+#### Scenario: Partial update
+
+- **GIVEN** the user is authenticated and camera id=1 exists
+- **WHEN** `PUT /api/cameras/{id}/` is called with `{name:"新名称", location:"新位置"}`
+- **THEN** the backend SHALL update only those fields, leaving others unchanged
+- **AND** return `{id, code}` with HTTP 200
+
+#### Scenario: Code conflict on update
+
+- **GIVEN** cameras with codes "CAM001" (id=1) and "CAM002" (id=2)
+- **WHEN** `PUT /api/cameras/1/` is called with `{code:"CAM002"}`
+- **THEN** the backend SHALL return HTTP 409
+
+### Requirement: Camera status toggle
+
+The backend SHALL provide a status toggle endpoint for switching camera online/offline/disabled state.
+
+#### Scenario: Toggle camera online
+
+- **GIVEN** a camera with status "offline"
+- **WHEN** `POST /api/cameras/{id}/toggle/` is called with `{status:"online"}`
+- **THEN** the backend SHALL update the camera status and return `{id, status}`
 
 ---
 
-### Requirement: Frontend camera list integration
-
-The camera management frontend SHALL display camera data from the implemented backend camera list API.
-
-#### Scenario: Load camera list
-
-- **GIVEN** the user opens `/cameras`
-- **WHEN** `GET /api/cameras/list/` succeeds
-- **THEN** the camera table SHALL render backend `items`
-- **AND** status filter SHALL be passed as a query param when selected
-- **AND** unsupported create/edit actions SHALL remain marked as planned
-
-## Purpose
-Defines the expected behavior, constraints, and acceptance scenarios for Camera Management in the Factory Vision system.
-
-## Camera Data Model — [Status: Planned]
-
-**Note:** 以下字段基于前端 `placeholders.js` 中的硬编码数据推断。后端尚未定义 Camera 模型（`models.py` 为空），正式模型字段以未来实现为准。
+## Camera Data Model
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `name` | — | 摄像头名称 (e.g., "一号车间入口") |
-| `location` | — | 物理位置 (e.g., "一号车间") |
-| `streamUrl` | — | RTMP/RTSP 拉流地址 (e.g., `rtmp://81.70.90.222:1935/live/1`) |
-| `playUrl` | — | WebRTC/HTTP-FLV 播放地址 (e.g., `webrtc://webrtc.rainycode.cn:8443/live/1_detected`) |
-| `status` | — | online / offline / disabled |
+| `id` | BigAuto | Primary key |
+| `name` | CharField(128) | 摄像头名称 |
+| `code` | CharField(64), unique | 唯一编码，可自动生成 CAM00N |
+| `stream_url` | CharField(512) | 原始 RTMP 流地址，AI Service 拉流用 |
+| `processed_stream_url` | CharField(512) | AI 处理后带框 RTMP 地址，前端播放用 |
+| `location` | CharField(255) | 安装位置 |
+| `status` | CharField(32) | online / offline / disabled，默认 offline |
+| `enabled` | BooleanField | 是否启用，默认 true |
+| `created_at` | DateTime | 创建时间 |
+| `updated_at` | DateTime | 更新时间 |
 
 ---
 
-## Purpose
-Defines the expected behavior, constraints, and acceptance scenarios for Camera Management in the Factory Vision system.
+## API Endpoints
 
-## Hardcoded Reference Data (Current Frontend State)
-
-The frontend currently uses hardcoded camera entries from `data/placeholders.js`:
-
-```javascript
-// Camera 1 (functional): streamUrl = rtmp://81.70.90.222:1935/live/1, playUrl = webrtc://webrtc.rainycode.cn:8443/live/1_detected
-// Camera 2 (offline):  streamUrl = rtsp://example/camera-02, playUrl = 'planned'
-// Camera 3 (disabled): streamUrl = rtsp://example/camera-03, playUrl = 'planned'
-```
+| Method | URL | Description | Auth |
+|--------|-----|-------------|------|
+| `GET` | `/api/cameras/list/` | 摄像头列表（支持 keyword/status/page/pagesize） | No |
+| `POST` | `/api/cameras/` | 创建摄像头 | Bearer JWT |
+| `PUT` | `/api/cameras/{id}/` | 编辑摄像头（所有字段可选） | Bearer JWT |
+| `POST` | `/api/cameras/{id}/toggle/` | 切换在线/离线/停用状态 | Bearer JWT |
 
 ---
-
-## Purpose
-Defines the expected behavior, constraints, and acceptance scenarios for Camera Management in the Factory Vision system.
 
 ## Constraints
 
-- The camera `streamUrl` is used by `StreamReader` (OpenCV `cv2.VideoCapture`) for RTMP/RTSP ingest.
-- The camera `playUrl` is used by `MonitorView.vue` for WebRTC/HTTP-FLV playback.
-- The AI service `BackendClient` resolves camera sources from the backend API — currently falling back to environment variable defaults since no camera API exists.
+- `stream_url` is used by AI Service `StreamReader` (OpenCV `cv2.VideoCapture`) for RTMP ingest.
+- `processed_stream_url` is used by the frontend for WebRTC playback of AI-detected streams.
+- AI Service `BackendClient.list_cameras()` calls this endpoint without pagination to receive full camera list.
+- Frontend `CamerasView.vue` calls this endpoint with pagination and optional keyword/status filters.
+- Status `online`/`offline`/`disabled` is managed by the toggle endpoint; AI Service detects actual stream health separately.
 
 ---
-
-## Purpose
-Defines the expected behavior, constraints, and acceptance scenarios for Camera Management in the Factory Vision system.
 
 ## 变更说明
 
 | 说明 |
 |------|
-| 全新 spec，基于 `backend/apps/cameras/` (placeholder views/serializers/urls) |
-| 基于 `frontend/src/views/CamerasView.vue` (完整静态 UI，含新增对话框) |
-| 基于 `frontend/src/data/placeholders.js` 中的 3 个硬编码摄像头数据 |
-| 基于 `frontend/src/api/modules.js` 中的 `camerasApi` 定义 |
-| Camera 数据模型字段基于前端占位数据推断，待后端实现后更新 |
+| 从 placeholder 升级为完整 CRUD 实现 |
+| 模型从文档的 `playUrl` 改为 `processed_stream_url`，对应 AI 处理后带框流 |
+| 新增 `code` 唯一编码，支持手动输入或自动生成 CAM00N |
+| 列表增加 keyword 搜索和分页，AI Service 不传 page 获得全量 |
+| Swagger 注解使用中文 |

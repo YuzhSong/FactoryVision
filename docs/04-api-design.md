@@ -11,7 +11,13 @@
 - `GET /api/users/`: placeholder
 - `GET /api/employees/`: placeholder
 - `GET /api/cameras/`: placeholder
+- `GET /api/cameras/list/`: implemented
+- `POST /api/cameras/`: implemented
+- `PUT /api/cameras/{id}/`: implemented
+- `POST /api/cameras/{id}/toggle/`: implemented
 - `GET /api/zones/`: placeholder
+- `GET /api/zones/list/`: implemented
+- `POST /api/zones/`: implemented
 - `GET /api/events/`: placeholder
 - `GET /api/attendance/`: placeholder
 - `GET /api/ai-results/`: placeholder
@@ -509,17 +515,24 @@ GET /api/cameras/
 
 | 项 | 内容 |
 | --- | --- |
-| 接口说明 | 查询摄像头配置 |
+| 接口说明 | 查询摄像头配置，支持关键词搜索和状态筛选。AI Service 不传分页参数时全量返回 |
 | URL | `/api/cameras/list/` |
 | Method | `GET` |
-| 状态 | planned |
+| 状态 | implemented |
 
-请求参数：通用分页参数，可增加 `status`。
+请求参数：
+
+| 参数 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `keyword` | string | 否 | 模糊匹配名称、编码或位置 |
+| `status` | string | 否 | online / offline / disabled |
+| `page` | number | 否 | 页码，不传返回全量 |
+| `pageSize` | number | 否 | 每页数量，默认 20 |
 
 请求示例：
 
 ```http
-GET /api/cameras/list/?status=online
+GET /api/cameras/list/?keyword=一号&status=online
 ```
 
 响应示例：
@@ -534,9 +547,12 @@ GET /api/cameras/list/?status=online
       {
         "id": 1,
         "name": "一号车间入口",
-        "streamUrl": "rtsp://example/camera1",
-        "playUrl": "http://127.0.0.1:8888/camera1/index.m3u8",
-        "status": "online"
+        "code": "CAM001",
+        "streamUrl": "rtmp://srs/live/1",
+        "processedStreamUrl": "rtmp://srs/live/1_detected",
+        "location": "一号车间南侧",
+        "status": "online",
+        "enabled": true
       }
     ]
   },
@@ -553,25 +569,27 @@ GET /api/cameras/list/?status=online
 | 接口说明 | 新增摄像头配置 |
 | URL | `/api/cameras/` |
 | Method | `POST` |
-| 状态 | planned |
+| 状态 | implemented |
 
 请求参数：
 
 | 参数 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
 | `name` | string | 是 | 摄像头名称 |
+| `code` | string | 否 | 编码号，不填自动生成 CAM001 |
+| `streamUrl` | string | 是 | 原始 RTMP 流地址 |
+| `processedStreamUrl` | string | 否 | AI 处理后带框流地址 |
 | `location` | string | 否 | 安装位置 |
-| `streamUrl` | string | 是 | 原始流地址 |
-| `playUrl` | string | 否 | 前端播放地址 |
 
 请求示例：
 
 ```json
 {
   "name": "一号车间入口",
-  "location": "一号车间",
-  "streamUrl": "rtsp://example/camera1",
-  "playUrl": "http://127.0.0.1:8888/camera1/index.m3u8"
+  "code": "CAM001",
+  "streamUrl": "rtmp://srs/live/1",
+  "processedStreamUrl": "rtmp://srs/live/1_detected",
+  "location": "一号车间南侧"
 }
 ```
 
@@ -582,13 +600,80 @@ GET /api/cameras/list/?status=online
   "code": 200,
   "message": "success",
   "data": {
-    "id": 1
+    "id": 1,
+    "code": "CAM001"
   },
   "requestId": "uuid"
 }
 ```
 
-状态说明：流地址重复或格式错误返回 `409` 或 `400`。
+状态说明：code 重复返回 `409`，参数错误返回 `400`。
+
+### 编辑摄像头
+
+| 项 | 内容 |
+| --- | --- |
+| 接口说明 | 编辑摄像头配置，所有字段可选 |
+| URL | `/api/cameras/{id}/` |
+| Method | `PUT` |
+| 状态 | implemented |
+
+请求参数（全部可选，不传保持原值）：
+
+| 参数 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `name` | string | 否 | 摄像头名称 |
+| `code` | string | 否 | 编码号 |
+| `streamUrl` | string | 否 | 原始流地址 |
+| `processedStreamUrl` | string | 否 | AI 处理后流地址 |
+| `location` | string | 否 | 安装位置 |
+| `enabled` | bool | 否 | 是否启用 |
+
+请求示例：
+
+```json
+{
+  "name": "一号车间入口（更新）",
+  "location": "南侧门"
+}
+```
+
+响应示例：
+
+```json
+{"code": 200, "data": {"id": 1, "code": "CAM001"}}
+```
+
+状态说明：摄像头不存在返回 `404`，code 重复返回 `409`。
+
+### 切换摄像头状态
+
+| 项 | 内容 |
+| --- | --- |
+| 接口说明 | 切换摄像头在线/离线/停用状态 |
+| URL | `/api/cameras/{id}/toggle/` |
+| Method | `POST` |
+| 状态 | implemented |
+
+请求参数：
+
+| 参数 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `status` | string | 是 | online / offline / disabled |
+
+请求示例：
+
+```json
+{"status": "online"}
+```
+
+响应示例：
+
+```json
+{"code": 200, "data": {"id": 1, "status": "online"}}
+```
+
+状态说明：摄像头不存在返回 `404`。
 
 ## Zones 警戒区域接口
 
@@ -625,14 +710,66 @@ GET /api/zones/
 
 状态说明：当前只用于证明路由存在。
 
-### 保存警戒区域
+### 区域列表
 
 | 项 | 内容 |
 | --- | --- |
-| 接口说明 | 保存摄像头对应的多边形区域 |
+| 接口说明 | 查询指定摄像头的警戒区域列表 |
+| URL | `/api/zones/list/` |
+| Method | `GET` |
+| 状态 | implemented |
+
+请求参数：
+
+| 参数 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `cameraId` | string | 否 | 摄像头 ID 或编码 |
+| `enabled` | bool | 否 | 是否启用 |
+
+请求示例：
+
+```http
+GET /api/zones/list/?cameraId=1
+```
+
+响应示例：
+
+```json
+{
+  "code": 200,
+  "message": "success",
+  "data": {
+    "total": 1,
+    "items": [
+      {
+        "id": 1,
+        "name": "危险设备区",
+        "cameraId": 1,
+        "type": "danger",
+        "points": [
+          {"x": 0.56, "y": 0.45},
+          {"x": 0.82, "y": 0.43},
+          {"x": 0.87, "y": 0.72}
+        ],
+        "enabled": true,
+        "description": "设备运行危险区域"
+      }
+    ]
+  },
+  "requestId": "uuid"
+}
+```
+
+状态说明：前端选择摄像头后加载对应区域列表，AI Service 也通过此接口获取区域坐标。
+
+### 创建警戒区域
+
+| 项 | 内容 |
+| --- | --- |
+| 接口说明 | 为摄像头创建多边形警戒区域 |
 | URL | `/api/zones/` |
 | Method | `POST` |
-| 状态 | planned |
+| 状态 | implemented |
 
 请求参数：
 
@@ -640,8 +777,10 @@ GET /api/zones/
 | --- | --- | --- | --- |
 | `cameraId` | number | 是 | 摄像头 ID |
 | `name` | string | 是 | 区域名称 |
-| `points` | array | 是 | 多边形坐标 |
-| `safeDistance` | number | 否 | 安全距离像素阈值 |
+| `type` | string | 否 | restricted/danger/workstation/general，默认 restricted |
+| `points` | array | 是 | 多边形坐标，至少 3 个点 |
+| `enabled` | bool | 否 | 是否启用，默认 true |
+| `description` | string | 否 | 区域说明 |
 
 请求示例：
 
@@ -649,13 +788,15 @@ GET /api/zones/
 {
   "cameraId": 1,
   "name": "危险设备区",
+  "type": "danger",
   "points": [
     { "x": 100, "y": 200 },
     { "x": 400, "y": 200 },
     { "x": 420, "y": 520 },
     { "x": 90, "y": 520 }
   ],
-  "safeDistance": 20
+  "enabled": true,
+  "description": "设备运行危险区域"
 }
 ```
 
@@ -672,7 +813,7 @@ GET /api/zones/
 }
 ```
 
-状态说明：点位少于 3 个返回 `422`。
+状态说明：点位少于 3 个返回 `422`，摄像头不存在返回 `404`。
 
 ## Events 事件日志接口
 

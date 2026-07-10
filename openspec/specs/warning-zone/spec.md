@@ -23,5 +23,21 @@ The warning zone frontend SHALL display detection zones from the implemented bac
 - **WHEN** the user selects a camera in `/zones`
 - **THEN** the frontend SHALL call `GET /api/zones/list/?cameraId=<id>`
 - **AND** the zone table SHALL render backend `items`
-- **AND** unsupported polygon editing and saving actions SHALL remain marked as planned
+### Requirement: Zone creation API
+
+The backend SHALL provide a zone creation endpoint for administrators to configure detection zones.
+
+#### Scenario: Create a danger zone for a camera
+
+- **GIVEN** the user is authenticated
+- **WHEN** the frontend sends `POST /api/zones/` with `{cameraId, name, type, points, enabled, description}`
+- **THEN** the backend SHALL create a new zone record linked to the specified camera
+- **AND** SHALL return `{id}` with HTTP 200
+- **AND** points with fewer than 3 entries SHALL return HTTP 422
+
+#### Scenario: Zone list with Swagger documentation
+
+- **GIVEN** the backend is running
+- **WHEN** the developer opens `/api/docs/`
+- **THEN** all zone endpoints SHALL display Chinese descriptions and response examples
 
