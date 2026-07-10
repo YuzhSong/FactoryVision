@@ -24,16 +24,3 @@ The alert list endpoint SHALL support keyword search on title and time-range fil
 - **WHEN** `GET /api/alerts/list/?keyword=入侵&severity=high&status=pending&startTime=...&endTime=...` is called
 - **THEN** all conditions SHALL be combined with logical AND
 
-## ADDED Requirements
-
-### Requirement: Chinese Swagger documentation
-
-All alert endpoints SHALL display Chinese descriptions, parameter labels, and response examples in the Swagger UI.
-
-#### Scenario: Swagger docs in Chinese
-
-- **GIVEN** the backend is running
-- **WHEN** the developer opens `/api/docs/` and navigates to the Alerts section
-- **THEN** `GET /api/alerts/list/` SHALL show Chinese summary "查询告警列表" with Chinese parameter descriptions
-- **AND** `POST /api/alerts/{id}/handle/` SHALL show Chinese summary "处置告警" with response examples
-- **AND** response examples SHALL include success (200) and not-found (404) scenarios
