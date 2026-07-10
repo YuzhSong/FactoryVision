@@ -1,4 +1,5 @@
 import unittest
+import time
 import numpy as np
 
 from modules.frame_processor import FrameProcessor
@@ -200,6 +201,10 @@ class RealtimeStreamingTests(unittest.TestCase):
             zones=None,
             last_report={"results": []},
         )
+
+        deadline = time.monotonic() + 1
+        while backend.report is None and time.monotonic() < deadline:
+            time.sleep(0.01)
 
         self.assertEqual(service.status()["event_media_count"], 1)
         self.assertEqual(backend.report["eventMedia"][0]["eventId"], "event-1")

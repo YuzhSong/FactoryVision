@@ -3,6 +3,7 @@ import math
 
 from .abnormal_behavior_service import AbnormalBehaviorService
 from .employee_presence_detector import EmployeePresenceDetector
+from .event_classification import enrich_event_classification
 from .stranger_detector import StrangerDetector
 
 
@@ -68,6 +69,7 @@ class FrameProcessor:
             person_detections=person_results,
             track_histories=self.track_histories,
             timestamp=timestamp,
+            frame_shape=getattr(frame, "shape", None),
         )
 
         face_results = []
@@ -99,7 +101,15 @@ class FrameProcessor:
             for result in report["results"]
             if result.get("type") != "PERSON_DETECTION"
         ]
-        report["results"] = person_results + face_results + stranger_results + presence_results + non_person_results
+        # Keep the separate PPE boxes so the processed stream can render them alongside people.
+        report["results"] = enrich_event_classification(
+            person_results
+            + helmet_results
+            + face_results
+            + stranger_results
+            + presence_results
+            + non_person_results
+        )
         return report
 
     def reset(self):
@@ -107,6 +117,7 @@ class FrameProcessor:
         self.track_histories = {}
         self.stranger_detector.reset()
         self.employee_presence_detector.reset()
+        self.abnormal_service.zone_detector.reset()
         if hasattr(self.person_detector, "reset_tracks"):
             self.person_detector.reset_tracks()
 

@@ -52,6 +52,12 @@ face_service = FaceRecognitionService(
     enrollment_min_quality_score=Config.FACE_ENROLLMENT_MIN_QUALITY_SCORE,
     enrollment_min_face_size=Config.FACE_ENROLLMENT_MIN_FACE_SIZE,
     enrollment_max_pose_yaw=Config.FACE_ENROLLMENT_MAX_POSE_YAW,
+    liveness_enabled=Config.LIVENESS_ENABLED,
+    liveness_required=Config.LIVENESS_REQUIRED,
+    liveness_provider=Config.LIVENESS_PROVIDER,
+    liveness_threshold=Config.LIVENESS_THRESHOLD,
+    liveness_model_path=Config.LIVENESS_MODEL_PATH,
+    liveness_min_face_size=Config.LIVENESS_MIN_FACE_SIZE,
     det_size=Config.FACE_DETECTION_SIZE,
     provider=Config.FACE_PROVIDER,
     library_path=Config.FACE_LIBRARY_PATH,
@@ -78,6 +84,8 @@ frame_processor = FrameProcessor(
         "helmetClassIds": Config.HELMET_CLASS_IDS,
         "helmetClassId": Config.HELMET_CLASS_ID,
         "noHelmetClassId": Config.NO_HELMET_CLASS_ID,
+        "zoneMinStaySeconds": Config.ZONE_MIN_STAY_SECONDS,
+        "zoneStateTtlSeconds": Config.ZONE_STATE_TTL_SECONDS,
         "fallRatioThreshold": Config.FALL_RATIO_THRESHOLD,
         "fallConfirmFrames": Config.FALL_CONFIRM_FRAMES,
         "fallMinConfidence": Config.FALL_MIN_CONFIDENCE,
@@ -425,6 +433,14 @@ class FaceExtractDetail(BaseModel):
     faceBox: dict[str, float] | None = None
     modelName: str = "buffalo_l"
     provider: str = "CPUExecutionProvider"
+    livenessAvailable: bool = False
+    livenessPassed: bool | None = None
+    livenessScore: float | None = None
+    livenessThreshold: float | None = None
+    livenessProvider: str | None = None
+    livenessWarning: str | None = None
+    qualityHeuristicPassed: bool | None = None
+    qualityHeuristicScore: float | None = None
 
 
 class FaceExtractResponse(BaseModel):

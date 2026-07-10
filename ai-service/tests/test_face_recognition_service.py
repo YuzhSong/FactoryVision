@@ -5,6 +5,7 @@ from pathlib import Path
 import numpy as np
 
 from modules.face_recognition_service import FaceRecognitionService, _should_use_base_url
+from modules.liveness_detector import LivenessResult
 
 
 class FaceRecognitionServiceTests(unittest.TestCase):
@@ -134,6 +135,48 @@ class FaceRecognitionServiceTests(unittest.TestCase):
         self.assertEqual(delete_result["deleted"], 1)
         self.assertEqual(len(service.face_records), 1)
         self.assertEqual(service.face_records[0].employee_no, "E002")
+
+    def test_enrollment_returns_liveness_metadata_when_not_required(self):
+        service = _EnrollmentService(
+            liveness_detector=_FakeLivenessDetector(
+                LivenessResult(False, None, None, None, "rgb_quality_heuristic", "diagnostic only", True, 0.82)
+            ),
+            liveness_required=False,
+        )
+
+        details = service.extract_feature_details(np.zeros((100, 100, 3), dtype=np.uint8))
+
+        self.assertEqual(details["dimension"], 512)
+        self.assertFalse(details["livenessAvailable"])
+        self.assertIsNone(details["livenessPassed"])
+        self.assertEqual(details["livenessProvider"], "rgb_quality_heuristic")
+        self.assertTrue(details["qualityHeuristicPassed"])
+        self.assertEqual(details["livenessWarning"], "diagnostic only")
+
+    def test_required_liveness_blocks_feature_return(self):
+        service = _EnrollmentService(
+            liveness_detector=_FakeLivenessDetector(LivenessResult(False, None, None, None, "onnx", "model missing")),
+            liveness_required=True,
+        )
+
+        with self.assertRaises(ValueError):
+            service.extract_feature_details(np.zeros((100, 100, 3), dtype=np.uint8))
+
+
+class _FakeLivenessDetector:
+    def __init__(self, result):
+        self.result = result
+
+    def predict(self, _crop):
+        return self.result
+
+    def status(self):
+        return {"provider": self.result.provider}
+
+
+class _EnrollmentService(FaceRecognitionService):
+    def _detect_faces(self, _frame):
+        return [type("Face", (), {"bbox": [10, 10, 90, 90], "det_score": 0.99, "normed_embedding": np.ones(512)})()]
 
 
 if __name__ == "__main__":

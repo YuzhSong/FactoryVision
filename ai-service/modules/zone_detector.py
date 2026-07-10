@@ -1,120 +1,176 @@
+from datetime import datetime, timezone
 import math
 
 
 class ZoneDetector:
-    """Detect zone intrusion from person foot points and polygon zones."""
+    """Track region entry and dwell state for person foot points in polygon zones."""
 
-    def __init__(self, zones=None):
-        """Initialize zone detector with optional zones."""
-        self.zones = []
-        if zones:
-            self.set_zones(zones)
+    def __init__(self, zones=None, min_stay_seconds=10.0, state_ttl_seconds=30.0):
+        self.zones = list(zones or [])
+        self.min_stay_seconds = max(0.0, float(min_stay_seconds or 0))
+        self.state_ttl_seconds = max(1.0, float(state_ttl_seconds or 1))
+        self._states = {}
 
     def set_zones(self, zones):
-        """Replace active warning zone definitions."""
-        self.zones = zones or []
+        self.zones = list(zones or [])
 
-    def detect_intrusion(self, detections):
-        """Return ZONE_WARNING results for detections inside or near zones."""
-        warnings = []
+    def reset(self):
+        self._states.clear()
+
+    def detect_events(self, camera_id, detections, timestamp=None, frame_shape=None):
+        """Return each region intrusion/dwell event at most once per continuous stay."""
+        timestamp = timestamp or _now_iso()
+        now = _timestamp_seconds(timestamp)
+        self._purge_expired(now)
+        events = []
         for detection in detections or []:
+            track_id = detection.get("trackId")
             foot_point = self._get_foot_point(detection)
-            if foot_point is None:
+            if track_id in (None, "") or foot_point is None:
                 continue
+            confidence = detection.get("confidence")
 
             for zone in self.zones:
-                points = self._get_zone_points(zone)
-                if len(points) < 3:
+                if not isinstance(zone, dict) or not zone.get("enabled", True):
+                    continue
+                region_id = self._zone_id(zone)
+                points = self._get_zone_points(zone, frame_shape)
+                if region_id in (None, "") or len(points) < 3:
+                    continue
+                key = self._state_key(camera_id, region_id, track_id)
+                inside = self._point_in_polygon(foot_point, points)
+                if not inside:
                     continue
 
-                inside = self._point_in_polygon(foot_point, points)
-                distance = 0 if inside else self._distance_to_polygon(foot_point, points)
-                safe_distance = zone.get("safeDistance", zone.get("safe_distance", 0)) or 0
+                state = self._states.get(key)
+                if state is None:
+                    state = {
+                        "enteredAt": timestamp,
+                        "enteredSeconds": now,
+                        "lastSeenAt": timestamp,
+                        "lastSeenSeconds": now,
+                        "intrusionEmitted": False,
+                        "dwellEmitted": False,
+                    }
+                    self._states[key] = state
+                else:
+                    state["lastSeenAt"] = timestamp
+                    state["lastSeenSeconds"] = now
 
-                if inside or distance <= safe_distance:
-                    warnings.append(
-                        {
-                            "type": "ZONE_WARNING",
-                            "trackId": detection.get("trackId"),
-                            "zoneId": zone.get("id", zone.get("zoneId")),
-                            "zoneName": zone.get("name", zone.get("zoneName")),
-                            "footPoint": {"x": foot_point[0], "y": foot_point[1]},
-                            "inside": inside,
-                            "distance": round(distance, 2),
-                            "safeDistance": safe_distance,
-                            "level": self._get_level(inside),
-                        }
-                    )
+                duration = max(0.0, now - state["enteredSeconds"])
+                if self._is_restricted(zone) and not state["intrusionEmitted"]:
+                    events.append(self._event("region_intrusion", camera_id, track_id, zone, state, duration, confidence, foot_point))
+                    state["intrusionEmitted"] = True
+                if duration >= self._min_stay_seconds(zone) and not state["dwellEmitted"]:
+                    events.append(self._event("region_dwell", camera_id, track_id, zone, state, duration, confidence, foot_point))
+                    state["dwellEmitted"] = True
 
-        return warnings
+        # Keep a briefly missing track until TTL expiry; detector tracking can drop frames temporarily.
+        return events
+
+    def state_count(self):
+        return len(self._states)
+
+    def _event(self, event_type, camera_id, track_id, zone, state, duration, confidence, foot_point):
+        region_id = self._zone_id(zone)
+        return {
+            "type": "ZONE_WARNING",
+            "eventType": event_type,
+            "cameraId": camera_id,
+            "trackId": track_id,
+            "regionId": region_id,
+            "regionName": zone.get("name", zone.get("zoneName")),
+            "regionType": zone.get("type", "restricted"),
+            # zone aliases retain compatibility with current backend alert descriptions.
+            "zoneId": region_id,
+            "zoneName": zone.get("name", zone.get("zoneName")),
+            "enteredAt": state["enteredAt"],
+            "durationSeconds": round(duration, 2),
+            "timestamp": state["lastSeenAt"],
+            "confidence": round(float(confidence or 0), 4),
+            "footPoint": {"x": round(foot_point[0], 2), "y": round(foot_point[1], 2)},
+            "level": "high" if event_type == "region_intrusion" else "medium",
+        }
+
+    def _state_key(self, camera_id, region_id, track_id):
+        return str(camera_id), str(region_id), str(track_id)
+
+    def _purge_expired(self, now):
+        self._states = {
+            key: state for key, state in self._states.items()
+            if now - state.get("lastSeenSeconds", now) <= self.state_ttl_seconds
+        }
+
+    def _is_restricted(self, zone):
+        return str(zone.get("type", "restricted")).lower() in {"restricted", "danger"}
+
+    def _min_stay_seconds(self, zone):
+        value = zone.get("minStaySeconds", zone.get("min_stay_seconds", self.min_stay_seconds))
+        try:
+            return max(0.0, float(value))
+        except (TypeError, ValueError):
+            return self.min_stay_seconds
+
+    def _zone_id(self, zone):
+        return zone.get("id", zone.get("zoneId", zone.get("regionId")))
 
     def _get_foot_point(self, detection):
-        """Extract foot point from detection, falling back to bbox bottom center."""
         foot_point = detection.get("footPoint")
         if isinstance(foot_point, dict):
-            return (foot_point.get("x", 0), foot_point.get("y", 0))
-        if isinstance(foot_point, (list, tuple)) and len(foot_point) == 2:
-            return (foot_point[0], foot_point[1])
-
+            return float(foot_point.get("x", 0)), float(foot_point.get("y", 0))
         bbox = detection.get("bbox")
         if isinstance(bbox, dict):
-            return ((bbox.get("x1", 0) + bbox.get("x2", 0)) / 2, bbox.get("y2", 0))
+            return (float(bbox.get("x1", 0)) + float(bbox.get("x2", 0))) / 2, float(bbox.get("y2", 0))
         if isinstance(bbox, (list, tuple)) and len(bbox) == 4:
-            x1, _y1, x2, y2 = bbox
-            return ((x1 + x2) / 2, y2)
-
+            return (float(bbox[0]) + float(bbox[2])) / 2, float(bbox[3])
         return None
 
-    def _get_zone_points(self, zone):
-        """Normalize zone polygon points to tuple coordinates."""
+    def _get_zone_points(self, zone, frame_shape):
         points = zone.get("points") or zone.get("polygonPoints") or []
-        normalized_points = []
+        normalized = []
         for point in points:
             if isinstance(point, dict):
-                normalized_points.append((point.get("x", 0), point.get("y", 0)))
+                normalized.append((float(point.get("x", 0)), float(point.get("y", 0))))
             elif isinstance(point, (list, tuple)) and len(point) == 2:
-                normalized_points.append((point[0], point[1]))
-        return normalized_points
+                normalized.append((float(point[0]), float(point[1])))
+        if frame_shape and normalized and all(0 <= x <= 1 and 0 <= y <= 1 for x, y in normalized):
+            height, width = frame_shape[:2]
+            return [(x * width, y * height) for x, y in normalized]
+        return normalized
 
     def _point_in_polygon(self, point, polygon):
-        """Return whether point lies inside polygon using ray casting."""
+        if any(self._distance_to_segment(point, start, end) <= 1e-6 for start, end in zip(polygon, polygon[1:] + polygon[:1])):
+            return True
         x, y = point
         inside = False
         previous_x, previous_y = polygon[-1]
-
         for current_x, current_y in polygon:
-            intersects = (current_y > y) != (previous_y > y)
-            if intersects:
-                slope_x = (previous_x - current_x) * (y - current_y) / ((previous_y - current_y) or 1e-9) + current_x
-                if x < slope_x:
+            if (current_y > y) != (previous_y > y):
+                intersect_x = (previous_x - current_x) * (y - current_y) / (previous_y - current_y) + current_x
+                if x < intersect_x:
                     inside = not inside
             previous_x, previous_y = current_x, current_y
-
         return inside
 
-    def _distance_to_polygon(self, point, polygon):
-        """Calculate shortest distance from point to polygon edges."""
-        distances = []
-        for start, end in zip(polygon, polygon[1:] + polygon[:1]):
-            distances.append(self._distance_to_segment(point, start, end))
-        return min(distances) if distances else math.inf
-
     def _distance_to_segment(self, point, start, end):
-        """Calculate shortest distance from point to one line segment."""
         px, py = point
         sx, sy = start
         ex, ey = end
-        dx = ex - sx
-        dy = ey - sy
-
+        dx, dy = ex - sx, ey - sy
         if dx == 0 and dy == 0:
             return math.dist(point, start)
+        ratio = max(0, min(1, ((px - sx) * dx + (py - sy) * dy) / (dx * dx + dy * dy)))
+        return math.dist(point, (sx + ratio * dx, sy + ratio * dy))
 
-        ratio = ((px - sx) * dx + (py - sy) * dy) / (dx * dx + dy * dy)
-        ratio = max(0, min(1, ratio))
-        projection = (sx + ratio * dx, sy + ratio * dy)
-        return math.dist(point, projection)
 
-    def _get_level(self, inside):
-        """Map inside-zone state to warning level."""
-        return "high" if inside else "medium"
+def _timestamp_seconds(value):
+    if isinstance(value, (int, float)):
+        return float(value)
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return datetime.now(timezone.utc).timestamp()
+
+
+def _now_iso():
+    return datetime.now(timezone.utc).astimezone().isoformat()

@@ -24,6 +24,7 @@ backend/media/
 Thumbs.db
 
 # Local runtime artifacts and test outputs
+*.log
 .codex-runlogs/
 ai-service/data/event_media/
 ai-service/models/helmet/*.pt
