@@ -242,6 +242,45 @@ class RealtimeStreamingTests(unittest.TestCase):
         self.assertIn("keypoints", history[-1])
         self.assertEqual(len(history[-1]["keypoints"]), 17)
 
+    def test_frame_processor_emits_fall_alert_after_confirmed_pose_history(self):
+        processor = FrameProcessor(
+            person_detector=_FakePoseDetector(),
+            history_limit=5,
+            abnormal_config={
+                "fallConfirmFrames": 2,
+                "fallRatioThreshold": 1.2,
+                "fallMinConfidence": 0.6,
+                "fallPoseHorizontalAngleThreshold": 35,
+            },
+        )
+
+        first_report = processor.process_frame(
+            frame=object(),
+            camera_id=1,
+            frame_id="frame-fall-1",
+            timestamp="2026-07-08T03:00:00+08:00",
+            include_faces=False,
+            frame_index=1,
+            fps=10,
+        )
+        second_report = processor.process_frame(
+            frame=object(),
+            camera_id=1,
+            frame_id="frame-fall-2",
+            timestamp="2026-07-08T03:00:01+08:00",
+            include_faces=False,
+            frame_index=2,
+            fps=10,
+        )
+
+        self.assertFalse(any(result.get("type") == "FALL_ALERT" for result in first_report["results"]))
+        fall_alerts = [result for result in second_report["results"] if result.get("type") == "FALL_ALERT"]
+        self.assertEqual(len(fall_alerts), 1)
+        self.assertTrue(fall_alerts[0]["isFall"])
+        self.assertEqual(fall_alerts[0]["trackId"], "t-1")
+        self.assertEqual(fall_alerts[0]["level"], "high")
+        self.assertEqual(fall_alerts[0]["evidenceType"], "pose")
+
     def test_frame_processor_confirms_stranger_after_multiple_unknown_frames(self):
         processor = FrameProcessor(
             person_detector=_FakeDetector(),

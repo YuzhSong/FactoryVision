@@ -93,6 +93,50 @@ class AIResultsReportTests(TestCase):
         self.assertEqual(alert.level, "high")
         self.assertEqual(alert.status, Alert.Status.PENDING)
 
+    def test_report_endpoint_persists_fall_alert_event_and_alert(self):
+        response = self.client.post(
+            "/api/ai-results/report/",
+            {
+                "cameraId": self.camera.id,
+                "frameId": "frame-fall-0001",
+                "timestamp": "2026-07-07T10:02:00+08:00",
+                "results": [
+                    {
+                        "type": "FALL_ALERT",
+                        "trackId": "t-9",
+                        "isFall": True,
+                        "confidence": 0.86,
+                        "durationFrames": 5,
+                        "evidenceType": "pose",
+                        "level": "high",
+                        "bbox": {"x1": 100, "y1": 120, "x2": 260, "y2": 220},
+                        "snapshotPath": "events/cam-a/fall.jpg",
+                    }
+                ],
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["message"], "AI results accepted")
+        self.assertEqual(response.data["data"]["acceptedResults"], 1)
+        self.assertEqual(response.data["data"]["rejectedResults"], 0)
+        self.assertEqual(len(response.data["data"]["eventIds"]), 1)
+        self.assertEqual(len(response.data["data"]["alertIds"]), 1)
+
+        event = Event.objects.get()
+        alert = Alert.objects.get()
+        self.assertEqual(event.event_type, "FALL_ALERT")
+        self.assertEqual(event.severity, Event.Severity.HIGH)
+        self.assertEqual(event.track_id, "t-9")
+        self.assertEqual(event.confidence, 0.86)
+        self.assertEqual(event.snapshot_path, "events/cam-a/fall.jpg")
+        self.assertTrue(event.payload["isFall"])
+        self.assertEqual(alert.event, event)
+        self.assertEqual(alert.event_type, "FALL_ALERT")
+        self.assertEqual(alert.level, "high")
+        self.assertEqual(alert.status, Alert.Status.PENDING)
+
     def test_report_endpoint_rejects_invalid_payload(self):
         response = self.client.post(
             "/api/ai-results/report/",

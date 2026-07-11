@@ -1,111 +1,89 @@
 # Abnormal Behavior Recognition
 
-> **Status:** ⚠️ 已更新 —— 反映实际代码实现状态（原 spec 称 YOLO/视频帧读取/推理为 "planned"，实均已实现）
-
----
-
+> **Status:** Implemented for person detection, zone warning, fall detection, and running detection. Helmet detection remains model-dependent.
 
 ## Purpose
-Defines the expected behavior, constraints, and acceptance scenarios for Abnormal Behavior Recognition in the Factory Vision system.
 
+Defines the expected behavior, constraints, and acceptance scenarios for abnormal behavior recognition in the Factory Vision system.
 
 ## Requirements
 
-### Requirement: Provide Rule-Based Abnormal Behavior Detection
+### Requirement: Provide rule-based abnormal behavior detection
 
-The system SHALL provide rule-based AI service modules for abnormal behavior recognition. Detection SHALL be based on person detection outputs (from YOLO) combined with algorithmic rule checks for zone intrusion, fall, and running. Helmet detection SHALL remain a placeholder pending model integration.
+The AI service SHALL provide abnormal behavior recognition based on person detection outputs and lightweight track histories. The currently implemented behavior detectors include zone warning, fall detection, running detection, stranger detection, employee presence events, and model-dependent helmet warning.
 
 #### Scenario: Build AI report payload — [Status: Implemented]
 
-- GIVEN person detections (bbox, trackId, centerPoint, footPoint), camera ID, frame ID, track histories, and warning zone configurations are available
-- WHEN `AbnormalBehaviorService.process()` is called with a `FrameContext`
-- THEN it SHALL output a payload compatible with `POST /api/ai-results/report/`
-- AND the payload SHALL include `cameraId`, `frameId`, `timestamp` and `results` (list of detection result dicts)
+- GIVEN person detections with `bbox`, `trackId`, `centerPoint`, and `footPoint`
+- AND camera ID, frame ID, timestamp, track histories, and warning zone configurations are available
+- WHEN `FrameProcessor.process_frame()` is called
+- THEN it SHALL return a payload compatible with `POST /api/ai-results/report/`
+- AND the payload SHALL include `cameraId`, `frameId`, `timestamp`, and `results`.
 
-#### Scenario: Detect warning zone risk by foot point — [Status: Implemented — Algorithmic]
+#### Scenario: Detect warning zone risk by foot point — [Status: Implemented]
 
 - GIVEN a person detection contains `footPoint: {x, y}`
-- AND warning zones contain polygon `points` (or `polygonPoints`) and `safeDistance` (default `0` — no safe margin unless explicitly configured)
-- WHEN the foot point is inside the polygon (ray-casting algorithm) or closer than the safe distance to any edge
-- THEN the zone detector SHALL output a `ZONE_WARNING` result with `zoneId`, `trackId`, `distance`, and `isInside`
+- AND warning zones contain polygon `points` or `polygonPoints`
+- WHEN the foot point is inside the polygon or near the zone boundary within the configured safe distance
+- THEN the zone detector SHALL output a `ZONE_WARNING` result with zone, track, distance, and level information.
 
-#### Scenario: Detect fall risk by continuous bbox ratio — [Status: Implemented — Algorithmic]
+#### Scenario: Detect fall risk by continuous pose or bbox history — [Status: Implemented]
 
-- GIVEN a track history contains continuous bbox records for the same `trackId`
-- WHEN the bbox width/height ratio exceeds the configured threshold for the configured number of confirm frames
-- THEN the fall detector SHALL output a `FALL_ALERT` result with `isFall: true`, `trackId`, and `ratio`
+- GIVEN a track history contains continuous records for the same `trackId`
+- AND records may contain pose keypoints, bbox, timestamp, frame index, and fps
+- WHEN pose keypoints are available with usable shoulder and hip points
+- THEN the fall detector SHALL use body angle from horizontal as the primary fall evidence
+- WHEN pose keypoints are unavailable or below confidence threshold
+- THEN the fall detector SHALL fall back to bbox width/height ratio
+- AND when fall-like evidence is present for the configured number of confirm frames
+- THEN the fall detector SHALL output a `FALL_ALERT` result with `isFall: true`, `trackId`, `confidence`, `durationFrames`, `evidenceType`, `evidence`, and `level`
+- AND `FrameProcessor` SHALL include that result in the AI report payload
+- AND the backend SHALL create an `Event` and an `Alert` after receiving `FALL_ALERT` through `/api/ai-results/report/`.
 
-#### Scenario: Detect abnormal running by continuous pixel speed — [Status: Implemented — Algorithmic]
+#### Scenario: Detect abnormal running by continuous pixel speed — [Status: Implemented]
 
-- GIVEN a track history contains continuous center points or foot points for the same `trackId`
-- WHEN the pixel speed exceeds `RUNNING_SPEED_THRESHOLD` for the configured number of confirm frames
-- **⚠️ Known code inconsistency:** The `RunningDetector` class default is `30.0` px/s (`running_detector.py:8`), while the environment-variable-driven config value is `120.0` px/s (`ai_config.py:87` via `RUNNING_SPEED_THRESHOLD`). The runtime-effective value depends on how `app.py` instantiates the detector; this spec does not commit to either number until the engineering team resolves the inconsistency.
-- THEN the running detector SHALL output a `RUNNING_ALERT` result with `isRunning: true`, `trackId`, and `speed`
+- GIVEN a track history contains continuous center points for the same `trackId`
+- WHEN the pixel speed exceeds the configured running threshold for the configured number of confirm frames
+- THEN the running detector SHALL output a `RUNNING_ALERT` result with running state, track, speed, duration, and level information.
 
-#### Scenario: Person detection via YOLO — [Status: Implemented — Code Complete, Pending Model Weights Deployment]
+#### Scenario: Person detection via YOLO — [Status: Implemented, model file required or auto-download]
 
-- GIVEN a video frame (640×360, resized from input)
+- GIVEN a video frame
 - WHEN `PersonDetector.detect(frame)` is called
-- THEN the YOLO model (default: `yolov8n.pt`) SHALL be loaded via `ultralytics.YOLO()`
-- AND `model.predict()` SHALL run person-class-only detection (class `[0]`) with configurable confidence (default `0.35`) and IoU (default `0.45`) thresholds
-- AND detections SHALL be assigned lightweight track IDs via IoU-based matching (`max_missed_frames=15`)
-- AND each detection SHALL return `type: "PERSON_DETECTION"`, `trackId`, `bbox`, `centerPoint`, `footPoint`, `confidence`
-- **Note:** Model weight files (`*.pt`) are NOT committed to the repository. Ultralytics auto-downloads `yolov8n.pt` on first run if the local path is absent and the filename matches a known model.
+- THEN the YOLO model SHALL run person-class-only detection with configurable confidence and IoU thresholds
+- AND detections SHALL be assigned lightweight track IDs via IoU-based matching
+- AND each detection SHALL return `PERSON_DETECTION`, `trackId`, `bbox`, `centerPoint`, `footPoint`, and `confidence`.
 
-#### Scenario: Helmet detection — [Status: Planned / Placeholder]
+#### Scenario: Helmet detection — [Status: Model-dependent]
 
-- GIVEN a person detection exists
+- GIVEN a helmet model is available at the configured path or through the selected provider
 - WHEN helmet detection is requested
-- THEN the helmet detector SHALL currently return an empty result list (`[]`)
-- AND `HelmetDetector.load_model()` SHALL set `self.model = None` (no real model loaded)
-- **Planned:** Integrate a real helmet detection model to populate `HELMET_WARNING` results with `helmetStatus` and `confidence`
-
----
-
-
-## Purpose
-Defines the expected behavior, constraints, and acceptance scenarios for Abnormal Behavior Recognition in the Factory Vision system.
-
+- THEN the detector SHALL attempt to classify helmet status for detected persons
+- AND `HELMET_WARNING` SHALL be generated for no-helmet conditions.
 
 ## Detector Implementation Status Summary
 
 | Detector | Type | Implementation | Model Dependency |
-|----------|------|---------------|-----------------|
-| Person (YOLO) | ML Model | ✅ Complete code | `yolov8n.pt` (auto-download) |
-| Zone Warning | Algorithmic | ✅ Fully functional | None |
-| Fall Detection | Algorithmic | ✅ Fully functional | None |
-| Running Detection | Algorithmic | ✅ Fully functional | None |
-| Helmet Detection | ML Model | ❌ Placeholder (`detect()` returns `[]`) | Planned |
-
----
-
-
-## Purpose
-Defines the expected behavior, constraints, and acceptance scenarios for Abnormal Behavior Recognition in the Factory Vision system.
-
+| --- | --- | --- | --- |
+| Person detection | ML model | Implemented | YOLO model file or Ultralytics auto-download |
+| Zone warning | Algorithmic | Implemented | None |
+| Fall detection | Algorithmic | Implemented | None |
+| Running detection | Algorithmic | Implemented | None |
+| Helmet detection | ML model | Partially implemented | Helmet model required for production use |
 
 ## Constraints
 
-- AI service SHALL NOT write database directly — it reports structured JSON to `POST /api/ai-results/report/`.
-- Person detection code (`PersonDetector`) is fully implemented and wired into the stream processing pipeline. The deployment blocker is purely environmental: model weight files (`*.pt`) must be present at the configured `YOLO_MODEL_PATH` (default `models/yolo/yolov8n.pt`) or auto-downloaded by Ultralytics.
-- Fall, running, and zone detectors are algorithmic (no ML model required) and fully functional without any model files.
-- Helmet detector (`HelmetDetector`) is a genuine placeholder — `load_model()` sets `model = None` and `detect()` returns `[]`. A real helmet detection model must be integrated separately.
-- Max history per track is capped at `MAX_HISTORY_POINTS` (default 5) for the lightweight tracker.
-- Detection is throttled to every `FRAME_DETECT_INTERVAL` frames (default 5) in the continuous stream pipeline.
+- AI service SHALL NOT write database directly; it reports structured JSON to `POST /api/ai-results/report/`.
+- Fall, running, and zone detectors are algorithmic and do not require dedicated model files.
+- Fall detection accuracy improves when upstream person detection provides pose keypoints; otherwise bbox ratio is used as fallback.
+- Max history per track is capped by `MAX_HISTORY_POINTS`.
+- Continuous stream detection is throttled by `FRAME_DETECT_INTERVAL`.
+- Backend `FALL_ALERT` handling creates both `Event` and `Alert` records.
 
----
-
+## Change Notes
 
-## Purpose
-Defines the expected behavior, constraints, and acceptance scenarios for Abnormal Behavior Recognition in the Factory Vision system.
-
-
-## 变更说明
-
-| 变更 | 原 spec | 新草稿 | 依据 |
-|------|---------|--------|------|
-| 更新 Constraints | "YOLO model loading...remain planned" | 区分代码状态（已实现）vs 部署状态（待权重文件） | `person_detector.py` L53-117; 无 `*.pt` 文件 |
-| 新增 YOLO 检测场景 | 无 | PersonDetector + IoU tracker 场景 | `person_detector.py` 全部 |
-| 新增安全帽检测场景 | 无 | HelmetDetector placeholder 描述 | `helmet_detector.py` L2, L9-31 |
-| 新增检测器状态表 | 无 | 5 个检测器的实现类型与模型依赖 | 逐个 detector 分析 |
-| 扩展 Constraints | 3 条 | 6 条：补充 tracker 上限、检测间隔 | `ai_config.py` + 代码分析 |
+| Change | Basis |
+| --- | --- |
+| Clarified fall detection as delivered feature | `fall_detector.py`, `frame_processor.py`, `abnormal_behavior_service.py`, AI and backend tests |
+| Documented pose-first and bbox-fallback fall strategy | `FallDetector._pose_fall_score()` and `_bbox_fall_score()` |
+| Documented backend alert closure for `FALL_ALERT` | `backend/apps/ai_results/views.py` and `tests.py` |
