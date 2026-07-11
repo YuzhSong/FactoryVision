@@ -8,7 +8,7 @@ From the repository root:
 powershell -ExecutionPolicy Bypass -File .\scripts\start-backend.ps1
 ```
 
-The start script runs `pip check` and `manage.py check`, then starts Django at `http://127.0.0.1:8000/`.
+The start script runs `pip check` and `manage.py check`, then starts Daphne with `config.asgi:application` at `http://127.0.0.1:8000/`. This serves both Django HTTP APIs and the WebSocket event routes.
 
 Run migrations only when schema changes require them:
 

@@ -1,23 +1,47 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { ElMessage } from 'element-plus'
 import SectionHeader from '../components/SectionHeader.vue'
 import StatusTag from '../components/StatusTag.vue'
-import { cameras, realtimeEvents, systemStatus } from '../data/placeholders'
+import { camerasApi, eventsApi } from '../api/modules'
+import { createRealtimeConnection } from '../api/realtime'
 
-const activeCamera = ref(cameras[0].id)
+const activeCamera = ref('')
+const cameras = ref([])
+const camerasLoading = ref(false)
+const realtimeEvents = ref([])
+const realtimeStatus = ref('idle')
 const videoRef = ref(null)
 const playbackStatus = ref('idle')
 const playbackMessage = ref('等待播放 AI 处理后视频流')
 const playbackMode = ref('flv')
 
 let player = null
+let realtimeSocket = null
 let sdkPromise = null
 let flvPromise = null
 
-const currentCamera = computed(() => cameras.find((camera) => camera.id === activeCamera.value) || cameras[0])
-const detectedPlayUrl = computed(() => currentCamera.value.playUrl)
+const systemStatus = computed(() => [
+  { label: 'Backend', value: cameras.value.length ? 'connected' : 'waiting', type: cameras.value.length ? 'success' : 'warning' },
+  { label: 'WebSocket', value: realtimeStatus.value, type: realtimeStatus.value === 'connected' ? 'success' : 'warning' },
+  { label: 'Video Stream', value: playbackStatus.value, type: playbackStatus.value === 'connected' ? 'success' : 'warning' },
+])
+
+const currentCamera = computed(() => cameras.value.find((camera) => camera.id === activeCamera.value) || cameras.value[0] || null)
+const detectedPlayUrl = computed(() => currentCamera.value?.playUrl || currentCamera.value?.processedStreamUrl || currentCamera.value?.streamUrl || '')
+const monitorStats = computed(() => {
+  const highRiskTypes = new Set(['high', 'medium'])
+  const highRiskCount = realtimeEvents.value.filter((event) => highRiskTypes.has(event.level)).length
+
+  return [
+    { label: '在线摄像头', value: `${cameras.value.filter((camera) => camera.status === 'online').length}/${cameras.value.length}` },
+    { label: '事件缓存', value: realtimeEvents.value.length },
+    { label: '中高危事件', value: highRiskCount },
+    { label: '当前通道', value: currentCamera.value?.code || currentCamera.value?.name || '未选择' },
+  ]
+})
 const detectedFlvUrl = computed(() => {
-  const url = currentCamera.value.playUrl
+  const url = detectedPlayUrl.value
   if (!url || !url.startsWith('webrtc://')) {
     return url
   }
@@ -101,6 +125,11 @@ function loadMpegtsSdk() {
 
 async function startPlayback() {
   stopPlayback()
+  if (!detectedPlayUrl.value) {
+    playbackStatus.value = 'idle'
+    playbackMessage.value = '当前摄像头未配置可播放地址'
+    return
+  }
   playbackStatus.value = 'connecting'
   playbackMessage.value = '正在连接 AI 处理后视频流'
 
@@ -170,16 +199,126 @@ function stopPlayback() {
   }
 }
 
-watch([activeCamera, playbackMode], () => {
+function formatTime(value) {
+  if (!value) return new Date().toLocaleTimeString('zh-CN', { hour12: false })
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  return date.toLocaleTimeString('zh-CN', { hour12: false })
+}
+
+function normalizeRealtimeMessage(message) {
+  const payload = message?.payload || {}
+  const eventType = payload.eventType || message.eventType || message.type || 'EVENT_CREATED'
+  const severity = payload.severity || message.severity || payload.level || 'normal'
+  const trackId = payload.trackId ? ` trackId ${payload.trackId}` : ''
+  const confidence = typeof payload.confidence === 'number' ? ` / ${(payload.confidence * 100).toFixed(1)}%` : ''
+
+  return {
+    id: payload.eventId || `${Date.now()}-${Math.random()}`,
+    type: eventType,
+    level: severity,
+    text: `${eventType}${trackId}${confidence}`,
+    time: formatTime(payload.occurredAt || message.timestamp || message.occurredAt),
+  }
+}
+
+function normalizeStoredEvent(event) {
+  const eventType = event.event_type || event.eventType || 'EVENT_CREATED'
+  const trackId = event.trackId ? ` trackId ${event.trackId}` : ''
+  const confidence = typeof event.confidence === 'number' ? ` / ${(event.confidence * 100).toFixed(1)}%` : ''
+
+  return {
+    id: event.id,
+    type: eventType,
+    level: event.severity || 'normal',
+    text: `${eventType}${trackId}${confidence}`,
+    time: formatTime(event.occurred_at || event.occurredAt),
+  }
+}
+
+function closeRealtimeConnection() {
+  if (realtimeSocket) {
+    realtimeSocket.close()
+    realtimeSocket = null
+  }
+}
+
+function connectRealtime() {
+  closeRealtimeConnection()
+  if (!activeCamera.value) {
+    realtimeStatus.value = 'idle'
+    return
+  }
+
+  realtimeStatus.value = 'connecting'
+  const token = localStorage.getItem('factoryVisionToken')
+  realtimeSocket = createRealtimeConnection(activeCamera.value, token, {
+    onOpen: () => {
+      realtimeStatus.value = 'connected'
+    },
+    onClose: () => {
+      realtimeStatus.value = 'closed'
+    },
+    onError: () => {
+      realtimeStatus.value = 'error'
+    },
+    onMessage: (message) => {
+      realtimeEvents.value = [normalizeRealtimeMessage(message), ...realtimeEvents.value].slice(0, 30)
+    },
+  })
+}
+
+async function loadEventHistory() {
+  if (!activeCamera.value) return
+  try {
+    const response = await eventsApi.list({ cameraId: activeCamera.value })
+    realtimeEvents.value = (response?.data?.items || [])
+      .filter((event) => !event.cameraId || String(event.cameraId) === String(activeCamera.value))
+      .slice(0, 30)
+      .map(normalizeStoredEvent)
+  } catch (error) {
+    realtimeEvents.value = []
+  }
+}
+
+async function loadCameras() {
+  camerasLoading.value = true
+  try {
+    const response = await camerasApi.list()
+    cameras.value = response?.data?.items || []
+    if (!activeCamera.value && cameras.value.length > 0) {
+      activeCamera.value = cameras.value[0].id
+    }
+  } catch (error) {
+    cameras.value = []
+    ElMessage.error(error?.response?.data?.message || '摄像头列表加载失败')
+  } finally {
+    camerasLoading.value = false
+  }
+}
+
+watch(activeCamera, () => {
+  startPlayback()
+  loadEventHistory()
+  connectRealtime()
+})
+
+watch(playbackMode, () => {
   startPlayback()
 })
 
-onMounted(() => {
-  startPlayback()
+onMounted(async () => {
+  await loadCameras()
+  if (activeCamera.value) {
+    await loadEventHistory()
+    startPlayback()
+    connectRealtime()
+  }
 })
 
 onBeforeUnmount(() => {
   stopPlayback()
+  closeRealtimeConnection()
 })
 </script>
 
@@ -197,12 +336,13 @@ onBeforeUnmount(() => {
 
     <div class="monitor-layout">
       <div class="panel">
-        <SectionHeader title="摄像头列表" badge="REST planned" />
-        <el-radio-group v-model="activeCamera" class="camera-list">
+        <SectionHeader title="摄像头列表" badge="REST" />
+        <el-radio-group v-model="activeCamera" v-loading="camerasLoading" class="camera-list">
           <el-radio-button v-for="camera in cameras" :key="camera.id" :label="camera.id">
             {{ camera.name }}
           </el-radio-button>
         </el-radio-group>
+        <el-empty v-if="!camerasLoading && cameras.length === 0" description="暂无摄像头数据" />
         <div class="event-list">
           <div v-for="camera in cameras" :key="camera.id" class="event-item">
             <div class="event-title">
@@ -227,18 +367,18 @@ onBeforeUnmount(() => {
         <div class="monitor-screen stream-player" :class="playbackStatus">
           <video ref="videoRef" autoplay playsinline controls muted />
           <div class="stream-head">
-            <span>{{ currentCamera.name }}</span>
+            <span>{{ currentCamera?.name || '未选择摄像头' }}</span>
             <StatusTag :value="playbackStatus" />
           </div>
           <div class="stream-foot">
-            <span>原始流：{{ currentCamera.streamUrl }}</span>
+            <span>原始流：{{ currentCamera?.streamUrl || '未配置' }}</span>
             <span>{{ playbackMessage }}</span>
           </div>
         </div>
       </div>
 
       <div class="panel">
-        <SectionHeader title="实时事件流" badge="WebSocket planned" />
+        <SectionHeader title="实时事件流" :badge="realtimeStatus" />
         <div class="event-list">
           <div v-for="event in realtimeEvents" :key="event.id" class="event-item">
             <div class="event-title">
@@ -249,14 +389,15 @@ onBeforeUnmount(() => {
             <p class="placeholder-note">{{ event.time }}</p>
           </div>
         </div>
+        <el-empty v-if="realtimeEvents.length === 0" description="等待实时事件推送" />
       </div>
     </div>
 
     <div class="metric-grid">
-      <div class="metric-card"><p class="metric-label">原始流</p><p class="metric-value">RTMP</p></div>
-      <div class="metric-card"><p class="metric-label">带框流</p><p class="metric-value">WebRTC</p></div>
-      <div class="metric-card"><p class="metric-label">播放状态</p><p class="metric-value">{{ playbackStatus }}</p></div>
-      <div class="metric-card"><p class="metric-label">处理模式</p><p class="metric-value">AI</p></div>
+      <div v-for="item in monitorStats" :key="item.label" class="metric-card">
+        <p class="metric-label">{{ item.label }}</p>
+        <p class="metric-value">{{ item.value }}</p>
+      </div>
     </div>
   </div>
 </template>

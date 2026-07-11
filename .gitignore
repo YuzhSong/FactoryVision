@@ -29,3 +29,5 @@ Thumbs.db
 ai-service/data/event_media/
 ai-service/models/helmet/*.pt
 yolov8n.pt
+node_modules/
+package-lock.json

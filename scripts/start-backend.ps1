@@ -39,8 +39,8 @@ try {
         Fail "Backend manage.py check failed."
     }
 
-    Write-Host "[FactoryVision] Starting Django development server on 127.0.0.1:8000"
-    & $pythonExe manage.py runserver 127.0.0.1:8000
+    Write-Host "[FactoryVision] Starting Backend ASGI server on 127.0.0.1:8000"
+    & $pythonExe -m daphne -b 127.0.0.1 -p 8000 config.asgi:application
     if ($LASTEXITCODE -ne 0) {
         Fail "Backend exited with code $LASTEXITCODE."
     }

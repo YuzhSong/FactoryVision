@@ -1,30 +1,136 @@
 <script setup>
-import { ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
+import { ElMessage } from 'element-plus'
 import SectionHeader from '../components/SectionHeader.vue'
 import StatusTag from '../components/StatusTag.vue'
-import { alerts } from '../data/placeholders'
+import { alertsApi } from '../api/modules'
 
 const drawerVisible = ref(false)
 const selectedAlert = ref(null)
+const loading = ref(false)
+const handlingStatus = ref('')
+const alertRows = ref([])
+const alertTotal = ref(0)
+const filters = reactive({
+  keyword: '',
+  severity: '',
+  status: '',
+  dateRange: [],
+  page: 1,
+  pageSize: 20,
+})
+
+const alertTableRows = computed(() => alertRows.value.map((alert) => ({
+  ...alert,
+  camera: alert.cameraName || alert.cameraId || '未关联摄像头',
+  type: alert.eventType,
+  level: alert.severity,
+  time: formatDateTime(alert.occurredAt),
+})))
+
+function formatDateTime(value) {
+  if (!value) return '无'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  return date.toLocaleString('zh-CN', { hour12: false })
+}
+
+function getApiErrorMessage(error, fallback) {
+  const response = error?.response?.data
+  if (!response) return fallback
+  if (response.message && response.message !== '请求参数错误') return response.message
+  if (response.data && typeof response.data === 'object') {
+    return Object.entries(response.data)
+      .map(([field, messages]) => `${field}: ${Array.isArray(messages) ? messages.join('；') : messages}`)
+      .join('；')
+  }
+  return response.message || fallback
+}
+
+async function loadAlerts() {
+  loading.value = true
+  try {
+    const [startTime, endTime] = filters.dateRange || []
+    const response = await alertsApi.list({
+      keyword: filters.keyword || undefined,
+      severity: filters.severity || undefined,
+      status: filters.status || undefined,
+      startTime: startTime ? new Date(startTime).toISOString() : undefined,
+      endTime: endTime ? new Date(endTime).toISOString() : undefined,
+      page: filters.page,
+      pageSize: filters.pageSize,
+    })
+    alertRows.value = response?.data?.items || []
+    alertTotal.value = response?.data?.total || 0
+  } catch (error) {
+    alertRows.value = []
+    alertTotal.value = 0
+    ElMessage.error(getApiErrorMessage(error, '告警列表加载失败'))
+  } finally {
+    loading.value = false
+  }
+}
+
+function queryAlerts() {
+  filters.page = 1
+  loadAlerts()
+}
 
 function openDetail(row) {
   selectedAlert.value = row
   drawerVisible.value = true
 }
+
+async function handleAlert(status) {
+  if (!selectedAlert.value) return
+  handlingStatus.value = status
+  try {
+    const response = await alertsApi.handle(selectedAlert.value.id, { status })
+    const updated = response?.data
+    if (updated) {
+      alertRows.value = alertRows.value.map((alert) => (alert.id === updated.id ? updated : alert))
+      selectedAlert.value = {
+        ...updated,
+        camera: updated.cameraName || updated.cameraId || '未关联摄像头',
+        type: updated.eventType,
+        level: updated.severity,
+        time: formatDateTime(updated.occurredAt),
+      }
+    }
+    ElMessage.success('告警状态已更新')
+  } catch (error) {
+    ElMessage.error(getApiErrorMessage(error, '告警处置失败'))
+  } finally {
+    handlingStatus.value = ''
+  }
+}
+
+onMounted(() => {
+  loadAlerts()
+})
 </script>
 
 <template>
   <div class="page-grid">
     <div class="panel table-panel">
-      <SectionHeader title="告警中心" description="告警列表接口 planned，当前展示筛选、表格和详情抽屉结构。" />
+      <SectionHeader title="告警中心" description="告警列表和处置已接入后端接口。" />
       <div class="filter-row">
-        <el-input placeholder="关键词" clearable />
-        <el-select placeholder="等级" clearable><el-option label="高危" value="high" /><el-option label="中危" value="medium" /></el-select>
-        <el-select placeholder="状态" clearable><el-option label="待处理" value="pending" /><el-option label="处理中" value="processing" /></el-select>
-        <el-date-picker type="daterange" start-placeholder="开始日期" end-placeholder="结束日期" />
-        <el-button type="primary">查询</el-button>
+        <el-input v-model="filters.keyword" placeholder="关键词" clearable @keyup.enter="queryAlerts" />
+        <el-select v-model="filters.severity" placeholder="等级" clearable>
+          <el-option label="高危" value="high" />
+          <el-option label="中危" value="medium" />
+          <el-option label="低危" value="low" />
+          <el-option label="信息" value="info" />
+        </el-select>
+        <el-select v-model="filters.status" placeholder="状态" clearable>
+          <el-option label="待处理" value="pending" />
+          <el-option label="处理中" value="processing" />
+          <el-option label="已关闭" value="closed" />
+        </el-select>
+        <el-date-picker v-model="filters.dateRange" type="daterange" start-placeholder="开始日期" end-placeholder="结束日期" />
+        <el-button type="primary" @click="queryAlerts">查询</el-button>
       </div>
-      <el-table :data="alerts" stripe>
+      <el-table v-loading="loading" :data="alertTableRows" stripe>
         <el-table-column prop="title" label="告警标题" min-width="160" />
         <el-table-column prop="camera" label="摄像头" min-width="140" />
         <el-table-column prop="type" label="类型" min-width="150" />
@@ -35,7 +141,15 @@ function openDetail(row) {
           <template #default="{ row }"><el-button link type="primary" @click="openDetail(row)">查看</el-button></template>
         </el-table-column>
       </el-table>
-      <el-pagination class="pagination" layout="prev, pager, next" :total="alerts.length" />
+      <el-empty v-if="!loading && alertTableRows.length === 0" description="暂无告警数据" />
+      <el-pagination
+        v-model:current-page="filters.page"
+        v-model:page-size="filters.pageSize"
+        class="pagination"
+        layout="total, prev, pager, next"
+        :total="alertTotal"
+        @current-change="loadAlerts"
+      />
     </div>
 
     <el-drawer v-model="drawerVisible" title="告警详情" size="420px">
@@ -44,14 +158,16 @@ function openDetail(row) {
           <el-descriptions-item label="标题">{{ selectedAlert.title }}</el-descriptions-item>
           <el-descriptions-item label="摄像头">{{ selectedAlert.camera }}</el-descriptions-item>
           <el-descriptions-item label="类型">{{ selectedAlert.type }}</el-descriptions-item>
+          <el-descriptions-item label="等级"><StatusTag :value="selectedAlert.level" /></el-descriptions-item>
+          <el-descriptions-item label="状态"><StatusTag :value="selectedAlert.status" /></el-descriptions-item>
           <el-descriptions-item label="时间">{{ selectedAlert.time }}</el-descriptions-item>
+          <el-descriptions-item label="说明">{{ selectedAlert.description || '无' }}</el-descriptions-item>
         </el-descriptions>
         <el-divider />
-        <el-alert title="处置接口 planned，按钮仅保留交互入口。" type="warning" :closable="false" show-icon />
         <div class="drawer-actions">
-          <el-button type="primary" plain>确认</el-button>
-          <el-button type="warning" plain>处理中</el-button>
-          <el-button type="danger" plain>关闭</el-button>
+          <el-button type="primary" plain :loading="handlingStatus === 'pending'" @click="handleAlert('pending')">确认</el-button>
+          <el-button type="warning" plain :loading="handlingStatus === 'processing'" @click="handleAlert('processing')">处理中</el-button>
+          <el-button type="danger" plain :loading="handlingStatus === 'closed'" @click="handleAlert('closed')">关闭</el-button>
         </div>
       </template>
     </el-drawer>

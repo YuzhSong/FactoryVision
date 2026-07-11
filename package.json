@@ -1,0 +1,27 @@
+{
+  "name": "factoryvision",
+  "version": "1.0.0",
+  "description": "智安工厂实时视频分析监测系统面向工厂安全生产场景，采用前后端分离、AI 服务独立、视频流服务独立接入的项目结构，目标是形成“视频采集-智能识别-事件生成-告警处置-日志追溯-统计分析”的闭环。",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/KID258w/FactoryVision.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/KID258w/FactoryVision/issues"
+  },
+  "homepage": "https://github.com/KID258w/FactoryVision#readme",
+  "dependencies": {
+    "@fission-ai/openspec": "^1.5.0"
+  }
+}

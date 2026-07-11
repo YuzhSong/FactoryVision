@@ -1,4 +1,6 @@
 <script setup>
+import { computed } from 'vue'
+
 const props = defineProps({
   value: {
     type: String,
@@ -18,15 +20,17 @@ const map = {
   high: { label: '高危', type: 'danger' },
   medium: { label: '中危', type: 'warning' },
   low: { label: '低危', type: 'info' },
+  info: { label: '信息', type: 'info' },
   normal: { label: '正常', type: 'success' },
   abnormal: { label: '异常', type: 'warning' },
   idle: { label: '待播放', type: 'info' },
+  waiting: { label: '等待中', type: 'warning' },
   connecting: { label: '连接中', type: 'warning' },
   connected: { label: '播放中', type: 'success' },
   error: { label: '错误', type: 'danger' },
 }
 
-const tag = map[props.value] || { label: props.value, type: 'info' }
+const tag = computed(() => map[props.value] || { label: props.value, type: 'info' })
 </script>
 
 <template>

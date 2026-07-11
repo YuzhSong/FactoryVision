@@ -55,6 +55,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\start-frontend.ps1
 ```
 
 Do not use system Python or Python 3.14 for AIService, and do not rely on `Activate.ps1` from an older terminal session.
+The Backend script starts the ASGI server (Daphne) so HTTP APIs and WebSocket event delivery use the same local endpoint.
 
 ## Video processing
 
