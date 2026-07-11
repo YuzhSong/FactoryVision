@@ -87,6 +87,7 @@ def _parse_positive_int(value):
     ],
 )
 @api_view(["GET", "POST"])
+@permission_classes([IsAuthenticated])
 def employee_root_view(request):
     """
     GET  /api/employees/  → 占位

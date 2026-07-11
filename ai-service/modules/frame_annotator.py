@@ -1,8 +1,9 @@
 class FrameAnnotator:
     """Draw AI detection results onto OpenCV frames."""
 
-    def __init__(self, line_width: int = 2):
-        self.line_width = line_width
+    def __init__(self, line_width: int = 1, label_scale: float = 0.28):
+        self.line_width = max(1, int(line_width))
+        self.label_scale = max(0.1, float(label_scale))
 
     def draw_results(self, frame, results: list[dict]):
         """Draw known bbox results and labels on a frame."""
@@ -26,7 +27,7 @@ class FrameAnnotator:
 
             cv2.rectangle(output, (x1, y1), (x2, y2), color, self.line_width)
             if label:
-                _draw_label(cv2, output, label, x1, y1, color)
+                _draw_label(cv2, output, label, x1, y1, color, self.label_scale)
 
         return output
 
@@ -74,7 +75,7 @@ class FrameAnnotator:
             label = f"{zone.get('name', zone.get('zoneName', region_id))} ({suffix})"
             if active_event:
                 label = f"{label} {active_event.get('durationSeconds', 0):.1f}s"
-            _draw_label(cv2, output, label, coords[0][0], coords[0][1], color)
+            _draw_label(cv2, output, label, coords[0][0], coords[0][1], color, self.label_scale)
         return output
 
     def draw_test_box(self, frame, frame_id: str | None = None):
@@ -93,7 +94,7 @@ class FrameAnnotator:
         label = f"TEST BOX {frame_id or ''}".strip()
         color = (0, 255, 0)
         cv2.rectangle(output, (x1, y1), (x2, y2), color, self.line_width)
-        _draw_label(cv2, output, label, x1, y1, color)
+        _draw_label(cv2, output, label, x1, y1, color, self.label_scale)
         return output
 
     def draw_debug_overlay(self, frame, metrics: dict | None = None):
@@ -176,10 +177,9 @@ def _helmet_label(status, confidence=None):
         return label
 
 
-def _draw_label(cv2, frame, label: str, x: int, y: int, color):
+def _draw_label(cv2, frame, label: str, x: int, y: int, color, scale: float = 0.28):
     """Draw readable label background and text."""
     font = cv2.FONT_HERSHEY_SIMPLEX
-    scale = 0.55
     thickness = 1
     (text_width, text_height), baseline = cv2.getTextSize(label, font, scale, thickness)
     top = max(0, y - text_height - baseline - 6)

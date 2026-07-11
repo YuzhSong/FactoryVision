@@ -168,6 +168,59 @@ class RealtimeStreamingTests(unittest.TestCase):
         service._status.processed_frames = 5
         self.assertTrue(service._should_detect())
 
+    def test_model_schedule_offsets_person_helmet_and_face_work(self):
+        service = ProcessedStreamService(
+            frame_processor=None,
+            person_detect_interval=10,
+            helmet_detect_interval=10,
+            helmet_detect_offset=5,
+            face_detect_interval=60,
+            face_detect_offset=2,
+        )
+
+        self.assertEqual(service._model_runs(include_faces=False), {"person": True, "helmet": False, "face": False})
+        service._status.processed_frames = 2
+        self.assertEqual(service._model_runs(include_faces=True), {"person": False, "helmet": False, "face": True})
+        service._status.processed_frames = 5
+        self.assertEqual(service._model_runs(include_faces=True), {"person": False, "helmet": True, "face": False})
+        service._status.processed_frames = 10
+        self.assertEqual(service._model_runs(include_faces=True), {"person": True, "helmet": False, "face": False})
+
+    def test_frame_processor_uses_cached_people_for_offset_helmet_detection(self):
+        processor = FrameProcessor(person_detector=_FakeDetector(), history_limit=5)
+        helmet_detector = processor.abnormal_service.helmet_detector
+        calls = []
+
+        def fake_helmet_detect(_frame, person_detections=None, frame_id=None, **_kwargs):
+            calls.append(list(person_detections or []))
+            return [
+                {
+                    "type": "HELMET_DETECTION",
+                    "trackId": "t-1",
+                    "helmetStatus": "helmet",
+                    "helmetConfidence": 0.9,
+                    "className": "helmet",
+                    "bbox": {"x1": 1, "y1": 2, "x2": 8, "y2": 9},
+                    "frameId": frame_id,
+                }
+            ]
+
+        helmet_detector.detect = fake_helmet_detect
+        first = processor.process_frame(frame=object(), include_faces=False, run_helmet_detection=False)
+        cached_people = [item for item in first["results"] if item.get("type") == "PERSON_DETECTION"]
+        report = processor.process_frame(
+            frame=object(),
+            include_faces=False,
+            person_detections=cached_people,
+            run_person_detection=False,
+            run_helmet_detection=True,
+        )
+
+        self.assertEqual(calls[0][0]["trackId"], "t-1")
+        person = next(item for item in report["results"] if item.get("type") == "PERSON_DETECTION")
+        self.assertEqual(person["helmetStatus"], "helmet")
+        self.assertIn("helmet", report["modelTimingsMs"])
+
     def test_processed_stream_attaches_event_media_before_backend_report(self):
         backend = _FakeBackendClient()
         recorder = _FakeEventMediaRecorder()

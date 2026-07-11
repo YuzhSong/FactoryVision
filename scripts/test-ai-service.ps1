@@ -46,6 +46,11 @@ try {
     if ($LASTEXITCODE -ne 0) {
         Fail "AIService event report queue unittest run failed."
     }
+
+    & $pythonExe -m unittest discover -s tests -p "test_realtime_streaming.py"
+    if ($LASTEXITCODE -ne 0) {
+        Fail "AIService realtime streaming unittest run failed."
+    }
 }
 finally {
     Pop-Location

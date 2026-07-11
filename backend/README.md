@@ -1,29 +1,20 @@
 # Backend
 
-Django + Django REST Framework backend skeleton for Factory Vision.
+The local Backend runtime is fixed to `backend/.venv/Scripts/python.exe`. It can use the verified local Python 3.14 environment; it is intentionally separate from AIService Python 3.11.
 
-## Requirements
-
-- Python 3.12+
-- Python 3.14 verified locally
-
-## Quick Start
+From the repository root:
 
 ```powershell
-py -3.14 -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install --upgrade pip
-pip install -r requirements.txt
-python manage.py migrate
-python manage.py runserver
+powershell -ExecutionPolicy Bypass -File .\scripts\start-backend.ps1
 ```
 
-## Endpoints
+The start script runs `pip check` and `manage.py check`, then starts Django at `http://127.0.0.1:8000/`.
 
-- Health check: `http://127.0.0.1:8000/api/health/`
-- Swagger / OpenAPI: `http://127.0.0.1:8000/api/docs/`
+Run migrations only when schema changes require them:
 
-## Notes
+```powershell
+.\.venv\Scripts\python.exe manage.py migrate
+```
 
-- This `requirements.txt` belongs only to the backend directory
-- Running `pip install -r requirements.txt` from the repository root will fail because the root directory does not contain that file
+Health check: `http://127.0.0.1:8000/api/health/`
+OpenAPI: `http://127.0.0.1:8000/api/docs/`

@@ -29,7 +29,8 @@ class Config:
     SERVICE_NAME = "smart-factory-ai-service"
     HOST = os.getenv("AI_SERVICE_HOST", "0.0.0.0")
     PORT = int(os.getenv("AI_SERVICE_PORT", "9000"))
-    DEBUG = os.getenv("AI_SERVICE_DEBUG", "True").lower() == "true"
+    # Reloading starts a parent/child process pair and makes local stop/restart unreliable.
+    DEBUG = os.getenv("AI_SERVICE_DEBUG", "False").lower() == "true"
     BACKEND_API_BASE_URL = os.getenv("BACKEND_API_BASE_URL", "http://127.0.0.1:8000/api")
     BACKEND_API_TOKEN = os.getenv("BACKEND_API_TOKEN", "")
     BACKEND_TIMEOUT_SECONDS = float(os.getenv("BACKEND_TIMEOUT_SECONDS", "5"))
@@ -118,6 +119,17 @@ class Config:
     STREAM_OUTPUT_FPS = float(os.getenv("OUTPUT_FPS", os.getenv("STREAM_OUTPUT_FPS", "10")))
     STREAM_FFMPEG_PATH = os.getenv("STREAM_FFMPEG_PATH", "ffmpeg")
     FRAME_DETECT_INTERVAL = int(os.getenv("FRAME_DETECT_INTERVAL", "5"))
+    # Run one expensive model per analysis tick by default. The intervals are based on
+    # processed output frames, so they remain stable when capture drops source frames.
+    PERSON_DETECT_INTERVAL = int(os.getenv("PERSON_DETECT_INTERVAL", "10"))
+    HELMET_DETECT_INTERVAL = int(os.getenv("HELMET_DETECT_INTERVAL", "10"))
+    HELMET_DETECT_OFFSET = int(os.getenv("HELMET_DETECT_OFFSET", "5"))
+    STREAM_INCLUDE_FACES_DEFAULT = os.getenv("STREAM_INCLUDE_FACES_DEFAULT", "False").lower() == "true"
+    FACE_DETECT_INTERVAL = int(os.getenv("FACE_DETECT_INTERVAL", "60"))
+    FACE_DETECT_OFFSET = int(os.getenv("FACE_DETECT_OFFSET", "2"))
+    DETECTION_CACHE_MAX_AGE_FRAMES = int(os.getenv("DETECTION_CACHE_MAX_AGE_FRAMES", "20"))
+    ANNOTATION_LINE_WIDTH = int(os.getenv("ANNOTATION_LINE_WIDTH", "1"))
+    ANNOTATION_LABEL_SCALE = float(os.getenv("ANNOTATION_LABEL_SCALE", "0.28"))
     EVENT_MEDIA_ENABLED = os.getenv("EVENT_MEDIA_ENABLED", "True").lower() == "true"
     EVENT_MEDIA_DIR = os.getenv("EVENT_MEDIA_DIR", str(DATA_DIR / "event_media"))
     EVENT_MEDIA_PRE_SECONDS = float(os.getenv("EVENT_MEDIA_PRE_SECONDS", "3"))

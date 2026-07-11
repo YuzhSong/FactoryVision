@@ -25,6 +25,7 @@ class EmployeeEndpointTests(TestCase):
         self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {token}")
 
     def test_create_employee_returns_new_id(self):
+        self.authenticate()
         response = self.client.post(
             "/api/employees/",
             {
@@ -44,6 +45,7 @@ class EmployeeEndpointTests(TestCase):
 
     def test_create_employee_rejects_duplicate_employee_no(self):
         Employee.objects.create(employee_no="E001", name="张三")
+        self.authenticate()
 
         response = self.client.post(
             "/api/employees/",
@@ -53,6 +55,15 @@ class EmployeeEndpointTests(TestCase):
 
         self.assertEqual(response.status_code, 409)
         self.assertEqual(response.data["code"], 409)
+
+    def test_create_employee_requires_authentication(self):
+        response = self.client.post(
+            "/api/employees/",
+            {"employeeNo": "E001", "name": "张三"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 401)
 
     def test_employee_list_requires_authentication(self):
         response = self.client.get("/api/employees/list/")

@@ -11,6 +11,7 @@ from modules.backend_client import BackendClient
 from modules.dependencies import check_dependencies
 from modules.face_recognition_service import FaceRecognitionService
 from modules.frame_processor import FrameProcessor
+from modules.frame_annotator import FrameAnnotator
 from modules.person_detector import PersonDetector
 from modules.processed_stream_service import ProcessedStreamService, normalize_camera_frame
 from modules.runtime_cache import RuntimeCache
@@ -114,6 +115,16 @@ processed_stream_service = ProcessedStreamService(
     output_fps=Config.STREAM_OUTPUT_FPS,
     ffmpeg_path=Config.STREAM_FFMPEG_PATH,
     detect_interval=Config.FRAME_DETECT_INTERVAL,
+    person_detect_interval=Config.PERSON_DETECT_INTERVAL,
+    helmet_detect_interval=Config.HELMET_DETECT_INTERVAL,
+    helmet_detect_offset=Config.HELMET_DETECT_OFFSET,
+    face_detect_interval=Config.FACE_DETECT_INTERVAL,
+    face_detect_offset=Config.FACE_DETECT_OFFSET,
+    detection_cache_max_age_frames=Config.DETECTION_CACHE_MAX_AGE_FRAMES,
+    annotator=FrameAnnotator(
+        line_width=Config.ANNOTATION_LINE_WIDTH,
+        label_scale=Config.ANNOTATION_LABEL_SCALE,
+    ),
     input_width=Config.INPUT_WIDTH,
     input_height=Config.INPUT_HEIGHT,
     event_media_enabled=Config.EVENT_MEDIA_ENABLED,

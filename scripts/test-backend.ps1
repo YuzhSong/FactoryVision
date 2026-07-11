@@ -27,9 +27,9 @@ try {
         Fail "Backend manage.py check failed."
     }
 
-    & $pythonExe manage.py test apps.face
+    & $pythonExe manage.py test apps.employees apps.face
     if ($LASTEXITCODE -ne 0) {
-        Fail "Backend apps.face tests failed."
+        Fail "Backend employee and face tests failed."
     }
 }
 finally {
