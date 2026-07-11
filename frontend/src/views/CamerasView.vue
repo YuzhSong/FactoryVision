@@ -171,7 +171,7 @@ onMounted(() => {
 <template>
   <div class="page-grid">
     <div class="panel table-panel">
-      <SectionHeader title="摄像头管理" description="摄像头查询和新增已接入后端接口。">
+      <SectionHeader title="摄像头管理">
         <el-button type="primary" @click="openCreateDialog">新增摄像头</el-button>
       </SectionHeader>
       <div class="filter-row">
@@ -218,7 +218,7 @@ onMounted(() => {
           </template>
         </el-table-column>
       </el-table>
-      <div class="placeholder-note">共 {{ cameraTotal }} 个摄像头</div>
+      <div class="record-count">共 {{ cameraTotal }} 个摄像头</div>
     </div>
 
     <el-dialog v-model="dialogVisible" :title="editingCameraId ? '编辑摄像头' : '新增摄像头'" width="560px">

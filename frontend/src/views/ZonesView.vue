@@ -214,7 +214,7 @@ onMounted(async () => {
 <template>
   <div class="page-grid">
     <div class="panel">
-      <SectionHeader title="警戒区域配置" description="区域查询和创建已接入后端接口，点位使用 0-1 归一化坐标保存。" />
+      <SectionHeader title="警戒区域配置" />
       <div class="filter-row zone-toolbar">
         <el-select v-model="cameraId" v-loading="camerasLoading" placeholder="选择摄像头">
           <el-option v-for="camera in cameras" :key="camera.id" :label="camera.name" :value="camera.id" />
@@ -257,7 +257,7 @@ onMounted(async () => {
           {{ selectedCamera?.name || '请选择摄像头' }} / 点击画面添加点位 / 拖动蓝色点调整
         </span>
         <div class="zone-video-meta">
-          <strong>{{ selectedCamera?.location || '摄像头位置待接入' }}</strong>
+          <strong>{{ selectedCamera?.location || '未配置位置' }}</strong>
           <span>{{ selectedCamera?.processedStreamUrl || selectedCamera?.streamUrl || '视频流待配置' }}</span>
         </div>
         <svg class="zone-editor-layer" viewBox="0 0 100 100" preserveAspectRatio="none">

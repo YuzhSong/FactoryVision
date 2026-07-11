@@ -381,7 +381,7 @@ body {
 }
 
 .monitor-screen::after {
-  content: 'STREAM PLANNED';
+  content: 'AI STREAM';
   position: absolute;
   right: 16px;
   bottom: 14px;
@@ -612,6 +612,17 @@ body {
 .placeholder-note {
   color: var(--fv-text-muted);
   font-size: 13px;
+}
+
+.event-meta,
+.record-count {
+  color: var(--fv-text-muted);
+  font-size: 13px;
+}
+
+.record-count {
+  margin-top: 12px;
+  text-align: right;
 }
 
 .camera-enabled-text {

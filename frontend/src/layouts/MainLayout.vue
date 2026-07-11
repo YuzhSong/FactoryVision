@@ -103,7 +103,7 @@ onMounted(() => {
       <el-header class="app-header">
         <div>
           <h2>{{ route.meta.title || '工厂实时视频分析监测系统' }}</h2>
-          <p>工业安全监控工作台 · 接口按模块分阶段接入</p>
+          <p>工业安全监控工作台</p>
         </div>
         <div class="status-strip">
           <span v-for="item in systemStatus" :key="item.label" class="status-pill">

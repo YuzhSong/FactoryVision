@@ -10,7 +10,7 @@ defineProps({
   },
   badge: {
     type: String,
-    default: 'planned',
+    default: '',
   },
 })
 </script>

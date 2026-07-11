@@ -113,7 +113,7 @@ onMounted(() => {
 <template>
   <div class="page-grid">
     <div class="panel table-panel">
-      <SectionHeader title="告警中心" description="告警列表和处置已接入后端接口。" />
+      <SectionHeader title="告警中心" />
       <div class="filter-row">
         <el-input v-model="filters.keyword" placeholder="关键词" clearable @keyup.enter="queryAlerts" />
         <el-select v-model="filters.severity" placeholder="等级" clearable>

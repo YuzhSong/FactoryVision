@@ -325,7 +325,7 @@ onBeforeUnmount(() => {
 <template>
   <div class="page-grid monitor-page">
     <div class="panel">
-      <SectionHeader title="实时监控工作台" description="当前播放 AI Service 回推到 SRS 的带框 WebRTC 视频流。">
+      <SectionHeader title="实时监控工作台">
         <div class="status-strip">
           <span v-for="item in systemStatus" :key="item.label" class="status-pill">
             <i class="status-dot" :class="item.type" />{{ item.label }}: {{ item.value }}
@@ -336,7 +336,7 @@ onBeforeUnmount(() => {
 
     <div class="monitor-layout">
       <div class="panel">
-        <SectionHeader title="摄像头列表" badge="REST" />
+        <SectionHeader title="摄像头列表" />
         <el-radio-group v-model="activeCamera" v-loading="camerasLoading" class="camera-list">
           <el-radio-button v-for="camera in cameras" :key="camera.id" :label="camera.id">
             {{ camera.name }}
@@ -349,13 +349,13 @@ onBeforeUnmount(() => {
               <strong>{{ camera.name }}</strong>
               <StatusTag :value="camera.status" />
             </div>
-            <p class="placeholder-note">{{ camera.location }}</p>
+            <p class="event-meta">{{ camera.location }}</p>
           </div>
         </div>
       </div>
 
       <div class="panel monitor-center">
-        <SectionHeader title="AI 处理后视频" description="画面由 AI Service 拉流检测后写入检测框，再回推到 SRS 播放。">
+        <SectionHeader title="AI 处理后视频">
           <div class="stream-actions">
             <el-radio-group v-model="playbackMode" size="small">
               <el-radio-button value="flv">HTTP-FLV</el-radio-button>
@@ -386,7 +386,7 @@ onBeforeUnmount(() => {
               <StatusTag :value="event.level" />
             </div>
             <p>{{ event.text }}</p>
-            <p class="placeholder-note">{{ event.time }}</p>
+            <p class="event-meta">{{ event.time }}</p>
           </div>
         </div>
         <el-empty v-if="realtimeEvents.length === 0" description="等待实时事件推送" />
