@@ -2,7 +2,7 @@
 
 ## 当前状态
 
-当前前端使用 Vue 3 + Vite，已存在基础路由、布局和页面骨架。页面包括 `Login`、`Dashboard`、`Monitor`、`Alerts`、`Employees`、`Cameras`、`Zones`、`Attendance`。业务交互和真实数据接入仍为 `planned`。
+当前前端使用 Vue 3 + Vite，已存在基础路由、布局和页面骨架。页面包括 `Login`、`Dashboard`、`Monitor`、`Alerts`、`Employees`、`Cameras`、`Zones`、`Attendance`。实时监控页已接入 SRS WebRTC 播放器，优先播放 AI Service 输出的带框视频流。
 
 ## 页面设计
 
@@ -10,7 +10,7 @@
 | --- | --- | --- | --- |
 | Login | `/login` | 用户登录表单、错误提示、登录态保存 | skeleton |
 | Dashboard | `/dashboard` | 今日告警、摄像头状态、事件趋势、考勤概览 | skeleton |
-| Monitor | `/monitor` | 实时视频、摄像头列表、检测叠加、实时事件流 | skeleton |
+| Monitor | `/monitor` | AI 处理后视频流、摄像头列表、实时事件流 | partial implemented |
 | Alerts | `/alerts` | 告警列表、筛选、详情、处理动作 | skeleton |
 | Employees | `/employees` | 员工档案、人脸录入、状态管理 | skeleton |
 | Cameras | `/cameras` | 摄像头配置、流地址、在线状态 | skeleton |
@@ -48,8 +48,8 @@
 ┌────────────────────────────────────────────┐
 │ 顶部系统状态：服务状态、在线摄像头、告警数 │
 ├────────────┬──────────────────┬────────────┤
-│ 左侧摄像头 │ 中间视频画面     │ 右侧事件流 │
-│ 列表       │ 检测框和区域叠加 │ 实时告警   │
+│ 左侧摄像头 │ 中间带框视频     │ 右侧事件流 │
+│ 列表       │ WebRTC 播放器    │ 实时告警   │
 ├────────────┴──────────────────┴────────────┤
 │ 底部统计：人数、陌生人、区域入侵、异常行为 │
 └────────────────────────────────────────────┘
@@ -61,7 +61,7 @@
 | --- | --- |
 | 顶部系统状态 | 后端状态、AI 服务状态、视频流状态、在线摄像头数量、今日告警数 |
 | 左侧摄像头列表 | 摄像头名称、位置、在线状态、快速切换 |
-| 中间视频画面 | 实时视频、人员框、人脸标签、警戒区域、多边形叠加 |
+| 中间视频画面 | AI Service 已绘制检测框的 WebRTC 视频流 |
 | 右侧实时事件流 | AI 事件、告警等级、发生时间、快捷处理入口 |
 | 底部统计信息 | 当前人数、陌生人数、区域入侵次数、安全行为异常次数 |
 
@@ -71,8 +71,8 @@
 | --- | --- | --- |
 | `MainLayout` | 主导航、页面容器、整体布局 | skeleton |
 | `CameraList` | 摄像头列表和状态切换 | planned |
-| `VideoPlayer` | 播放 HLS/RTMP 转换后视频流 | planned |
-| `DetectionOverlay` | 绘制 bbox、标签、trackId、区域 | planned |
+| `VideoPlayer` | 播放 SRS WebRTC 带框视频流 | partial implemented |
+| `DetectionOverlay` | 前端叠加 bbox 能力，当前 B 方案暂不启用 | planned |
 | `RealtimeEventFeed` | 展示 WebSocket 实时事件 | planned |
 | `ZoneEditor` | 绘制和编辑多边形警戒区域 | planned |
 | `AlertTable` | 告警列表、筛选和状态标签 | planned |
@@ -109,7 +109,7 @@ baseURL: import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000/api'
 
 1. 用户选择摄像头。
 2. 前端建立对应摄像头的 WebSocket 连接。
-3. 收到 `PERSON_DETECTION` 后更新检测框图层。
+3. 当前 B 方案中检测框已由 AI Service 写入视频帧，前端不再实时绘制 bbox。
 4. 收到 `FACE_RESULT` 后更新人员标签。
 5. 收到 `ZONE_WARNING`、`HELMET_WARNING`、`FALL_ALERT`、`RUNNING_ALERT` 后加入右侧事件流。
 6. 收到 `EVENT_CREATED` 后可刷新事件统计。

@@ -7,11 +7,17 @@ from .zone_detector import ZoneDetector
 
 
 class AbnormalBehaviorService:
+    """Build behavior-related warnings from person detections and track histories."""
+
     def __init__(self, zones=None, config=None):
+        """Initialize fall, running, helmet, and zone detectors."""
         config = config or {}
         self.fall_detector = FallDetector(
             ratio_threshold=config.get("fallRatioThreshold", 1.2),
             confirm_frames=config.get("fallConfirmFrames", 5),
+            min_confidence=config.get("fallMinConfidence", 0.6),
+            pose_horizontal_angle_threshold=config.get("fallPoseHorizontalAngleThreshold", 35.0),
+            pose_min_keypoint_confidence=config.get("fallPoseMinKeypointConfidence", 0.3),
         )
         self.running_detector = RunningDetector(
             speed_threshold=config.get("runningSpeedThreshold", 30.0),
@@ -19,10 +25,23 @@ class AbnormalBehaviorService:
         )
         self.helmet_detector = HelmetDetector(
             confidence_threshold=config.get("helmetConfidenceThreshold", 0.6),
+            model_path=config.get("helmetModelPath"),
+            provider=config.get("helmetModelProvider", "opensource"),
+            detection_confidence_threshold=config.get("helmetDetectionConfidenceThreshold", 0.35),
+            iou_threshold=config.get("helmetIouThreshold", 0.45),
+            device=config.get("helmetDevice", "auto"),
+            image_size=config.get("helmetImageSize", 640),
+            half_precision=config.get("helmetHalfPrecision", "auto"),
+            cudnn_benchmark=config.get("helmetCudnnBenchmark", True),
+            match_upper_ratio=config.get("helmetMatchUpperRatio", 0.65),
+            class_ids=config.get("helmetClassIds", (1, 2)),
+            helmet_class_id=config.get("helmetClassId", 1),
+            no_helmet_class_id=config.get("noHelmetClassId", 2),
         )
         self.zone_detector = ZoneDetector(zones=zones)
 
     def build_ai_report(self, camera_id, frame_id, person_detections, track_histories=None, timestamp=None):
+        """Build one AI report with person detections and behavior warnings."""
         results = []
         person_detections = person_detections or []
         track_histories = track_histories or {}
@@ -56,6 +75,7 @@ class AbnormalBehaviorService:
         }
 
     def _build_helmet_result(self, detection):
+        """Format helmet warning when detection contains helmet status fields."""
         helmet_status = detection.get("helmetStatus") or detection.get("helmet_status")
         helmet_confidence = detection.get("helmetConfidence") or detection.get("helmet_confidence")
         if helmet_status is None or helmet_confidence is None:
@@ -67,4 +87,5 @@ class AbnormalBehaviorService:
         )
 
     def _now_iso(self):
+        """Return current local ISO timestamp."""
         return datetime.now(timezone.utc).astimezone().isoformat()

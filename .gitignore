@@ -1,12 +1,14 @@
 # IDE and local agent metadata
 .idea/
 .ai/
+.codex/
 
 # Python caches and virtual environments
 __pycache__/
 *.py[cod]
 .venv/
 venv/
+ai-service/.venv311/
 
 # Frontend dependencies and build output
 frontend/node_modules/
@@ -15,6 +17,7 @@ frontend/dist/
 # Backend local database and static output
 backend/db.sqlite3
 backend/staticfiles/
+backend/media/
 
 # AI service local runtime files
 ai-service/data/uploads/
@@ -29,3 +32,11 @@ ai-service/models/*.pt
 # OS files
 .DS_Store
 Thumbs.db
+
+# Local runtime artifacts and test outputs
+.codex-runlogs/
+ai-service/data/event_media/
+ai-service/models/helmet/*.pt
+yolov8n.pt
+node_modules/
+package-lock.json

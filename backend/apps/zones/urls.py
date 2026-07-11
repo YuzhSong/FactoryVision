@@ -1,7 +1,9 @@
 from django.urls import path
 
-from .views import placeholder_view
+from .views import placeholder_view, zone_create_view, zone_list_view
 
 urlpatterns = [
-    path("", placeholder_view, name="zones-placeholder"),
+    path("placeholder/", placeholder_view, name="zones-placeholder"),
+    path("", zone_create_view, name="zone-create"),
+    path("list/", zone_list_view, name="zone-list"),
 ]

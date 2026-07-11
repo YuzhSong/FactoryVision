@@ -1,159 +1,244 @@
+from dataclasses import dataclass
 from pathlib import Path
 
-import cv2
+
+PERSON_CLASS_ID = 0
+
+
+@dataclass
+class _Track:
+    """Store one lightweight IoU track with bbox and missed-frame count."""
+
+    track_id: str
+    bbox: tuple[float, float, float, float]
+    missed_frames: int = 0
 
 
 class PersonDetector:
-    PERSON_CLASS_ID = 0
+    """Detect person boxes with YOLO and assign lightweight track IDs."""
 
-    def __init__(self, confidence_threshold: float = 0.5, model_path=None):
+    def __init__(
+        self,
+        model_path: str,
+        confidence_threshold: float = 0.35,
+        iou_threshold: float = 0.45,
+        device: str = "cpu",
+        image_size: int = 640,
+        half_precision: str | bool = "auto",
+        cudnn_benchmark: bool = True,
+        track_iou_threshold: float = 0.3,
+        max_missed_frames: int = 15,
+    ):
+        """Initialize YOLO detector with model, thresholds, device, and tracking options."""
+        self.model_path = model_path
         self.confidence_threshold = confidence_threshold
-        self.model_path = Path(model_path) if model_path else self._default_model_path()
+        self.iou_threshold = iou_threshold
+        self.device = device
+        self.image_size = image_size
+        self.half_precision = half_precision
+        self.cudnn_benchmark = cudnn_benchmark
+        self.track_iou_threshold = track_iou_threshold
+        self.max_missed_frames = max_missed_frames
         self.model = None
-        self.backend = None
+        self._tracks: list[_Track] = []
+        self._next_track_number = 1
 
     def load_model(self):
-        if self.model_path.exists():
-            try:
-                from ultralytics import YOLO
+        """Lazy-load the YOLO model and resolve CUDA/CPU runtime settings."""
+        if self.model is not None:
+            return self.model
 
-                self.model = YOLO(str(self.model_path))
-                self.backend = "yolo"
-                return self
-            except Exception:
-                self.model = None
-                self.backend = None
+        _ensure_ultralytics_config_dir()
 
-        hog = cv2.HOGDescriptor()
-        hog.setSVMDetector(cv2.HOGDescriptor_getDefaultPeopleDetector())
-        self.model = hog
-        self.backend = "opencv-hog"
-        return self
+        try:
+            from ultralytics import YOLO
+        except ImportError as exc:
+            raise RuntimeError(
+                "ultralytics is not installed. Run `pip install -r requirements.txt` in ai-service."
+            ) from exc
 
-    def detect(self, frame):
-        if frame is None:
-            return []
-        if self.model is None:
-            self.load_model()
+        self.device = _resolve_device(self.device)
+        _configure_cuda_runtime(self.device, self.cudnn_benchmark)
+        self.model = YOLO(_resolve_model_path(self.model_path))
+        return self.model
 
-        if self.backend == "yolo":
-            return self._detect_with_yolo(frame)
-        return self._detect_with_hog(frame)
-
-    def draw_detections(self, frame, detections):
-        annotated_frame = frame.copy()
-        for detection in detections or []:
-            bbox = detection.get("bbox", {})
-            x1 = int(bbox.get("x1", 0))
-            y1 = int(bbox.get("y1", 0))
-            x2 = int(bbox.get("x2", 0))
-            y2 = int(bbox.get("y2", 0))
-            confidence = detection.get("confidence", 0)
-            backend = detection.get("backend", self.backend or "detector")
-            label = f"person {confidence:.2f}"
-
-            cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
-            self._draw_label(annotated_frame, f"{label} {backend}", x1, y1)
-
-        return annotated_frame
-
-    def _detect_with_yolo(self, frame):
-        results = self.model.predict(frame, conf=self.confidence_threshold, classes=[self.PERSON_CLASS_ID], verbose=False)
-        detections = []
-        if not results:
-            return detections
-
-        boxes = getattr(results[0], "boxes", None)
-        if boxes is None:
-            return detections
-
-        for index, box in enumerate(boxes, start=1):
-            xyxy = box.xyxy[0].tolist()
-            confidence = float(box.conf[0])
-            detection = self.format_detection(
-                track_id=f"person-{index}",
-                bbox=[int(value) for value in xyxy],
-                confidence=round(confidence, 4),
-                extra={"backend": "yolo", "classId": self.PERSON_CLASS_ID, "className": "person"},
-            )
-            if detection:
-                detections.append(detection)
-
-        return detections
-
-    def _detect_with_hog(self, frame):
-        boxes, weights = self.model.detectMultiScale(
-            frame,
-            winStride=(8, 8),
-            padding=(8, 8),
-            scale=1.05,
+    def detect(self, frame, frame_id: str | None = None):
+        """Detect persons in one frame and return PERSON_DETECTION results."""
+        model = self.load_model()
+        predictions = model.predict(
+            source=frame,
+            conf=self.confidence_threshold,
+            iou=self.iou_threshold,
+            classes=[PERSON_CLASS_ID],
+            device=self.device,
+            imgsz=self.image_size,
+            half=_resolve_half_precision(self.half_precision, self.device),
+            verbose=False,
         )
 
-        detections = []
-        for index, (box, weight) in enumerate(zip(boxes, weights), start=1):
-            confidence = float(weight)
-            if confidence < self.confidence_threshold:
+        person_boxes = []
+        if predictions:
+            boxes = predictions[0].boxes
+            for box in boxes:
+                cls_id = int(box.cls[0].item())
+                if cls_id != PERSON_CLASS_ID:
+                    continue
+
+                x1, y1, x2, y2 = [float(value) for value in box.xyxy[0].tolist()]
+                confidence = float(box.conf[0].item())
+                person_boxes.append((x1, y1, x2, y2, confidence))
+
+        assigned = self._assign_tracks(person_boxes)
+        results = []
+        for track_id, (x1, y1, x2, y2, confidence) in assigned:
+            center_x = (x1 + x2) / 2
+            center_y = (y1 + y2) / 2
+            result = {
+                "type": "PERSON_DETECTION",
+                "trackId": track_id,
+                "bbox": {
+                    "x1": round(x1, 2),
+                    "y1": round(y1, 2),
+                    "x2": round(x2, 2),
+                    "y2": round(y2, 2),
+                },
+                "centerPoint": {
+                    "x": round(center_x, 2),
+                    "y": round(center_y, 2),
+                },
+                "footPoint": {
+                    "x": round(center_x, 2),
+                    "y": round(y2, 2),
+                },
+                "confidence": round(confidence, 4),
+            }
+            if frame_id is not None:
+                result["frameId"] = frame_id
+            results.append(result)
+        return results
+
+    def reset_tracks(self):
+        """Clear all tracked person IDs."""
+        self._tracks = []
+        self._next_track_number = 1
+
+    def _assign_tracks(self, boxes):
+        """Assign YOLO boxes to existing or new track IDs by IoU."""
+        for track in self._tracks:
+            track.missed_frames += 1
+
+        assignments = []
+        used_track_indexes = set()
+
+        for box in boxes:
+            bbox = box[:4]
+            best_index = None
+            best_iou = 0.0
+
+            for index, track in enumerate(self._tracks):
+                if index in used_track_indexes:
+                    continue
+                overlap = _iou(bbox, track.bbox)
+                if overlap > best_iou:
+                    best_iou = overlap
+                    best_index = index
+
+            if best_index is not None and best_iou >= self.track_iou_threshold:
+                track = self._tracks[best_index]
+                track.bbox = bbox
+                track.missed_frames = 0
+                used_track_indexes.add(best_index)
+                assignments.append((track.track_id, box))
                 continue
 
-            x, y, width, height = [int(value) for value in box]
-            detection = self.format_detection(
-                track_id=f"person-{index}",
-                bbox=[x, y, x + width, y + height],
-                confidence=round(confidence, 4),
-                extra={"backend": "opencv-hog", "className": "person"},
-            )
-            if detection:
-                detections.append(detection)
+            track = _Track(track_id=f"t-{self._next_track_number}", bbox=bbox)
+            self._next_track_number += 1
+            self._tracks.append(track)
+            used_track_indexes.add(len(self._tracks) - 1)
+            assignments.append((track.track_id, box))
 
-        return detections
+        self._tracks = [
+            track
+            for track in self._tracks
+            if track.missed_frames <= self.max_missed_frames
+        ]
+        return assignments
 
-    def _draw_label(self, frame, label, x, y):
-        font = cv2.FONT_HERSHEY_SIMPLEX
-        font_scale = 0.55
-        thickness = 1
-        text_size, baseline = cv2.getTextSize(label, font, font_scale, thickness)
-        text_width, text_height = text_size
-        top = max(y - text_height - baseline - 6, 0)
 
-        cv2.rectangle(frame, (x, top), (x + text_width + 8, top + text_height + baseline + 6), (0, 255, 0), -1)
-        cv2.putText(frame, label, (x + 4, top + text_height + 2), font, font_scale, (0, 0, 0), thickness, cv2.LINE_AA)
+def _iou(box_a, box_b):
+    """Calculate IoU between two boxes in xyxy format."""
+    ax1, ay1, ax2, ay2 = box_a
+    bx1, by1, bx2, by2 = box_b
 
-    def format_detection(self, track_id, bbox, confidence, extra=None):
-        x1, y1, x2, y2 = self._normalize_bbox(bbox)
-        if confidence < self.confidence_threshold:
-            return None
+    intersection_x1 = max(ax1, bx1)
+    intersection_y1 = max(ay1, by1)
+    intersection_x2 = min(ax2, bx2)
+    intersection_y2 = min(ay2, by2)
 
-        result = {
-            "type": "PERSON_DETECTION",
-            "trackId": str(track_id),
-            "bbox": {
-                "x1": int(x1),
-                "y1": int(y1),
-                "x2": int(x2),
-                "y2": int(y2),
-            },
-            "centerPoint": {
-                "x": (x1 + x2) / 2,
-                "y": (y1 + y2) / 2,
-            },
-            "footPoint": {
-                "x": (x1 + x2) / 2,
-                "y": y2,
-            },
-            "confidence": confidence,
-        }
+    intersection_width = max(0.0, intersection_x2 - intersection_x1)
+    intersection_height = max(0.0, intersection_y2 - intersection_y1)
+    intersection_area = intersection_width * intersection_height
 
-        if extra:
-            result.update(extra)
+    area_a = max(0.0, ax2 - ax1) * max(0.0, ay2 - ay1)
+    area_b = max(0.0, bx2 - bx1) * max(0.0, by2 - by1)
+    union_area = area_a + area_b - intersection_area
 
-        return result
+    if union_area <= 0:
+        return 0.0
+    return intersection_area / union_area
 
-    def _normalize_bbox(self, bbox):
-        if isinstance(bbox, dict):
-            return bbox.get("x1", 0), bbox.get("y1", 0), bbox.get("x2", 0), bbox.get("y2", 0)
-        if isinstance(bbox, (list, tuple)) and len(bbox) == 4:
-            return bbox[0], bbox[1], bbox[2], bbox[3]
-        raise ValueError("bbox must be a dict or a four-item list/tuple")
 
-    def _default_model_path(self):
-        return Path(__file__).resolve().parents[1] / "models" / "yolov8n.pt"
+def _ensure_ultralytics_config_dir():
+    """Ensure Ultralytics writes settings under ai-service data directory."""
+    from ai_config import Config
+
+    Config.ULTRALYTICS_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _resolve_model_path(model_path: str):
+    """Resolve local model path or known Ultralytics model name."""
+    path = Path(model_path)
+    if path.exists():
+        return str(path)
+
+    if path.name in {"yolov8n.pt", "yolov8s.pt", "yolov8m.pt", "yolo11n.pt", "yolo11s.pt"}:
+        return path.name
+
+    return model_path
+
+
+def _resolve_device(device: str):
+    """Resolve 'auto' device to cuda:0 when torch CUDA is available."""
+    if device != "auto":
+        return device
+
+    try:
+        import torch
+    except ImportError:
+        return "cpu"
+
+    return "cuda:0" if torch.cuda.is_available() else "cpu"
+
+
+def _resolve_half_precision(value, device: str):
+    """Enable half precision only when requested and running on CUDA."""
+    if isinstance(value, bool):
+        return value and device.startswith("cuda")
+
+    normalized = str(value).strip().lower()
+    if normalized == "auto":
+        return device.startswith("cuda")
+    return normalized in {"1", "true", "yes", "y", "on"} and device.startswith("cuda")
+
+
+def _configure_cuda_runtime(device: str, cudnn_benchmark: bool):
+    """Enable CUDA runtime optimizations when using a CUDA device."""
+    if not device.startswith("cuda"):
+        return
+
+    try:
+        import torch
+
+        torch.backends.cudnn.benchmark = bool(cudnn_benchmark)
+    except Exception:
+        return
