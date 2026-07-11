@@ -1,5 +1,5 @@
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import {
@@ -14,8 +14,7 @@ import {
   User,
   VideoCamera,
 } from '@element-plus/icons-vue'
-import { authApi } from '../api/modules'
-import { systemStatus } from '../data/placeholders'
+import { authApi, healthApi } from '../api/modules'
 import { applyTheme, getStoredTheme } from '../utils/theme'
 
 const route = useRoute()
@@ -35,6 +34,17 @@ const activeMenu = computed(() => route.path)
 const logoutLoading = ref(false)
 const theme = ref(getStoredTheme())
 const isDark = computed(() => theme.value === 'dark')
+const backendStatus = ref('checking')
+
+const systemStatus = computed(() => [
+  {
+    label: 'Backend',
+    value: backendStatus.value,
+    type: backendStatus.value === 'healthy' ? 'success' : 'warning',
+  },
+  { label: 'AI Service', value: 'event stream', type: 'success' },
+  { label: 'Video Stream', value: 'SRS ready', type: 'success' },
+])
 
 function handleSelect(index) {
   router.push(index)
@@ -59,6 +69,19 @@ function toggleTheme() {
   theme.value = isDark.value ? 'light' : 'dark'
   applyTheme(theme.value)
 }
+
+async function loadBackendStatus() {
+  try {
+    const response = await healthApi.getHealth()
+    backendStatus.value = response?.data?.status === 'ok' ? 'healthy' : 'warning'
+  } catch (error) {
+    backendStatus.value = 'offline'
+  }
+}
+
+onMounted(() => {
+  loadBackendStatus()
+})
 </script>
 
 <template>
@@ -80,7 +103,7 @@ function toggleTheme() {
       <el-header class="app-header">
         <div>
           <h2>{{ route.meta.title || '工厂实时视频分析监测系统' }}</h2>
-          <p>工业安全监控工作台 · planned 接口按模块分阶段接入</p>
+          <p>工业安全监控工作台 · 接口按模块分阶段接入</p>
         </div>
         <div class="status-strip">
           <span v-for="item in systemStatus" :key="item.label" class="status-pill">
