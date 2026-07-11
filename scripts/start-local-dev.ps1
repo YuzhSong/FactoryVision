@@ -27,7 +27,7 @@ New-Item -ItemType Directory -Force -Path $runtimeDir | Out-Null
 Assert-PortAvailable -Port 8000 -ServiceName "Backend"
 Assert-PortAvailable -Port 9000 -ServiceName "AIService"
 if (-not $SkipFrontend) {
-    Assert-PortAvailable -Port 5173 -ServiceName "Frontend"
+    Assert-PortAvailable -Port 5175 -ServiceName "Frontend"
 }
 
 $powershell = (Get-Command powershell.exe -ErrorAction Stop).Source
@@ -52,7 +52,7 @@ if (-not $SkipFrontend) {
 
 $started | ConvertTo-Json | Set-Content -Encoding UTF8 (Join-Path $runtimeDir "local-dev-processes.json")
 Write-Host "[FactoryVision] Started local services."
-Write-Host "Frontend:  http://127.0.0.1:5173/"
+Write-Host "Frontend:  http://127.0.0.1:5175/monitor"
 Write-Host "Backend:   http://127.0.0.1:8000/api/health/"
 Write-Host "AIService: http://127.0.0.1:9000/health"
 Write-Host "Logs:      $runtimeDir"

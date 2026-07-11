@@ -10,7 +10,7 @@ Use the repository scripts. They locate the repository root themselves and invok
 | --- | --- | --- |
 | AIService | `ai-service/.venv/Scripts/python.exe` (Python 3.11) | `http://127.0.0.1:9000/health` |
 | Backend | `backend/.venv/Scripts/python.exe` | `http://127.0.0.1:8000/api/health/` |
-| Frontend | project `node_modules` | `http://127.0.0.1:5173/` |
+| Frontend | project `node_modules` | `http://127.0.0.1:5175/monitor` |
 
 Before changing Python dependencies, validate the repository environments:
 
