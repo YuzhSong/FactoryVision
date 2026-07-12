@@ -170,12 +170,12 @@ onBeforeUnmount(() => {
 
     <div class="dashboard-main-grid">
       <div class="panel dashboard-chart">
-        <SectionHeader title="事件趋势" description="来自 /api/dashboard/summary/ 的今日小时趋势。" />
+        <SectionHeader title="事件趋势" />
         <div ref="chartRef" class="dashboard-chart__canvas" aria-label="事件趋势图" />
       </div>
 
       <div class="panel table-panel compact-table">
-        <SectionHeader title="近期告警" description="来自后端 recentAlerts 汇总。" />
+        <SectionHeader title="近期告警" />
         <el-table v-loading="loading" :data="recentAlertRows" stripe>
           <el-table-column prop="title" label="告警标题" min-width="150" />
           <el-table-column prop="level" label="等级" width="86">

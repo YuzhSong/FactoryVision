@@ -41,6 +41,7 @@ function Start-ServiceScript {
     $process = Start-Process -FilePath $powershell -ArgumentList @(
         "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", (Join-Path $scriptDir $ScriptName)
     ) -WindowStyle Hidden -RedirectStandardOutput $outLog -RedirectStandardError $errLog -PassThru
+
     $script:started += [pscustomobject]@{ name = $Name; processId = $process.Id }
 }
 

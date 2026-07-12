@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import {
@@ -14,7 +14,7 @@ import {
   User,
   VideoCamera,
 } from '@element-plus/icons-vue'
-import { authApi, healthApi } from '../api/modules'
+import { aiServiceApi, authApi, healthApi } from '../api/modules'
 import { applyTheme, getStoredTheme } from '../utils/theme'
 
 const route = useRoute()
@@ -35,15 +35,26 @@ const logoutLoading = ref(false)
 const theme = ref(getStoredTheme())
 const isDark = computed(() => theme.value === 'dark')
 const backendStatus = ref('checking')
+const websocketStatus = ref('idle')
+const videoStreamStatus = ref('checking')
+let statusTimer = null
 
 const systemStatus = computed(() => [
   {
     label: 'Backend',
     value: backendStatus.value,
-    type: backendStatus.value === 'healthy' ? 'success' : 'warning',
+    type: backendStatus.value === 'connected' ? 'success' : 'warning',
   },
-  { label: 'AI Service', value: 'event stream', type: 'success' },
-  { label: 'Video Stream', value: 'SRS ready', type: 'success' },
+  {
+    label: 'WebSocket',
+    value: websocketStatus.value,
+    type: websocketStatus.value === 'connected' ? 'success' : 'warning',
+  },
+  {
+    label: 'Video Stream',
+    value: videoStreamStatus.value,
+    type: videoStreamStatus.value === 'connected' ? 'success' : 'warning',
+  },
 ])
 
 function handleSelect(index) {
@@ -70,23 +81,65 @@ function toggleTheme() {
   applyTheme(theme.value)
 }
 
-async function loadBackendStatus() {
+function handleMonitorStatusUpdate(event) {
+  const details = Array.isArray(event.detail) ? event.detail : []
+  if (details.length === 0) {
+    websocketStatus.value = 'idle'
+    return
+  }
+
+  for (const item of details) {
+    if (item?.label === 'WebSocket' && item.value) {
+      websocketStatus.value = item.value
+    }
+    if (item?.label === 'Video Stream' && item.value) {
+      videoStreamStatus.value = item.value
+    }
+  }
+}
+
+async function loadSystemStatus() {
   try {
     const response = await healthApi.getHealth()
-    backendStatus.value = response?.data?.status === 'ok' ? 'healthy' : 'warning'
+    const health = response?.data || response
+    backendStatus.value = response?.code === 200 || health?.status === 'ok' ? 'connected' : 'warning'
   } catch (error) {
     backendStatus.value = 'offline'
+  }
+
+  try {
+    const response = await aiServiceApi.streamStatus()
+    const streamStatus = response?.data?.data || response?.data || null
+    if (streamStatus?.running) {
+      videoStreamStatus.value = 'connected'
+    } else if (streamStatus?.last_error) {
+      videoStreamStatus.value = 'error'
+    } else {
+      videoStreamStatus.value = 'idle'
+    }
+  } catch (error) {
+    videoStreamStatus.value = 'offline'
   }
 }
 
 onMounted(() => {
-  loadBackendStatus()
+  loadSystemStatus()
+  window.addEventListener('factory-vision-monitor-status', handleMonitorStatusUpdate)
+  statusTimer = window.setInterval(loadSystemStatus, 10000)
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('factory-vision-monitor-status', handleMonitorStatusUpdate)
+  if (statusTimer) {
+    window.clearInterval(statusTimer)
+    statusTimer = null
+  }
 })
 </script>
 
 <template>
   <el-container class="app-shell">
-    <el-aside width="240px" class="app-sidebar">
+    <el-aside width="234px" class="app-sidebar">
       <div class="brand-block">
         <div class="brand-mark">FV</div>
         <h1>工厂监测</h1>
@@ -103,7 +156,7 @@ onMounted(() => {
       <el-header class="app-header">
         <div>
           <h2>{{ route.meta.title || '工厂实时视频分析监测系统' }}</h2>
-          <p>工业安全监控工作台 · 接口按模块分阶段接入</p>
+          <p>工业安全监控工作台</p>
         </div>
         <div class="status-strip">
           <span v-for="item in systemStatus" :key="item.label" class="status-pill">

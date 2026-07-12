@@ -1,3 +1,5 @@
+from django.conf import settings
+from django.conf.urls.static import static
 from django.contrib import admin
 from django.urls import include, path
 from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView
@@ -21,4 +23,4 @@ urlpatterns = [
     path("api/ai-results/", include("apps.ai_results.urls")),
     path("api/alerts/", include("apps.ai_results.alert_urls")),
     path("api/face/", include("apps.face.urls")),
-]
+] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

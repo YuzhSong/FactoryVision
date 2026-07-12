@@ -20,6 +20,17 @@ class EmployeeCreateSerializer(serializers.Serializer):
     phone = serializers.CharField(required=False, max_length=32, default="")
 
 
+class EmployeeUpdateSerializer(serializers.Serializer):
+    """编辑员工——所有字段可选。"""
+
+    employeeNo = serializers.CharField(required=False, max_length=64)
+    name = serializers.CharField(required=False, max_length=64)
+    department = serializers.CharField(required=False, max_length=128)
+    position = serializers.CharField(required=False, max_length=128)
+    phone = serializers.CharField(required=False, max_length=32)
+    status = serializers.ChoiceField(required=False, choices=["active", "inactive"])
+
+
 class EmployeeListSerializer(serializers.ModelSerializer):
     """员工列表输出。"""
 

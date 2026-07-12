@@ -102,6 +102,8 @@ USE_I18N = True
 USE_TZ = True
 
 STATIC_URL = "static/"
+MEDIA_URL = "/media/"
+MEDIA_ROOT = BASE_DIR / "media"
 STATIC_ROOT = BASE_DIR / "staticfiles"
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
@@ -117,6 +119,9 @@ REST_FRAMEWORK = {
         "rest_framework_simplejwt.authentication.JWTAuthentication",
     ],
 }
+
+# Shared only between the local AI service and backend. Do not commit its value.
+AI_SERVICE_API_TOKEN = os.getenv("AI_SERVICE_API_TOKEN", "")
 
 SPECTACULAR_SETTINGS = {
     "TITLE": "Smart Factory Vision API",

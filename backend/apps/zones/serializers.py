@@ -26,8 +26,9 @@ class ZoneCreateSerializer(serializers.Serializer):
 
 class ZoneListSerializer(serializers.ModelSerializer):
     cameraId = serializers.IntegerField(source="camera_id")
+    polygon = serializers.JSONField(source="points", read_only=True)
 
     class Meta:
         model = Zone
-        fields = ("id", "name", "cameraId", "type", "points", "enabled", "description")
+        fields = ("id", "name", "cameraId", "type", "points", "polygon", "enabled", "description")
         read_only_fields = fields

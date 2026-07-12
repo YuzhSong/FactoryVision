@@ -51,6 +51,18 @@ try {
     if ($LASTEXITCODE -ne 0) {
         Fail "AIService realtime streaming unittest run failed."
     }
+
+    & $pythonExe -m unittest discover -s tests -p "test_identity_cache.py"
+    if ($LASTEXITCODE -ne 0) { Fail "AIService identity cache unittest run failed." }
+
+    & $pythonExe -m unittest discover -s tests -p "test_event_types.py"
+    if ($LASTEXITCODE -ne 0) { Fail "AIService event type unittest run failed." }
+
+    & $pythonExe -m unittest discover -s tests -p "test_model_scheduler.py"
+    if ($LASTEXITCODE -ne 0) { Fail "AIService model scheduler unittest run failed." }
+
+    & $pythonExe -m unittest discover -s tests -p "test_helmet_event_cooldown.py"
+    if ($LASTEXITCODE -ne 0) { Fail "AIService helmet cooldown unittest run failed." }
 }
 finally {
     Pop-Location

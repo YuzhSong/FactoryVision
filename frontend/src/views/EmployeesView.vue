@@ -1,6 +1,6 @@
 <script setup>
 import { computed, nextTick, onMounted, reactive, ref } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import SectionHeader from '../components/SectionHeader.vue'
 import StatusTag from '../components/StatusTag.vue'
 import { employeesApi, faceApi } from '../api/modules'
@@ -11,6 +11,7 @@ const faceDialogVisible = ref(false)
 const saving = ref(false)
 const enrolling = ref(false)
 const loading = ref(false)
+const switchingEmployeeId = ref(null)
 const employeeRows = ref([])
 const employeeTotal = ref(0)
 const currentEmployee = ref(null)
@@ -236,7 +237,7 @@ const clearFaceImage = (key) => {
   faceImages[key] = ''
 }
 
-const submitEmployeeEdit = () => {
+const submitEmployeeEdit = async () => {
   if (!editForm.id) {
     ElMessage.warning('请先选择员工')
     return
@@ -246,8 +247,68 @@ const submitEmployeeEdit = () => {
     return
   }
 
-  ElMessage.warning('员工编辑接口 planned，当前仅保留编辑界面，待后端接口接入')
-  editDialogVisible.value = false
+  saving.value = true
+  try {
+    await employeesApi.update(editForm.id, {
+      employeeNo: editForm.employeeNo,
+      name: editForm.name,
+      department: editForm.department,
+      position: editForm.position,
+      phone: editForm.phone,
+      status: editForm.status,
+    })
+    ElMessage.success('员工信息已保存')
+    editDialogVisible.value = false
+    await loadEmployees()
+  } catch (error) {
+    ElMessage.error(getApiErrorMessage(error, '员工信息保存失败'))
+  } finally {
+    saving.value = false
+  }
+}
+
+const toggleEmployeeStatus = async (row) => {
+  const nextStatus = row.status === 'active' ? 'inactive' : 'active'
+  const previousStatus = row.status
+  switchingEmployeeId.value = row.id
+  employeeRows.value = employeeRows.value.map((employee) => (
+    employee.id === row.id ? { ...employee, status: nextStatus } : employee
+  ))
+  try {
+    await employeesApi.update(row.id, { status: nextStatus })
+    ElMessage.success(nextStatus === 'active' ? '员工已启用' : '员工已停用')
+    await loadEmployees()
+  } catch (error) {
+    employeeRows.value = employeeRows.value.map((employee) => (
+      employee.id === row.id ? { ...employee, status: previousStatus } : employee
+    ))
+    ElMessage.error(getApiErrorMessage(error, '员工状态更新失败'))
+  } finally {
+    switchingEmployeeId.value = null
+  }
+}
+
+const deleteEmployee = async (row) => {
+  try {
+    await ElMessageBox.confirm(`确认删除员工 ${row.name || row.employeeNo}？相关人脸特征也会被删除。`, '删除员工', {
+      type: 'warning',
+      confirmButtonText: '删除',
+      cancelButtonText: '取消',
+    })
+  } catch (error) {
+    return
+  }
+
+  switchingEmployeeId.value = row.id
+  try {
+    await employeesApi.remove(row.id)
+    ElMessage.success('员工已删除')
+    await loadEmployees()
+  } catch (error) {
+    ElMessage.error(getApiErrorMessage(error, '员工删除失败'))
+  } finally {
+    switchingEmployeeId.value = null
+  }
 }
 
 const getApiErrorMessage = (error, fallback) => {
@@ -318,7 +379,7 @@ onMounted(() => {
 <template>
   <div class="page-grid">
     <div class="panel table-panel">
-      <SectionHeader title="员工管理" description="员工档案已接入后端列表和创建接口，人脸录入使用三视角照片提交。">
+      <SectionHeader title="员工管理">
         <el-button type="primary" @click="openCreateDialog">新增员工</el-button>
       </SectionHeader>
       <div class="filter-row">
@@ -344,14 +405,17 @@ onMounted(() => {
             <el-button link type="primary" @click="openFaceDialog(row)">开始录入</el-button>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="150">
+        <el-table-column label="操作" width="210">
           <template #default="{ row }">
             <el-button link type="primary" @click="openEditDialog(row)">编辑</el-button>
-            <el-button link type="danger">停用</el-button>
+            <el-button link type="warning" :loading="switchingEmployeeId === row.id" @click="toggleEmployeeStatus(row)">
+              {{ row.status === 'active' ? '停用' : '启用' }}
+            </el-button>
+            <el-button link type="danger" :loading="switchingEmployeeId === row.id" @click="deleteEmployee(row)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>
-      <div class="placeholder-note">共 {{ employeeTotal }} 条员工记录</div>
+      <div class="record-count">共 {{ employeeTotal }} 条员工记录</div>
     </div>
 
     <el-dialog v-model="dialogVisible" title="新增员工" width="520px">
@@ -379,13 +443,6 @@ onMounted(() => {
     </el-dialog>
 
     <el-dialog v-model="editDialogVisible" title="编辑员工信息" width="560px">
-      <el-alert
-        class="dialog-alert"
-        title="后端员工编辑接口尚未实现，当前修改不会写入数据库。"
-        type="warning"
-        show-icon
-        :closable="false"
-      />
       <el-form label-position="top" :model="editForm" class="edit-employee-form">
         <el-form-item label="工号">
           <el-input v-model="editForm.employeeNo" disabled />
@@ -411,7 +468,7 @@ onMounted(() => {
       </el-form>
       <template #footer>
         <el-button @click="editDialogVisible = false">取消</el-button>
-        <el-button type="primary" @click="submitEmployeeEdit">保存 planned</el-button>
+        <el-button type="primary" :loading="saving" @click="submitEmployeeEdit">保存</el-button>
       </template>
     </el-dialog>
 

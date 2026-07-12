@@ -1,3 +1,7 @@
+import os
+
+import requests
+from django.conf import settings
 from django.db.models import Q
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
@@ -8,6 +12,9 @@ from common.response import api_response
 
 from .models import Camera
 from .serializers import CameraCreateSerializer, CameraListSerializer, CameraPlaceholderSerializer, CameraToggleSerializer, CameraUpdateSerializer
+from .stream_config import resolve_stream_start_config
+
+AI_SERVICE_URL = os.getenv("AI_SERVICE_URL", "http://127.0.0.1:9000").rstrip("/")
 
 
 def _parse_positive_int(value):
@@ -16,6 +23,28 @@ def _parse_positive_int(value):
     except (TypeError, ValueError):
         return None
     return parsed if parsed > 0 else None
+
+
+def _ai_service_headers():
+    token = str(getattr(settings, "AI_SERVICE_API_TOKEN", "") or "")
+    return {"X-AI-Service-Token": token} if token else {}
+
+
+def _camera_stream_payload(camera: Camera) -> dict:
+    return resolve_stream_start_config(camera)
+
+
+def _call_ai_service(method: str, path: str, *, json_payload: dict | None = None):
+    response = requests.request(
+        method=method,
+        url=f"{AI_SERVICE_URL}{path}",
+        json=json_payload,
+        headers=_ai_service_headers(),
+        timeout=20,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    return payload.get("data", payload)
 
 
 @extend_schema(
@@ -183,11 +212,13 @@ def camera_create_view(request):
         stream_url=validated["streamUrl"],
         processed_stream_url=validated.get("processedStreamUrl", ""),
         location=validated.get("location", ""),
+        include_faces=validated.get("includeFaces", False),
     )
 
     if not camera.code:
         camera.code = f"CAM{camera.id:03d}"
         camera.save(update_fields=["code"])
+    _notify_ai_cache("cameras/reload")
 
     return api_response(
         code=200,
@@ -271,8 +302,11 @@ def camera_update_view(request, camera_id):
         camera.location = validated["location"]
     if "enabled" in validated:
         camera.enabled = validated["enabled"]
+    if "includeFaces" in validated:
+        camera.include_faces = validated["includeFaces"]
 
     camera.save()
+    _notify_ai_cache("cameras/reload")
 
     return api_response(
         code=200,
@@ -336,9 +370,144 @@ def camera_toggle_view(request, camera_id):
 
     camera.status = serializer.validated_data["status"]
     camera.save(update_fields=["status", "updated_at"])
+    _notify_ai_cache("cameras/reload")
 
     return api_response(
         code=200,
         message="success",
         data={"id": camera.id, "status": camera.status},
     )
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def camera_stream_status_view(_request, camera_id):
+    try:
+        camera = Camera.objects.get(id=camera_id)
+    except Camera.DoesNotExist:
+        return api_response(
+            code=404,
+            message="鎽勫儚澶翠笉瀛樺湪",
+            data=None,
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    try:
+        data = _call_ai_service("GET", "/streams/status")
+    except requests.RequestException as exc:
+        return api_response(
+            code=502,
+            message=f"AI Service unavailable: {exc}",
+            data={"cameraId": camera.id, "running": False},
+            status=status.HTTP_502_BAD_GATEWAY,
+        )
+
+    data["cameraConfig"] = _camera_stream_payload(camera)
+    return api_response(code=200, message="success", data=data)
+
+
+@api_view(["DELETE"])
+@permission_classes([IsAuthenticated])
+def camera_delete_view(_request, camera_id):
+    try:
+        camera = Camera.objects.get(id=camera_id)
+    except Camera.DoesNotExist:
+        return api_response(
+            code=404,
+            message="摄像头不存在",
+            data=None,
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    deleted_id = camera.id
+    camera.delete()
+    _notify_ai_cache("cameras/reload")
+    return api_response(code=200, message="success", data={"id": deleted_id})
+
+
+def _notify_ai_cache(path: str, payload: dict | None = None):
+    try:
+        requests.post(
+            f"{AI_SERVICE_URL}/cache/{path}",
+            json=payload or {},
+            headers=_ai_service_headers(),
+            timeout=5,
+        )
+    except requests.RequestException:
+        pass
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def camera_stream_start_view(_request, camera_id):
+    try:
+        camera = Camera.objects.get(id=camera_id)
+    except Camera.DoesNotExist:
+        return api_response(
+            code=404,
+            message="鎽勫儚澶翠笉瀛樺湪",
+            data=None,
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    payload = _camera_stream_payload(camera)
+    if not payload["inputUrl"]:
+        return api_response(
+            code=422,
+            message="Camera inputUrl is required",
+            data=None,
+            status=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        )
+    if not payload["outputUrl"]:
+        return api_response(
+            code=422,
+            message="Unable to derive processed outputUrl for camera",
+            data=payload,
+            status=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        )
+    if not payload["playUrl"]:
+        return api_response(
+            code=422,
+            message="Unable to derive processed playUrl for camera",
+            data=payload,
+            status=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        )
+
+    try:
+        data = _call_ai_service("POST", "/streams/start", json_payload=payload)
+    except requests.RequestException as exc:
+        return api_response(
+            code=502,
+            message=f"AI Service unavailable: {exc}",
+            data=payload,
+            status=status.HTTP_502_BAD_GATEWAY,
+        )
+
+    data["cameraConfig"] = payload
+    return api_response(code=200, message="success", data=data)
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def camera_stream_stop_view(_request, camera_id):
+    try:
+        Camera.objects.get(id=camera_id)
+    except Camera.DoesNotExist:
+        return api_response(
+            code=404,
+            message="鎽勫儚澶翠笉瀛樺湪",
+            data=None,
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    try:
+        data = _call_ai_service("POST", "/streams/stop")
+    except requests.RequestException as exc:
+        return api_response(
+            code=502,
+            message=f"AI Service unavailable: {exc}",
+            data={"cameraId": camera_id, "running": False},
+            status=status.HTTP_502_BAD_GATEWAY,
+        )
+
+    return api_response(code=200, message="success", data=data)

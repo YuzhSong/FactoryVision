@@ -36,6 +36,67 @@ function Assert-FileExists {
     }
 }
 
+function Read-PythonVersion {
+    param([string]$PythonExe)
+
+    $version = & $PythonExe -c "import sys; print('.'.join(map(str, sys.version_info[:3])))" 2>$null
+    if ($LASTEXITCODE -eq 0) {
+        return $version
+    }
+    return $null
+}
+
+function Get-VenvBasePython {
+    param([string]$VenvDir)
+
+    $pyvenvCfg = Join-Path $VenvDir "pyvenv.cfg"
+    if (-not (Test-Path -LiteralPath $pyvenvCfg)) {
+        return $null
+    }
+
+    $cfg = Get-Content -LiteralPath $pyvenvCfg
+    $executableLine = $cfg | Where-Object { $_ -match "^executable\s*=" } | Select-Object -First 1
+    if ($executableLine) {
+        $executable = ($executableLine -replace "^executable\s*=\s*", "").Trim()
+        if ($executable) {
+            return $executable
+        }
+    }
+
+    $homeLine = $cfg | Where-Object { $_ -match "^home\s*=" } | Select-Object -First 1
+    if ($homeLine) {
+        $home = ($homeLine -replace "^home\s*=\s*", "").Trim()
+        if ($home) {
+            return (Join-Path $home "python.exe")
+        }
+    }
+
+    return $null
+}
+
+function Repair-VenvLauncher {
+    param(
+        [string]$VenvDir,
+        [string]$ServiceName
+    )
+
+    $basePython = Get-VenvBasePython -VenvDir $VenvDir
+    if (-not $basePython -or -not (Test-Path -LiteralPath $basePython)) {
+        Fail "$ServiceName venv launcher is broken and its base interpreter was not found. Restore the required Python runtime, then run: <required Python> -m venv --upgrade $VenvDir"
+    }
+
+    $baseVersion = Read-PythonVersion -PythonExe $basePython
+    if (-not $baseVersion) {
+        Fail "$ServiceName venv launcher is broken and its base interpreter cannot run: $basePython"
+    }
+
+    Write-Host "$ServiceName venv launcher repair: $basePython"
+    & $basePython -m venv --upgrade $VenvDir
+    if ($LASTEXITCODE -ne 0) {
+        Fail "$ServiceName venv launcher repair failed."
+    }
+}
+
 function Assert-PythonVersionPrefix {
     param(
         [string]$PythonExe,
@@ -43,8 +104,13 @@ function Assert-PythonVersionPrefix {
         [string]$ServiceName
     )
 
-    $version = & $PythonExe -c "import sys; print('.'.join(map(str, sys.version_info[:3])))"
-    if ($LASTEXITCODE -ne 0) {
+    $version = Read-PythonVersion -PythonExe $PythonExe
+    if (-not $version) {
+        $venvDir = Split-Path -Parent (Split-Path -Parent $PythonExe)
+        Repair-VenvLauncher -VenvDir $venvDir -ServiceName $ServiceName
+        $version = Read-PythonVersion -PythonExe $PythonExe
+    }
+    if (-not $version) {
         Fail "$ServiceName interpreter failed while reading Python version."
     }
 
