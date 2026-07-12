@@ -344,12 +344,20 @@ GET /api/employees/
 | Method | `GET` |
 | 状态 | implemented |
 
-请求参数：通用分页参数，可增加 `keyword`（模糊匹配姓名或工号）、`department`、`status`。
+请求参数：
+
+| 参数 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `page` | int | 否 | 页码，默认 1 |
+| `pageSize` | int | 否 | 每页数量，默认 20 |
+| `keyword` | string | 否 | 模糊搜索姓名或工号 |
+| `department` | string | 否 | 部门筛选 |
+| `status` | string | 否 | active / inactive |
 
 请求示例：
 
 ```http
-GET /api/employees/list/?page=1&pageSize=20&status=active
+GET /api/employees/list/?page=1&pageSize=20&keyword=张&department=生产部&status=active
 ```
 
 响应示例：
