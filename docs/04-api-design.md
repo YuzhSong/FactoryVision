@@ -23,6 +23,7 @@
 - `POST /api/cameras/`: implemented
 - `PUT /api/cameras/{id}/`: implemented
 - `POST /api/cameras/{id}/toggle/`: implemented
+- `DELETE /api/cameras/{id}/delete/`: implemented
 - `GET /api/zones/`: placeholder
 - `GET /api/zones/list/`: implemented
 - `POST /api/zones/`: implemented
@@ -787,6 +788,25 @@ GET /api/cameras/list/?keyword=一号&status=online
 ```
 
 状态说明：摄像头不存在返回 `404`。
+
+### 删除摄像头
+
+| 项 | 内容 |
+| --- | --- |
+| 接口说明 | 删除摄像头，级联删除关联区域，通知 AI Service |
+| URL | `/api/cameras/{id}/delete/` |
+| Method | `DELETE` |
+| 状态 | implemented |
+
+请求参数：无。
+
+响应示例：
+
+```json
+{"code": 200, "data": {"id": 1}}
+```
+
+状态说明：删除成功通知 AI Service 刷新摄像头缓存。
 
 ## Zones 警戒区域接口
 

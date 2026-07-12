@@ -1,3 +1,6 @@
+import os
+import requests
+
 from django.db.models import Q
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
@@ -8,6 +11,8 @@ from common.response import api_response
 
 from .models import Camera
 from .serializers import CameraCreateSerializer, CameraListSerializer, CameraPlaceholderSerializer, CameraToggleSerializer, CameraUpdateSerializer
+
+AI_SERVICE_URL = os.getenv("AI_SERVICE_URL", "http://127.0.0.1:9000")
 
 
 def _parse_positive_int(value):
@@ -189,6 +194,8 @@ def camera_create_view(request):
         camera.code = f"CAM{camera.id:03d}"
         camera.save(update_fields=["code"])
 
+    _notify_ai_cache("cameras/reload")
+
     return api_response(
         code=200,
         message="success",
@@ -273,6 +280,7 @@ def camera_update_view(request, camera_id):
         camera.enabled = validated["enabled"]
 
     camera.save()
+    _notify_ai_cache("cameras/reload")
 
     return api_response(
         code=200,
@@ -336,9 +344,65 @@ def camera_toggle_view(request, camera_id):
 
     camera.status = serializer.validated_data["status"]
     camera.save(update_fields=["status", "updated_at"])
+    _notify_ai_cache("cameras/reload")
 
     return api_response(
         code=200,
         message="success",
         data={"id": camera.id, "status": camera.status},
     )
+
+
+@extend_schema(
+    summary="删除摄像头",
+    description="删除摄像头，级联删除关联区域，通知 AI Service。该接口需要 Bearer JWT 认证。",
+    responses={200: None, 404: None},
+    examples=[
+        OpenApiExample(
+            "删除成功",
+            value={"code": 200, "message": "success", "data": {"id": 1}, "requestId": "uuid"},
+            response_only=True,
+            status_codes=["200"],
+        ),
+        OpenApiExample(
+            "摄像头不存在",
+            value={"code": 404, "message": "摄像头不存在", "data": None, "requestId": "uuid"},
+            response_only=True,
+            status_codes=["404"],
+        ),
+    ],
+)
+@api_view(["DELETE"])
+@permission_classes([IsAuthenticated])
+def camera_delete_view(request, camera_id):
+    try:
+        camera = Camera.objects.get(id=camera_id)
+    except Camera.DoesNotExist:
+        return api_response(
+            code=404,
+            message="摄像头不存在",
+            data=None,
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    cid = camera.id
+    camera.delete()
+
+    _notify_ai_cache("cameras/reload")
+
+    return api_response(
+        code=200,
+        message="success",
+        data={"id": cid},
+    )
+
+
+def _notify_ai_cache(path: str, payload: dict | None = None):
+    try:
+        requests.post(
+            f"{AI_SERVICE_URL}/cache/{path}",
+            json=payload or {},
+            timeout=5,
+        )
+    except Exception:
+        pass
