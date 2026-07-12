@@ -61,8 +61,9 @@ class FrameAnnotator:
                 else:
                     continue
                 x, y = float(x), float(y)
-                if 0 <= x <= 1 and 0 <= y <= 1:
-                    x, y = x * width, y * height
+                if 0 <= x <= 100 and 0 <= y <= 100:
+                    scale = 100.0 if x > 1 or y > 1 else 1.0
+                    x, y = x * width / scale, y * height / scale
                 coords.append((int(round(x)), int(round(y))))
             if len(coords) < 3:
                 continue

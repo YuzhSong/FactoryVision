@@ -11,6 +11,7 @@ from .event_media_recorder import EventMediaRecorder
 from .frame_annotator import FrameAnnotator
 from .stream_reader import StreamReader
 from .stream_writer import FFmpegStreamWriter
+from .event_types import normalize_event_result
 
 
 logger = logging.getLogger("uvicorn.error")
@@ -48,6 +49,9 @@ class StreamTaskStatus:
     reported_events: int = 0
     failed_events: int = 0
     dropped_events: int = 0
+    filtered_results: int = 0
+    last_report_error: str | None = None
+    last_report_succeeded_at: str | None = None
     person_inference_ms: float | None = None
     helmet_inference_ms: float | None = None
     face_inference_ms: float | None = None
@@ -78,7 +82,6 @@ class ProcessedStreamService:
         default_play_url: str = Config.STREAM_PLAY_URL,
         default_mode: str = Config.STREAM_PROCESS_MODE,
         default_report_to_backend: bool = Config.STREAM_REPORT_TO_BACKEND,
-        default_report_realtime_to_backend: bool = Config.STREAM_REPORT_REALTIME_TO_BACKEND,
         reconnect_attempts: int = Config.STREAM_RECONNECT_ATTEMPTS,
         reconnect_delay_seconds: float = Config.STREAM_RECONNECT_DELAY_SECONDS,
         output_fps: float = Config.STREAM_OUTPUT_FPS,
@@ -99,6 +102,7 @@ class ProcessedStreamService:
         event_media_post_seconds: float = Config.EVENT_MEDIA_POST_SECONDS,
         event_media_cooldown_seconds: float = Config.EVENT_MEDIA_COOLDOWN_SECONDS,
         event_report_queue_size: int = Config.EVENT_REPORT_QUEUE_SIZE,
+        zone_refresh_interval_seconds: float = Config.ZONE_REFRESH_INTERVAL_SECONDS,
     ):
         self.frame_processor = frame_processor
         self.backend_client = backend_client
@@ -108,7 +112,6 @@ class ProcessedStreamService:
         self.default_play_url = default_play_url
         self.default_mode = default_mode
         self.default_report_to_backend = default_report_to_backend
-        self.default_report_realtime_to_backend = default_report_realtime_to_backend
         self.reconnect_attempts = reconnect_attempts
         self.reconnect_delay_seconds = reconnect_delay_seconds
         self.output_fps = output_fps
@@ -143,6 +146,7 @@ class ProcessedStreamService:
         self._lock = threading.Lock()
         self._frame_condition = threading.Condition()
         self._event_report_queue = queue.Queue(maxsize=max(1, int(event_report_queue_size or 1)))
+        self.zone_refresh_interval_seconds = max(1.0, float(zone_refresh_interval_seconds or 1))
         self._event_report_stop = threading.Event()
         self._event_report_lock = threading.Lock()
         self._report_thread = None
@@ -158,6 +162,11 @@ class ProcessedStreamService:
     def start(self, payload: dict | None = None):
         """Start background stream processing, or return existing task status."""
         payload = payload or {}
+        if _to_bool(payload.get("reportRealtimeToBackend")):
+            raise ValueError("`reportRealtimeToBackend` is no longer supported; use `reportToBackend`.")
+        report_to_backend = _to_bool(payload.get("reportToBackend", self.default_report_to_backend))
+        if report_to_backend and not payload.get("cameraId"):
+            raise ValueError("`cameraId` is required when `reportToBackend` is enabled.")
         with self._lock:
             if self._thread is not None and self._thread.is_alive():
                 snapshot = asdict(self._status)
@@ -311,17 +320,26 @@ class ProcessedStreamService:
     def _process_loop(self, payload: dict, writer, output_fps: float):
         include_faces = _to_bool(payload.get("includeFaces", Config.STREAM_INCLUDE_FACES_DEFAULT))
         report_to_backend = _to_bool(payload.get("reportToBackend", self.default_report_to_backend))
-        report_realtime_to_backend = _to_bool(
-            payload.get("reportRealtimeToBackend", self.default_report_realtime_to_backend)
-        )
         max_frames = _optional_positive_int(payload.get("maxFrames"))
         zones = payload.get("zones") if isinstance(payload.get("zones"), list) else None
+        zones_last_refreshed_at = time.monotonic()
         last_report = {"results": []}
         last_log_at = time.monotonic()
         last_process_count = 0
         target_interval = 1 / output_fps if output_fps > 0 else 0
 
         while not self._stop_event.is_set():
+            if (
+                self.backend_client is not None
+                and self._status.camera_id
+                and time.monotonic() - zones_last_refreshed_at >= self.zone_refresh_interval_seconds
+            ):
+                try:
+                    zones = self.backend_client.list_zones(self._status.camera_id)
+                    zones_last_refreshed_at = time.monotonic()
+                except Exception as exc:
+                    logger.warning("zone refresh failed camera_id=%s error=%s", self._status.camera_id, exc)
+                    zones_last_refreshed_at = time.monotonic()
             if max_frames is not None and self._status.processed_frames >= max_frames:
                 break
 
@@ -335,7 +353,6 @@ class ProcessedStreamService:
                 writer,
                 include_faces,
                 report_to_backend,
-                report_realtime_to_backend,
                 zones,
                 last_report,
             )
@@ -373,7 +390,6 @@ class ProcessedStreamService:
         writer,
         include_faces: bool,
         report_to_backend: bool,
-        report_realtime_to_backend: bool,
         zones: list[dict] | None,
         last_report: dict,
     ):
@@ -417,9 +433,14 @@ class ProcessedStreamService:
         if event_media:
             report["eventMedia"] = list(report.get("eventMedia", [])) + event_media
         if should_detect and report_to_backend and report.get("results") and self.backend_client is not None:
-            self._enqueue_ai_report(report)
-        if should_detect and report_realtime_to_backend and self.backend_client is not None:
-            self.backend_client.report_realtime_frame_results(self._with_playback_url(report))
+            reportable = self._reportable_event_report(report)
+            if reportable["results"]:
+                logger.info(
+                    "event generated camera_id=%s types=%s",
+                    reportable.get("cameraId"),
+                    [item.get("eventType") or item.get("type") for item in reportable["results"]],
+                )
+                self._enqueue_ai_report(reportable)
         return output_frame, last_report
 
     def _draw_detection_frame(self, frame, zones, results):
@@ -457,8 +478,36 @@ class ProcessedStreamService:
             self._queued_region_event_keys.update(event_keys)
             with self._lock:
                 self._status.queued_events += max(1, len(event_keys))
+            logger.info("event queued camera_id=%s count=%s", payload.get("cameraId"), len(payload["results"]))
             self._start_report_worker_locked()
         return True
+
+    def _reportable_event_report(self, report):
+        """Keep raw detections in the video path but persist only actionable events."""
+        allowed_types = {
+            "HELMET_WARNING",
+            "ZONE_WARNING",
+            "FALL_DETECTED",
+            "FALL_ALERT",
+            "RUNNING_ALERT",
+            "STRANGER_DETECTED",
+            "STRANGER_ALERT",
+            "EMPLOYEE_PRESENCE_EVENT",
+        }
+        payload = dict(report)
+        source_results = report.get("results") or []
+        payload["results"] = [
+            normalize_event_result(result)
+            for result in source_results
+            if isinstance(result, dict)
+            and (
+                result.get("type") in allowed_types
+                or (result.get("type") == "FACE_RESULT" and result.get("matched") is True)
+            )
+        ]
+        with self._lock:
+            self._status.filtered_results += max(0, len(source_results) - len(payload["results"]))
+        return payload
 
     def _start_report_worker_locked(self):
         if self._report_thread is not None and self._report_thread.is_alive():
@@ -476,9 +525,13 @@ class ProcessedStreamService:
                 self.backend_client.report_ai_results(report)
                 with self._lock:
                     self._status.reported_events += max(1, len(event_keys))
+                    self._status.last_report_succeeded_at = _now()
+                    self._status.last_report_error = None
+                logger.info("event report succeeded camera_id=%s count=%s", report.get("cameraId"), len(report.get("results") or []))
             except Exception as exc:
                 with self._lock:
                     self._status.failed_events += max(1, len(event_keys))
+                    self._status.last_report_error = str(exc)
                 logger.exception("AI result report failed without blocking video processing: %s", exc)
             finally:
                 with self._event_report_lock:
@@ -571,11 +624,17 @@ class ProcessedStreamService:
         """Schedule one model per tick while retaining the legacy analysis cadence."""
         frame_number = self._status.processed_frames
         person = self._should_run_interval(frame_number, self.person_detect_interval)
-        helmet = self._should_run_interval(
+        helmet_due = self._should_run_interval(
             frame_number,
             self.helmet_detect_interval,
             self.helmet_detect_offset,
         )
+        helmet_deferred = (
+            frame_number > 0
+            and self._should_run_interval(frame_number - 1, self.helmet_detect_interval, self.helmet_detect_offset)
+            and self._should_run_interval(frame_number - 1, self.person_detect_interval)
+        )
+        helmet = not person and (helmet_due or helmet_deferred)
         face = (
             include_faces
             and not person

@@ -118,6 +118,9 @@ REST_FRAMEWORK = {
     ],
 }
 
+# Shared only between the local AI service and backend. Do not commit its value.
+AI_SERVICE_API_TOKEN = os.getenv("AI_SERVICE_API_TOKEN", "")
+
 SPECTACULAR_SETTINGS = {
     "TITLE": "Smart Factory Vision API",
     "DESCRIPTION": "API skeleton for Smart Factory Real-time Video Analysis and Safety Monitoring System.",

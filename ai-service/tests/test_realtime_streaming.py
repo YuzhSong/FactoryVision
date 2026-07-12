@@ -250,7 +250,6 @@ class RealtimeStreamingTests(unittest.TestCase):
             writer=None,
             include_faces=True,
             report_to_backend=True,
-            report_realtime_to_backend=False,
             zones=None,
             last_report={"results": []},
         )
@@ -262,6 +261,35 @@ class RealtimeStreamingTests(unittest.TestCase):
         self.assertEqual(service.status()["event_media_count"], 1)
         self.assertEqual(backend.report["eventMedia"][0]["eventId"], "event-1")
         self.assertEqual(recorder.calls[0]["report"]["results"][0]["type"], "FALL_ALERT")
+
+    def test_live_stream_reports_only_actionable_results(self):
+        service = ProcessedStreamService(frame_processor=None)
+        report = {
+            "cameraId": 1,
+            "results": [
+                {"type": "PERSON_DETECTION", "trackId": "person-1"},
+                {"type": "HELMET_DETECTION", "trackId": "person-1"},
+                {"type": "HELMET_WARNING", "trackId": "person-1"},
+                {"type": "FACE_RESULT", "trackId": "person-1", "matched": False},
+                {"type": "FACE_RESULT", "trackId": "person-2", "matched": True, "employeeId": 4},
+                {"type": "ZONE_WARNING", "trackId": "person-1"},
+            ],
+        }
+
+        filtered = service._reportable_event_report(report)
+
+        self.assertEqual(
+            [item["type"] for item in filtered["results"]],
+            ["HELMET_WARNING", "FACE_RESULT", "ZONE_WARNING"],
+        )
+        self.assertEqual(service.status()["filtered_results"], 3)
+
+    def test_reporting_requires_camera_id_and_rejects_legacy_realtime_path(self):
+        service = ProcessedStreamService(frame_processor=None, default_report_to_backend=True)
+        with self.assertRaisesRegex(ValueError, "cameraId"):
+            service.start({})
+        with self.assertRaisesRegex(ValueError, "reportRealtimeToBackend"):
+            service.start({"reportRealtimeToBackend": True})
 
     def test_track_history_keeps_lightweight_recent_points(self):
         processor = FrameProcessor(person_detector=_FakeDetector(), history_limit=5)

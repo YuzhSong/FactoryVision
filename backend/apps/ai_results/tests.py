@@ -85,7 +85,7 @@ class AIResultsReportTests(TestCase):
         event = Event.objects.get()
         alert = Alert.objects.get()
         self.assertEqual(event.camera, self.camera)
-        self.assertEqual(event.event_type, "HELMET_WARNING")
+        self.assertEqual(event.event_type, "helmet_violation")
         self.assertEqual(event.confidence, 0.91)
         self.assertEqual(event.snapshot_path, "events/cam-a/frame-0002.jpg")
         self.assertEqual(event.severity, "high")

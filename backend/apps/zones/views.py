@@ -173,3 +173,26 @@ def zone_create_view(request):
         message="success",
         data={"id": zone.id},
     )
+
+
+@api_view(["PUT", "DELETE"])
+@permission_classes([IsAuthenticated])
+def zone_detail_view(request, zone_id):
+    zone = Zone.objects.filter(id=zone_id).first()
+    if zone is None:
+        return api_response(code=404, message="Zone not found", data=None, status=status.HTTP_404_NOT_FOUND)
+    if request.method == "DELETE":
+        zone.delete()
+        return api_response(message="success", data=None)
+    serializer = ZoneCreateSerializer(data=request.data)
+    if not serializer.is_valid():
+        return api_response(code=400, message="Invalid zone payload", data=serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    data = serializer.validated_data
+    camera = Camera.objects.filter(id=data["cameraId"]).first()
+    if camera is None:
+        return api_response(code=404, message="Camera not found", data=None, status=status.HTTP_404_NOT_FOUND)
+    zone.camera = camera
+    for field in ("name", "type", "points", "enabled", "description"):
+        setattr(zone, field, data.get(field, getattr(zone, field)))
+    zone.save()
+    return api_response(message="success", data={"id": zone.id})

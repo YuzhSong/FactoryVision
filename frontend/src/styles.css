@@ -453,6 +453,19 @@ body {
   user-select: none;
 }
 
+.zone-editor video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #020617;
+}
+
+.zone-editor .monitor-label {
+  z-index: 3;
+}
+
 .zone-form {
   display: grid;
   grid-template-columns: minmax(180px, 1fr) minmax(150px, 0.7fr) 90px minmax(220px, 1.2fr);
@@ -491,10 +504,7 @@ body {
 
 .zone-editor-layer {
   position: absolute;
-  inset: 0;
   z-index: 2;
-  width: 100%;
-  height: 100%;
   touch-action: none;
 }
 
@@ -503,6 +513,22 @@ body {
   stroke: rgba(248, 113, 113, 0.95);
   stroke-width: 0.34;
   vector-effect: non-scaling-stroke;
+}
+
+.zone-saved-fill {
+  fill: rgba(245, 158, 11, 0.08);
+  stroke: rgba(251, 191, 36, 0.95);
+  stroke-width: 0.28;
+  vector-effect: non-scaling-stroke;
+}
+
+.zone-saved-label {
+  fill: #fef3c7;
+  font-size: 2.7px;
+  paint-order: stroke;
+  stroke: rgba(2, 6, 23, 0.9);
+  stroke-width: 0.5;
+  pointer-events: none;
 }
 
 .zone-draft-line {

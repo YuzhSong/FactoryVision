@@ -7,6 +7,7 @@ from .abnormal_behavior_service import AbnormalBehaviorService
 from .employee_presence_detector import EmployeePresenceDetector
 from .event_classification import enrich_event_classification
 from .stranger_detector import StrangerDetector
+from .identity_cache import FaceIdentityCache
 
 
 class FrameProcessor:
@@ -37,6 +38,12 @@ class FrameProcessor:
         )
         self.track_histories = {}
         self.history_limit = history_limit
+        self.identity_cache = FaceIdentityCache(
+            ttl_seconds=abnormal_config.get("faceIdentityCacheSeconds", 5.0),
+            unknown_ttl_seconds=abnormal_config.get("faceUnknownCacheSeconds", 1.0),
+            track_ttl_seconds=abnormal_config.get("faceTrackTtlSeconds", 10.0),
+            clock=abnormal_config.get("clock"),
+        )
 
     def process_frame(
         self,
@@ -101,6 +108,15 @@ class FrameProcessor:
                 frame_id=frame_id,
             )
             timings["face"] = _elapsed_ms(started_at)
+            for face_result in face_results:
+                self.identity_cache.put(camera_id, face_result)
+        elif include_faces:
+            track_ids = [item.get("trackId") for item in person_results if item.get("trackId") not in (None, "")]
+            face_results = self.identity_cache.results_for_tracks(camera_id, track_ids)
+        self.identity_cache.purge_missing(
+            camera_id,
+            [item.get("trackId") for item in person_results if item.get("trackId") not in (None, "")],
+        )
 
         presence_results = []
         if include_faces and run_face_recognition and self.face_service is not None:
@@ -148,6 +164,7 @@ class FrameProcessor:
         self.stranger_detector.reset()
         self.employee_presence_detector.reset()
         self.abnormal_service.zone_detector.reset()
+        self.identity_cache.clear()
         if hasattr(self.person_detector, "reset_tracks"):
             self.person_detector.reset_tracks()
 

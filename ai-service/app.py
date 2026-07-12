@@ -28,7 +28,6 @@ backend_client = BackendClient(
     zone_list_path=Config.BACKEND_ZONE_LIST_PATH,
     ai_report_path=Config.BACKEND_AI_REPORT_PATH,
     bootstrap_path=Config.BACKEND_BOOTSTRAP_PATH,
-    realtime_frame_results_path=Config.BACKEND_REALTIME_FRAME_RESULTS_PATH,
 )
 
 person_detector = PersonDetector(
@@ -87,6 +86,9 @@ frame_processor = FrameProcessor(
         "noHelmetClassId": Config.NO_HELMET_CLASS_ID,
         "zoneMinStaySeconds": Config.ZONE_MIN_STAY_SECONDS,
         "zoneStateTtlSeconds": Config.ZONE_STATE_TTL_SECONDS,
+        "helmetEventCooldownSeconds": Config.HELMET_EVENT_COOLDOWN_SECONDS,
+        "trackStateTtlSeconds": Config.TRACK_STATE_TTL_SECONDS,
+        "faceIdentityCacheSeconds": Config.FACE_IDENTITY_CACHE_SECONDS,
         "fallRatioThreshold": Config.FALL_RATIO_THRESHOLD,
         "fallConfirmFrames": Config.FALL_CONFIRM_FRAMES,
         "fallMinConfidence": Config.FALL_MIN_CONFIDENCE,
@@ -109,7 +111,6 @@ processed_stream_service = ProcessedStreamService(
     default_play_url=Config.STREAM_PLAY_URL,
     default_mode=Config.STREAM_PROCESS_MODE,
     default_report_to_backend=Config.STREAM_REPORT_TO_BACKEND,
-    default_report_realtime_to_backend=Config.STREAM_REPORT_REALTIME_TO_BACKEND,
     reconnect_attempts=Config.STREAM_RECONNECT_ATTEMPTS,
     reconnect_delay_seconds=Config.STREAM_RECONNECT_DELAY_SECONDS,
     output_fps=Config.STREAM_OUTPUT_FPS,
@@ -174,6 +175,13 @@ def create_app() -> FastAPI:
     async def start_processed_stream(request: Request):
         try:
             payload = await _payload(request)
+            if _to_bool(payload.get("reportRealtimeToBackend")):
+                raise ValueError("`reportRealtimeToBackend` is no longer supported; use `reportToBackend`.")
+            camera_id = payload.get("cameraId")
+            if camera_id and not isinstance(payload.get("zones"), list):
+                payload["zones"] = _resolve_zones({**payload, "loadZonesFromBackend": True}, camera_id) or []
+            if _to_bool(payload.get("includeFaces", Config.STREAM_INCLUDE_FACES_DEFAULT)):
+                _maybe_load_faces_for_stream(payload, True)
             status = processed_stream_service.start(payload)
         except Exception as exc:
             return _error_response(exc)
@@ -376,13 +384,14 @@ def create_app() -> FastAPI:
         reader = None
         try:
             payload = await _payload(request)
+            if _to_bool(payload.get("reportRealtimeToBackend", False)):
+                raise ValueError("`reportRealtimeToBackend` is no longer supported; use `reportToBackend`.")
             stream_url, camera_id = _resolve_stream_source(payload)
             max_frames = _bounded_frame_count(payload.get("maxFrames", 1))
             sample_interval = int(payload.get("sampleInterval", Config.STREAM_SAMPLE_INTERVAL) or 1)
             include_faces = _to_bool(payload.get("includeFaces", True))
             face_library_result = _maybe_load_faces_for_stream(payload, include_faces)
             report_to_backend = _to_bool(payload.get("reportToBackend", False))
-            report_realtime_to_backend = _to_bool(payload.get("reportRealtimeToBackend", False))
             zones = _resolve_zones(payload, camera_id)
 
             reader = StreamReader(
@@ -392,7 +401,6 @@ def create_app() -> FastAPI:
 
             reports = []
             report_responses = []
-            realtime_report_responses = []
             for packet in reader.iter_frames(max_frames=max_frames, sample_interval=sample_interval):
                 packet.frame = normalize_camera_frame(packet.frame)
                 report = frame_processor.process_frame(
@@ -407,11 +415,9 @@ def create_app() -> FastAPI:
                 )
                 reports.append(report)
                 if report_to_backend:
-                    report_responses.append(backend_client.report_ai_results(report))
-                if report_realtime_to_backend:
-                    realtime_report_responses.append(
-                        backend_client.report_realtime_frame_results(_with_playback_url(report, payload))
-                    )
+                    reportable = processed_stream_service._reportable_event_report(report)
+                    if reportable["results"]:
+                        report_responses.append(backend_client.report_ai_results(reportable))
         except Exception as exc:
             return _error_response(exc)
         finally:
@@ -428,7 +434,6 @@ def create_app() -> FastAPI:
                 "faceLibrary": face_library_result,
                 "reports": reports,
                 "reportResponses": report_responses,
-                "realtimeReportResponses": realtime_report_responses,
             },
         }
 
@@ -452,6 +457,10 @@ class FaceExtractDetail(BaseModel):
     livenessWarning: str | None = None
     qualityHeuristicPassed: bool | None = None
     qualityHeuristicScore: float | None = None
+    employeeId: int | str | None = None
+    employeeNo: str | None = None
+    name: str | None = None
+    image: str | None = None
 
 
 class FaceExtractResponse(BaseModel):
@@ -737,9 +746,10 @@ def _as_list(value):
 
 
 def _error_response(exc: Exception):
+    status_code = 400 if isinstance(exc, ValueError) else 500
     return JSONResponse(
-        status_code=500,
-        content={"code": 500, "message": str(exc), "data": None},
+        status_code=status_code,
+        content={"code": status_code, "message": str(exc), "data": None},
     )
 
 

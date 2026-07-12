@@ -133,9 +133,10 @@ class ZoneDetector:
                 normalized.append((float(point.get("x", 0)), float(point.get("y", 0))))
             elif isinstance(point, (list, tuple)) and len(point) == 2:
                 normalized.append((float(point[0]), float(point[1])))
-        if frame_shape and normalized and all(0 <= x <= 1 and 0 <= y <= 1 for x, y in normalized):
+        if frame_shape and normalized and _uses_normalized_coordinates(normalized):
             height, width = frame_shape[:2]
-            return [(x * width, y * height) for x, y in normalized]
+            scale = 100.0 if _uses_percentage_coordinates(normalized) else 1.0
+            return [(x * width / scale, y * height / scale) for x, y in normalized]
         return normalized
 
     def _point_in_polygon(self, point, polygon):
@@ -174,3 +175,12 @@ def _timestamp_seconds(value):
 
 def _now_iso():
     return datetime.now(timezone.utc).astimezone().isoformat()
+
+
+def _uses_normalized_coordinates(points):
+    """Support current 0..1 points and legacy 0..100 percentage points."""
+    return all(0 <= x <= 100 and 0 <= y <= 100 for x, y in points)
+
+
+def _uses_percentage_coordinates(points):
+    return any(x > 1 or y > 1 for x, y in points)

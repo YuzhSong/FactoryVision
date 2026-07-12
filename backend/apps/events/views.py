@@ -36,8 +36,11 @@ def placeholder_view(_request):
     responses={200: EventListSerializer(many=True)},
 )
 @api_view(["GET"])
-def event_list_view(_request):
+def event_list_view(request):
     events = Event.objects.select_related("camera").all()
+    camera_id = request.query_params.get("cameraId")
+    if camera_id:
+        events = events.filter(camera_id=camera_id)
     return api_response(
         data={"total": events.count(), "items": EventListSerializer(events, many=True).data},
         message="success",

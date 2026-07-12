@@ -8,12 +8,14 @@ from pathlib import Path
 import requests
 from django.conf import settings
 from django.db import transaction
+from django.utils.crypto import constant_time_compare
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from drf_spectacular.utils import OpenApiExample, extend_schema
 
 from apps.employees.models import Employee
+from apps.employees.serializers import EmployeeListSerializer
 from common.response import api_response
 
 from .models import FaceFeature
@@ -23,6 +25,26 @@ AI_SERVICE_URL = os.getenv("AI_SERVICE_URL", "http://127.0.0.1:9000")
 FACE_MEDIA_ROOT = Path(settings.BASE_DIR) / "media" / "faces"
 FACE_FEATURE_DIMENSION = 512
 LIVENESS_REQUIRED = os.getenv("LIVENESS_REQUIRED", "False").lower() == "true"
+
+
+def _ai_service_authorized(request) -> bool:
+    expected = str(getattr(settings, "AI_SERVICE_API_TOKEN", "") or "")
+    provided = request.headers.get("X-AI-Service-Token", "")
+    return bool(expected) and constant_time_compare(expected, provided)
+
+
+def _serialize_face_library_employee(employee):
+    item = EmployeeListSerializer(employee).data
+    item["faceFeatures"] = [
+        {
+            "id": feature.id,
+            "featureVector": feature.feature_vector,
+            "imagePath": feature.image_path,
+            "faceType": feature.face_type,
+        }
+        for feature in employee.face_features.all()
+    ]
+    return item
 
 
 def _save_image(employee_id: int, face_type: str, image_base64: str) -> str:
@@ -108,6 +130,24 @@ def _remove_saved_images(image_paths: list[str]):
             (FACE_MEDIA_ROOT / image_path.removeprefix("faces/")).unlink(missing_ok=True)
         except OSError:
             continue
+
+
+@api_view(["GET"])
+def face_library_view(request):
+    """Return active employee embeddings to the configured AI service only."""
+    if not _ai_service_authorized(request):
+        return api_response(
+            code=403,
+            message="AI service token required",
+            data=None,
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    employees = Employee.objects.filter(status=Employee.Status.ACTIVE).prefetch_related("face_features")
+    return api_response(
+        data={"items": [_serialize_face_library_employee(employee) for employee in employees]},
+        message="success",
+    )
 
 
 @extend_schema(

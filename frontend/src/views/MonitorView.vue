@@ -3,7 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import SectionHeader from '../components/SectionHeader.vue'
 import StatusTag from '../components/StatusTag.vue'
-import { camerasApi, eventsApi } from '../api/modules'
+import { aiServiceApi, camerasApi, eventsApi } from '../api/modules'
 import { createRealtimeConnection } from '../api/realtime'
 
 const activeCamera = ref('')
@@ -28,7 +28,7 @@ const systemStatus = computed(() => [
 ])
 
 const currentCamera = computed(() => cameras.value.find((camera) => camera.id === activeCamera.value) || cameras.value[0] || null)
-const detectedPlayUrl = computed(() => currentCamera.value?.playUrl || currentCamera.value?.processedStreamUrl || currentCamera.value?.streamUrl || '')
+const detectedPlayUrl = computed(() => currentCamera.value?.processedStreamUrl || currentCamera.value?.playUrl || '')
 const monitorStats = computed(() => {
   const highRiskTypes = new Set(['high', 'medium'])
   const highRiskCount = realtimeEvents.value.filter((event) => highRiskTypes.has(event.level)).length
@@ -123,7 +123,70 @@ function loadMpegtsSdk() {
   return flvPromise
 }
 
-async function startPlayback() {
+function wait(milliseconds) {
+  return new Promise((resolve) => window.setTimeout(resolve, milliseconds))
+}
+
+function deriveOutputUrl(camera) {
+  const processedUrl = `${camera?.processedStreamUrl || ''}`.trim()
+  if (processedUrl.startsWith('rtmp://') || processedUrl.startsWith('rtmps://')) {
+    return processedUrl
+  }
+  const sourceUrl = `${camera?.streamUrl || ''}`.trim()
+  const match = sourceUrl.match(/^(rtmps?:\/\/[^/]+\/[^/]+\/)([^/?#]+)$/)
+  if (!match) return ''
+  return `${match[1]}${match[2]}_detected`
+}
+
+function buildAiStreamPayload(camera) {
+  if (!camera) return null
+  return {
+    streamUrl: camera.streamUrl || '',
+    outputUrl: deriveOutputUrl(camera),
+    playUrl: camera.processedStreamUrl || camera.playUrl || '',
+    includeFaces: false,
+    reportToBackend: false,
+  }
+}
+
+async function ensureProcessedStream() {
+  if (!activeCamera.value) return null
+  playbackMessage.value = '正在启动 AI 处理流'
+  const waitForRunning = async () => {
+    let latestStatus = null
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      await wait(1500)
+      const statusResponse = await aiServiceApi.streamStatus()
+      latestStatus = statusResponse?.data?.data || statusResponse?.data || null
+      if (latestStatus?.running) return latestStatus
+    }
+    return latestStatus
+  }
+  try {
+    const response = await camerasApi.startStream(activeCamera.value)
+    const runningStatus = await waitForRunning()
+    if (runningStatus?.running) return runningStatus
+    return response?.data || null
+  } catch (error) {
+    const payload = buildAiStreamPayload(currentCamera.value)
+    if (!payload?.streamUrl || !payload?.outputUrl || !payload?.playUrl) {
+      throw error
+    }
+    let lastStatus = null
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      await aiServiceApi.startStream(payload)
+      lastStatus = await waitForRunning()
+      if (lastStatus?.running) return lastStatus
+    }
+    if (lastStatus?.last_error) {
+      throw new Error(String(lastStatus.last_error).split('\n')[0])
+    }
+    throw error
+  }
+}
+
+async function startPlayback(options = {}) {
+  const { ensureStream = false } = options
   stopPlayback()
   if (!detectedPlayUrl.value) {
     playbackStatus.value = 'idle'
@@ -131,9 +194,12 @@ async function startPlayback() {
     return
   }
   playbackStatus.value = 'connecting'
-  playbackMessage.value = '正在连接 AI 处理后视频流'
+  playbackMessage.value = ensureStream ? '正在启动并连接 AI 处理后视频流' : '正在连接 AI 处理后视频流'
 
   try {
+    if (ensureStream) {
+      await ensureProcessedStream()
+    }
     if (playbackMode.value === 'flv') {
       await startFlvPlayback()
       return
@@ -298,7 +364,7 @@ async function loadCameras() {
 }
 
 watch(activeCamera, () => {
-  startPlayback()
+  startPlayback({ ensureStream: true })
   loadEventHistory()
   connectRealtime()
 })
@@ -309,11 +375,6 @@ watch(playbackMode, () => {
 
 onMounted(async () => {
   await loadCameras()
-  if (activeCamera.value) {
-    await loadEventHistory()
-    startPlayback()
-    connectRealtime()
-  }
 })
 
 onBeforeUnmount(() => {
@@ -361,7 +422,7 @@ onBeforeUnmount(() => {
               <el-radio-button value="flv">HTTP-FLV</el-radio-button>
               <el-radio-button value="rtc">WebRTC</el-radio-button>
             </el-radio-group>
-            <el-button size="small" type="primary" @click="startPlayback">重连</el-button>
+            <el-button size="small" type="primary" @click="startPlayback({ ensureStream: true })">重连</el-button>
           </div>
         </SectionHeader>
         <div class="monitor-screen stream-player" :class="playbackStatus">

@@ -1,6 +1,10 @@
-from django.test import SimpleTestCase
+from django.test import SimpleTestCase, TestCase, override_settings
+from rest_framework.test import APIClient
+
+from apps.employees.models import Employee
 
 from .views import FACE_FEATURE_DIMENSION, _validate_feature_payload
+from .models import FaceFeature
 
 
 class FeaturePayloadValidationTests(SimpleTestCase):
@@ -46,3 +50,30 @@ class FeaturePayloadValidationTests(SimpleTestCase):
         self.assertEqual(len(_validate_feature_payload(accepted, liveness_required=True)), FACE_FEATURE_DIMENSION)
         with self.assertRaises(ValueError):
             _validate_feature_payload(self._payload(livenessAvailable=True, livenessPassed=False, livenessProvider="onnx"), liveness_required=True)
+
+
+@override_settings(AI_SERVICE_API_TOKEN="test-ai-service-token")
+class FaceLibraryApiTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.employee = Employee.objects.create(employee_no="FACE-001", name="Face Library User")
+        FaceFeature.objects.create(
+            employee=self.employee,
+            face_type=FaceFeature.FaceType.FRONT,
+            feature_vector=[0.1] * FACE_FEATURE_DIMENSION,
+            image_path="faces/1/front.jpg",
+        )
+
+    def test_library_requires_dedicated_ai_service_token(self):
+        response = self.client.get("/api/face/library/")
+        self.assertEqual(response.status_code, 403)
+
+    def test_library_returns_active_employee_face_features(self):
+        response = self.client.get(
+            "/api/face/library/",
+            HTTP_X_AI_SERVICE_TOKEN="test-ai-service-token",
+        )
+        self.assertEqual(response.status_code, 200)
+        item = response.data["data"]["items"][0]
+        self.assertEqual(item["employeeNo"], "FACE-001")
+        self.assertEqual(len(item["faceFeatures"][0]["featureVector"]), FACE_FEATURE_DIMENSION)

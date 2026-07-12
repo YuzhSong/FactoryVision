@@ -150,7 +150,7 @@ def report_ai_results(request):
 
     with transaction.atomic():
         for result in validated["results"]:
-            result_type = str(result.get("type") or "").strip()
+            result_type = _normalize_event_type(result)
             if not result_type:
                 rejected_results += 1
                 continue
@@ -522,11 +522,30 @@ def _extract_snapshot_path(result, event_media):
 
 
 def _should_create_alert(result_type):
-    return result_type in ALERT_EVENT_TYPES or result_type.endswith("_WARNING") or result_type.endswith("_ALERT")
+    return (
+        result_type in ALERT_EVENT_TYPES
+        or result_type in {"region_intrusion", "region_dwell", "helmet_violation"}
+        or result_type.endswith("_WARNING")
+        or result_type.endswith("_ALERT")
+    )
+
+
+def _normalize_event_type(result):
+    internal = str(result.get("type") or "").strip()
+    nested = str(result.get("eventType") or "").strip()
+    if internal == "ZONE_WARNING":
+        return nested if nested in {"region_intrusion", "region_dwell"} else "region_intrusion"
+    aliases = {
+        "HELMET_WARNING": "helmet_violation",
+        "FACE_RESULT": "face_recognized",
+        "STRANGER_DETECTED": "stranger_detected",
+        "STRANGER_ALERT": "stranger_detected",
+    }
+    return aliases.get(nested) or aliases.get(internal) or nested or internal
 
 
 def _default_level(result_type):
-    if result_type in {"FALL_DETECTED", "FALL_ALERT", "ZONE_INTRUSION", "STRANGER_DETECTED", "STRANGER_ALERT"}:
+    if result_type in {"FALL_DETECTED", "FALL_ALERT", "ZONE_INTRUSION", "region_intrusion", "STRANGER_DETECTED", "STRANGER_ALERT"}:
         return "high"
     if result_type == "EMPLOYEE_RETURNED":
         return "low"

@@ -1,4 +1,10 @@
 import http from './http'
+import axios from 'axios'
+
+const aiServiceHttp = axios.create({
+  baseURL: import.meta.env.VITE_AI_SERVICE_BASE_URL || '/ai-service',
+  timeout: 60000,
+})
 
 export const authApi = {
   login(data) {
@@ -67,6 +73,15 @@ export const camerasApi = {
   toggle(cameraId, data) {
     return http.post(`/cameras/${cameraId}/toggle/`, data)
   },
+  streamStatus(cameraId) {
+    return http.get(`/cameras/${cameraId}/stream/status/`)
+  },
+  startStream(cameraId) {
+    return http.post(`/cameras/${cameraId}/stream/start/`)
+  },
+  stopStream(cameraId) {
+    return http.post(`/cameras/${cameraId}/stream/stop/`)
+  },
 }
 
 export const zonesApi = {
@@ -78,6 +93,12 @@ export const zonesApi = {
   },
   save(data) {
     return http.post('/zones/', data)
+  },
+  update(zoneId, data) {
+    return http.put(`/zones/${zoneId}/`, data)
+  },
+  remove(zoneId) {
+    return http.delete(`/zones/${zoneId}/`)
   },
 }
 
@@ -114,5 +135,17 @@ export const aiResultsApi = {
   },
   report(data) {
     return http.post('/ai-results/report/', data)
+  },
+}
+
+export const aiServiceApi = {
+  startStream(data) {
+    return aiServiceHttp.post('/streams/start', data)
+  },
+  stopStream() {
+    return aiServiceHttp.post('/streams/stop')
+  },
+  streamStatus() {
+    return aiServiceHttp.get('/streams/status')
   },
 }

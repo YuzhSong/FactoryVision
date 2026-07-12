@@ -18,7 +18,6 @@ class _FakeBackendClient:
     def __init__(self):
         """Initialize fake backend state."""
         self.report_payloads = []
-        self.realtime_payloads = []
         self.face_status = "not-called"
 
     def find_camera(self, camera_id):
@@ -45,11 +44,6 @@ class _FakeBackendClient:
         """Capture report payload and return fake backend response."""
         self.report_payloads.append(payload)
         return {"code": 200, "data": {"acceptedResults": len(payload.get("results", []))}}
-
-    def report_realtime_frame_results(self, payload):
-        """Capture realtime frame payload and return fake backend response."""
-        self.realtime_payloads.append(payload)
-        return {"code": 200, "data": {"broadcast": True}}
 
 
 class _FakeFaceService:
@@ -103,7 +97,7 @@ class _FakeStreamReader:
 
 
 class _FakeFrameProcessor:
-    """Fake frame processor that returns one person detection report."""
+    """Fake frame processor that returns a raw person box and an actionable alert."""
 
     def process_frame(self, _frame, **kwargs):
         """Return deterministic report for endpoint test."""
@@ -117,7 +111,8 @@ class _FakeFrameProcessor:
                     "trackId": "t-1",
                     "bbox": {"x1": 1, "y1": 2, "x2": 3, "y2": 4},
                     "confidence": 0.9,
-                }
+                },
+                {"type": "HELMET_WARNING", "trackId": "t-1", "confidence": 0.9},
             ],
         }
 
@@ -126,7 +121,7 @@ class ProcessStreamEndpointTests(unittest.TestCase):
     """Test /process/stream endpoint integration behavior."""
 
     def test_process_stream_loads_camera_and_employee_faces_from_backend(self):
-        """Verify camera lookup, face loading, stream open, and backend report."""
+        """Verify camera lookup, face loading, stream open, and filtered backend report."""
         fake_backend = _FakeBackendClient()
         fake_face_service = _FakeFaceService()
 
@@ -137,7 +132,7 @@ class ProcessStreamEndpointTests(unittest.TestCase):
         ):
             response = TestClient(app_module.app).post(
                 "/process/stream",
-                json={"cameraId": 1, "maxFrames": 1, "reportToBackend": True, "reportRealtimeToBackend": True},
+                json={"cameraId": 1, "maxFrames": 1, "reportToBackend": True},
             )
 
         payload = response.json()
@@ -146,9 +141,16 @@ class ProcessStreamEndpointTests(unittest.TestCase):
         self.assertEqual(payload["data"]["faceLibrary"]["count"], 1)
         self.assertEqual(fake_face_service.loaded_items[0]["employeeNo"], "E001")
         self.assertEqual(fake_backend.report_payloads[0]["cameraId"], 1)
-        self.assertEqual(fake_backend.realtime_payloads[0]["cameraId"], 1)
-        self.assertIn("playbackUrl", fake_backend.realtime_payloads[0])
+        self.assertEqual([item["type"] for item in fake_backend.report_payloads[0]["results"]], ["HELMET_WARNING"])
         self.assertEqual(_FakeStreamReader.opened_url, "fake-stream-url")
+
+    def test_process_stream_rejects_removed_realtime_frame_reporting(self):
+        response = TestClient(app_module.app).post(
+            "/process/stream",
+            json={"cameraId": 1, "reportRealtimeToBackend": True},
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("no longer supported", response.json()["message"])
 
 
 if __name__ == "__main__":
