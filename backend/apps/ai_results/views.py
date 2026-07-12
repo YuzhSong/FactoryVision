@@ -64,18 +64,13 @@ EVENT_DEDUP_SECONDS = {
 }
 
 
-ALERT_EVENT_TYPES = {
-    "HELMET_WARNING",
-    "STRANGER_DETECTED",
-    "STRANGER_ALERT",
-    "EMPLOYEE_ABSENT",
-    "EMPLOYEE_RETURNED",
-    "FALL_DETECTED",
-    "FALL_ALERT",
-    "ZONE_INTRUSION",
-    "ZONE_WARNING",
-    "RUNNING_ALERT",
-    "NO_HELMET",
+# 会触发告警（并推送钉钉）的事件类型，均为 _normalize_event_type 归一化后的小写别名。
+ALERT_TRIGGER_TYPES = {
+    "helmet_violation",
+    "region_intrusion",
+    "region_dwell",
+    "stranger_detected",
+    "fall_detected",
 }
 
 DEFAULT_THRESHOLDS = {
@@ -575,12 +570,7 @@ def _extract_snapshot_path(result, event_media):
 
 
 def _should_create_alert(result_type):
-    return (
-        result_type in ALERT_EVENT_TYPES
-        or result_type in {"region_intrusion", "region_dwell", "helmet_violation", "stranger_detected", "fall_detected"}
-        or result_type.endswith("_WARNING")
-        or result_type.endswith("_ALERT")
-    )
+    return result_type in ALERT_TRIGGER_TYPES
 
 
 def _is_actionable_result(result_type, result):
@@ -699,6 +689,20 @@ _ALERT_LEVEL_DISPLAY = {
     "high": "高",
 }
 
+# 告警类型的中文展示名（用于钉钉通知内容），键为归一化后的事件类型。
+_ALERT_TYPE_DISPLAY = {
+    "helmet_violation": "未佩戴安全帽",
+    "region_intrusion": "区域闯入",
+    "region_dwell": "区域滞留",
+    "stranger_detected": "陌生人闯入",
+    "fall_detected": "人员跌倒",
+}
+
+
+def _alert_type_display(alert: Alert) -> str:
+    """钉钉通知中显示的告警类型名，未知类型回退到已存库的标题。"""
+    return _ALERT_TYPE_DISPLAY.get(alert.event_type, alert.title)
+
 
 def _is_alert_handled(alert: Alert) -> bool:
     """Return True if the alert has been acted upon (not pending)."""
@@ -716,7 +720,7 @@ def _notify_dingtalk_alert(alert: Alert) -> None:
     # --- initial notification ---
     try:
         DingTalkNotifier().send_alert(
-            alert_title=alert.title,
+            alert_title=_alert_type_display(alert),
             level=_ALERT_LEVEL_DISPLAY.get(alert.level, alert.level),
             content=alert.description or alert.title,
             occurred_at=alert.occurred_at.isoformat() if alert.occurred_at else None,
@@ -765,7 +769,7 @@ def _escalate_alert(alert_id: int) -> None:
     logger.info("Sending escalation for alert id=%s", alert_id)
     try:
         DingTalkNotifier().send_alert(
-            alert_title=f"[告警升级] {alert.title}",
+            alert_title=f"[告警升级] {_alert_type_display(alert)}",
             level=_ALERT_LEVEL_DISPLAY.get(alert.level, alert.level),
             content=alert.description or alert.title,
             occurred_at=alert.occurred_at.isoformat() if alert.occurred_at else None,
