@@ -1,6 +1,7 @@
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 import logging
+import queue
 import time
 import threading
 import traceback
@@ -43,6 +44,16 @@ class StreamTaskStatus:
     input_frame_shape: list[int] | None = None
     normalized_frame_shape: list[int] | None = None
     output_frame_size: list[int] | None = None
+    queued_events: int = 0
+    reported_events: int = 0
+    failed_events: int = 0
+    dropped_events: int = 0
+    person_inference_ms: float | None = None
+    helmet_inference_ms: float | None = None
+    face_inference_ms: float | None = None
+    last_person_frame_id: str | None = None
+    last_helmet_frame_id: str | None = None
+    last_face_frame_id: str | None = None
 
 
 @dataclass
@@ -73,6 +84,12 @@ class ProcessedStreamService:
         output_fps: float = Config.STREAM_OUTPUT_FPS,
         ffmpeg_path: str = Config.STREAM_FFMPEG_PATH,
         detect_interval: int = Config.FRAME_DETECT_INTERVAL,
+        person_detect_interval: int = Config.PERSON_DETECT_INTERVAL,
+        helmet_detect_interval: int = Config.HELMET_DETECT_INTERVAL,
+        helmet_detect_offset: int = Config.HELMET_DETECT_OFFSET,
+        face_detect_interval: int = Config.FACE_DETECT_INTERVAL,
+        face_detect_offset: int = Config.FACE_DETECT_OFFSET,
+        detection_cache_max_age_frames: int = Config.DETECTION_CACHE_MAX_AGE_FRAMES,
         input_width: int = Config.INPUT_WIDTH,
         input_height: int = Config.INPUT_HEIGHT,
         event_media_recorder: EventMediaRecorder | None = None,
@@ -81,6 +98,7 @@ class ProcessedStreamService:
         event_media_pre_seconds: float = Config.EVENT_MEDIA_PRE_SECONDS,
         event_media_post_seconds: float = Config.EVENT_MEDIA_POST_SECONDS,
         event_media_cooldown_seconds: float = Config.EVENT_MEDIA_COOLDOWN_SECONDS,
+        event_report_queue_size: int = Config.EVENT_REPORT_QUEUE_SIZE,
     ):
         self.frame_processor = frame_processor
         self.backend_client = backend_client
@@ -96,6 +114,12 @@ class ProcessedStreamService:
         self.output_fps = output_fps
         self.ffmpeg_path = ffmpeg_path
         self.detect_interval = max(1, int(detect_interval or 1))
+        self.person_detect_interval = max(1, int(person_detect_interval or 1))
+        self.helmet_detect_interval = max(1, int(helmet_detect_interval or 1))
+        self.helmet_detect_offset = max(0, int(helmet_detect_offset or 0))
+        self.face_detect_interval = max(1, int(face_detect_interval or 1))
+        self.face_detect_offset = max(0, int(face_detect_offset or 0))
+        self.detection_cache_max_age_frames = max(1, int(detection_cache_max_age_frames or 1))
         self.input_width = max(0, int(input_width or 0))
         self.input_height = max(0, int(input_height or 0))
         self.event_media_recorder = event_media_recorder or EventMediaRecorder(
@@ -118,9 +142,18 @@ class ProcessedStreamService:
         self._stop_event = threading.Event()
         self._lock = threading.Lock()
         self._frame_condition = threading.Condition()
+        self._event_report_queue = queue.Queue(maxsize=max(1, int(event_report_queue_size or 1)))
+        self._event_report_stop = threading.Event()
+        self._event_report_lock = threading.Lock()
+        self._report_thread = None
+        self._queued_region_event_keys = set()
         self._latest_frame: LatestFrameSnapshot | None = None
         self._latest_sequence = 0
         self._processed_sequence = 0
+        self._cached_person_detections = []
+        self._cached_helmet_detections = []
+        self._person_cache_frame = None
+        self._helmet_cache_frame = None
 
     def start(self, payload: dict | None = None):
         """Start background stream processing, or return existing task status."""
@@ -131,6 +164,11 @@ class ProcessedStreamService:
                 return snapshot
 
             self._stop_event.clear()
+            self._event_report_stop.clear()
+            self._cached_person_detections = []
+            self._cached_helmet_detections = []
+            self._person_cache_frame = None
+            self._helmet_cache_frame = None
             with self._frame_condition:
                 self._latest_frame = None
                 self._latest_sequence = 0
@@ -169,6 +207,7 @@ class ProcessedStreamService:
         capture_thread = self._capture_thread
         if capture_thread is not None and capture_thread.is_alive():
             capture_thread.join(timeout=5)
+        self._shutdown_report_worker()
 
         with self._lock:
             self._status.running = False
@@ -237,6 +276,7 @@ class ProcessedStreamService:
                 writer.close()
             if reader is not None:
                 reader.close_stream()
+            self._shutdown_report_worker()
             with self._lock:
                 self._status.running = False
                 self._status.stopped_at = _now()
@@ -269,7 +309,7 @@ class ProcessedStreamService:
                 self._frame_condition.notify_all()
 
     def _process_loop(self, payload: dict, writer, output_fps: float):
-        include_faces = _to_bool(payload.get("includeFaces", True))
+        include_faces = _to_bool(payload.get("includeFaces", Config.STREAM_INCLUDE_FACES_DEFAULT))
         report_to_backend = _to_bool(payload.get("reportToBackend", self.default_report_to_backend))
         report_realtime_to_backend = _to_bool(
             payload.get("reportRealtimeToBackend", self.default_report_realtime_to_backend)
@@ -338,7 +378,8 @@ class ProcessedStreamService:
         last_report: dict,
     ):
         packet = snapshot.packet
-        should_detect = self._should_detect()
+        model_runs = self._model_runs(include_faces)
+        should_detect = any(model_runs.values())
         if self._status.mode == "test":
             output_frame = self.annotator.draw_test_box(packet.frame, frame_id=packet.frame_id)
             report = {"results": []}
@@ -352,12 +393,19 @@ class ProcessedStreamService:
                 frame_index=packet.frame_index,
                 fps=packet.fps,
                 zones=zones,
+                person_detections=self._cached_people_for_frame(),
+                helmet_detections=self._cached_helmets_for_frame(),
+                run_person_detection=model_runs["person"],
+                run_helmet_detection=model_runs["helmet"],
+                run_face_recognition=model_runs["face"],
             )
-            output_frame = self.annotator.draw_results(packet.frame, report.get("results", []))
+            self._update_detection_cache(report)
+            self._record_model_metrics(report, packet.frame_id)
+            output_frame = self._draw_detection_frame(packet.frame, zones, report.get("results", []))
             last_report = report
         else:
             report = last_report or {"results": []}
-            output_frame = self.annotator.draw_results(packet.frame, report.get("results", []))
+            output_frame = self._draw_detection_frame(packet.frame, zones, report.get("results", []))
 
         overlay = self._overlay_metrics(frame_age_ms=(time.monotonic() - snapshot.captured_at) * 1000)
         output_frame = self.annotator.draw_debug_overlay(output_frame, overlay)
@@ -369,10 +417,79 @@ class ProcessedStreamService:
         if event_media:
             report["eventMedia"] = list(report.get("eventMedia", [])) + event_media
         if should_detect and report_to_backend and report.get("results") and self.backend_client is not None:
-            self.backend_client.report_ai_results(report)
+            self._enqueue_ai_report(report)
         if should_detect and report_realtime_to_backend and self.backend_client is not None:
             self.backend_client.report_realtime_frame_results(self._with_playback_url(report))
         return output_frame, last_report
+
+    def _draw_detection_frame(self, frame, zones, results):
+        """Keep custom test annotators compatible while rendering regions before boxes."""
+        output = self.annotator.draw_zones(frame, zones, results) if hasattr(self.annotator, "draw_zones") else frame
+        return self.annotator.draw_results(output, results)
+
+    def _enqueue_ai_report(self, report):
+        """Queue reports FIFO without blocking frame processing or overwriting safety events."""
+        payload = dict(report)
+        payload["results"] = list(report.get("results") or [])
+        event_keys = _region_event_keys(payload)
+        with self._event_report_lock:
+            duplicate_keys = event_keys & self._queued_region_event_keys
+            if duplicate_keys:
+                payload["results"] = [
+                    result for result in payload["results"]
+                    if _region_event_key(result) not in duplicate_keys
+                ]
+                event_keys -= duplicate_keys
+            if not payload["results"]:
+                return False
+            try:
+                self._event_report_queue.put_nowait((payload, event_keys))
+            except queue.Full:
+                dropped = max(1, len(event_keys))
+                with self._lock:
+                    self._status.dropped_events += dropped
+                logger.error(
+                    "AI report queue full (capacity=%s); dropped_events=%s",
+                    self._event_report_queue.maxsize,
+                    dropped,
+                )
+                return False
+            self._queued_region_event_keys.update(event_keys)
+            with self._lock:
+                self._status.queued_events += max(1, len(event_keys))
+            self._start_report_worker_locked()
+        return True
+
+    def _start_report_worker_locked(self):
+        if self._report_thread is not None and self._report_thread.is_alive():
+            return
+        self._report_thread = threading.Thread(target=self._report_loop, name="ai-result-reporter", daemon=True)
+        self._report_thread.start()
+
+    def _report_loop(self):
+        while not self._event_report_stop.is_set() or not self._event_report_queue.empty():
+            try:
+                report, event_keys = self._event_report_queue.get(timeout=0.1)
+            except queue.Empty:
+                continue
+            try:
+                self.backend_client.report_ai_results(report)
+                with self._lock:
+                    self._status.reported_events += max(1, len(event_keys))
+            except Exception as exc:
+                with self._lock:
+                    self._status.failed_events += max(1, len(event_keys))
+                logger.exception("AI result report failed without blocking video processing: %s", exc)
+            finally:
+                with self._event_report_lock:
+                    self._queued_region_event_keys.difference_update(event_keys)
+                self._event_report_queue.task_done()
+
+    def _shutdown_report_worker(self):
+        self._event_report_stop.set()
+        report_thread = self._report_thread
+        if report_thread is not None and report_thread.is_alive():
+            report_thread.join(timeout=5)
 
     def _publish_latest_frame(self, packet):
         with self._frame_condition:
@@ -445,9 +562,75 @@ class ProcessedStreamService:
         return packet
 
     def _should_detect(self):
+        """Keep the legacy interval helper available for callers and tests."""
         if self.detect_interval <= 1:
             return True
         return self._status.processed_frames % self.detect_interval == 0
+
+    def _model_runs(self, include_faces: bool):
+        """Schedule one model per tick while retaining the legacy analysis cadence."""
+        frame_number = self._status.processed_frames
+        person = self._should_run_interval(frame_number, self.person_detect_interval)
+        helmet = self._should_run_interval(
+            frame_number,
+            self.helmet_detect_interval,
+            self.helmet_detect_offset,
+        )
+        face = (
+            include_faces
+            and not person
+            and not helmet
+            and self._should_run_interval(frame_number, self.face_detect_interval, self.face_detect_offset)
+        )
+        return {
+            "person": person,
+            "helmet": helmet,
+            "face": face,
+        }
+
+    @staticmethod
+    def _should_run_interval(frame_number: int, interval: int, offset: int = 0):
+        return (frame_number - offset) >= 0 and (frame_number - offset) % interval == 0
+
+    def _cached_people_for_frame(self):
+        if not self._cache_is_fresh(self._person_cache_frame):
+            return []
+        return [dict(item) for item in self._cached_person_detections]
+
+    def _cached_helmets_for_frame(self):
+        if not self._cache_is_fresh(self._helmet_cache_frame):
+            return []
+        return [dict(item) for item in self._cached_helmet_detections]
+
+    def _cache_is_fresh(self, cache_frame):
+        return cache_frame is not None and self._status.processed_frames - cache_frame <= self.detection_cache_max_age_frames
+
+    def _update_detection_cache(self, report):
+        results = report.get("results") or []
+        if report.get("modelRuns", {}).get("person"):
+            self._cached_person_detections = [
+                dict(result) for result in results if result.get("type") == "PERSON_DETECTION"
+            ]
+            self._person_cache_frame = self._status.processed_frames
+        if report.get("modelRuns", {}).get("helmet"):
+            self._cached_helmet_detections = [
+                dict(result) for result in results if result.get("type") == "HELMET_DETECTION"
+            ]
+            self._helmet_cache_frame = self._status.processed_frames
+
+    def _record_model_metrics(self, report, frame_id):
+        timings = report.get("modelTimingsMs") or {}
+        model_runs = report.get("modelRuns") or {}
+        with self._lock:
+            if model_runs.get("person"):
+                self._status.person_inference_ms = timings.get("person")
+                self._status.last_person_frame_id = frame_id
+            if model_runs.get("helmet"):
+                self._status.helmet_inference_ms = timings.get("helmet")
+                self._status.last_helmet_frame_id = frame_id
+            if model_runs.get("face"):
+                self._status.face_inference_ms = timings.get("face")
+                self._status.last_face_frame_id = frame_id
 
     def _overlay_metrics(self, frame_age_ms: float):
         with self._lock:
@@ -520,3 +703,19 @@ def _optional_positive_int(value):
     except (TypeError, ValueError):
         return None
     return parsed if parsed > 0 else None
+
+
+def _region_event_keys(report):
+    return {key for key in (_region_event_key(result) for result in report.get("results") or []) if key is not None}
+
+
+def _region_event_key(result):
+    if not isinstance(result, dict) or result.get("eventType") not in {"region_intrusion", "region_dwell"}:
+        return None
+    return (
+        str(result.get("cameraId")),
+        str(result.get("regionId")),
+        str(result.get("trackId")),
+        str(result.get("eventType")),
+        str(result.get("enteredAt")),
+    )

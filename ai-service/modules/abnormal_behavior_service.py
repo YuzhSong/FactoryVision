@@ -38,16 +38,35 @@ class AbnormalBehaviorService:
             helmet_class_id=config.get("helmetClassId", 1),
             no_helmet_class_id=config.get("noHelmetClassId", 2),
         )
-        self.zone_detector = ZoneDetector(zones=zones)
+        self.zone_detector = ZoneDetector(
+            zones=zones,
+            min_stay_seconds=config.get("zoneMinStaySeconds", 10.0),
+            state_ttl_seconds=config.get("zoneStateTtlSeconds", 30.0),
+        )
 
-    def build_ai_report(self, camera_id, frame_id, person_detections, track_histories=None, timestamp=None):
+    def build_ai_report(
+        self,
+        camera_id,
+        frame_id,
+        person_detections,
+        track_histories=None,
+        timestamp=None,
+        frame_shape=None,
+    ):
         """Build one AI report with person detections and behavior warnings."""
         results = []
         person_detections = person_detections or []
         track_histories = track_histories or {}
 
         results.extend(person_detections)
-        results.extend(self.zone_detector.detect_intrusion(person_detections))
+        results.extend(
+            self.zone_detector.detect_events(
+                camera_id=camera_id,
+                detections=person_detections,
+                timestamp=timestamp,
+                frame_shape=frame_shape,
+            )
+        )
 
         for detection in person_detections:
             track_id = detection.get("trackId")

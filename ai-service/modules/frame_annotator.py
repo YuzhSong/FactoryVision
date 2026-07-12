@@ -1,8 +1,9 @@
 class FrameAnnotator:
     """Draw AI detection results onto OpenCV frames."""
 
-    def __init__(self, line_width: int = 2):
-        self.line_width = line_width
+    def __init__(self, line_width: int = 1, label_scale: float = 0.28):
+        self.line_width = max(1, int(line_width))
+        self.label_scale = max(0.1, float(label_scale))
 
     def draw_results(self, frame, results: list[dict]):
         """Draw known bbox results and labels on a frame."""
@@ -26,8 +27,55 @@ class FrameAnnotator:
 
             cv2.rectangle(output, (x1, y1), (x2, y2), color, self.line_width)
             if label:
-                _draw_label(cv2, output, label, x1, y1, color)
+                _draw_label(cv2, output, label, x1, y1, color, self.label_scale)
 
+        return output
+
+    def draw_zones(self, frame, zones: list[dict] | None, results: list[dict] | None = None):
+        """Draw enabled/disabled polygon regions before detection boxes are rendered."""
+        try:
+            import cv2
+            import numpy as np
+        except ImportError as exc:
+            raise RuntimeError("opencv-python is required to draw regions.") from exc
+
+        output = frame.copy()
+        height, width = output.shape[:2]
+        event_by_region = {
+            str(item.get("regionId", item.get("zoneId"))): item
+            for item in results or []
+            if item.get("type") == "ZONE_WARNING"
+        }
+        for zone in zones or []:
+            if not isinstance(zone, dict):
+                continue
+            points = zone.get("points") or zone.get("polygonPoints") or []
+            if len(points) < 3:
+                continue
+            coords = []
+            for point in points:
+                if isinstance(point, dict):
+                    x, y = point.get("x", 0), point.get("y", 0)
+                elif isinstance(point, (list, tuple)) and len(point) == 2:
+                    x, y = point
+                else:
+                    continue
+                x, y = float(x), float(y)
+                if 0 <= x <= 1 and 0 <= y <= 1:
+                    x, y = x * width, y * height
+                coords.append((int(round(x)), int(round(y))))
+            if len(coords) < 3:
+                continue
+            region_id = str(zone.get("id", zone.get("zoneId", zone.get("regionId", ""))))
+            enabled = zone.get("enabled", True)
+            active_event = event_by_region.get(region_id)
+            color = (0, 0, 255) if active_event else ((0, 180, 255) if enabled else (125, 125, 125))
+            cv2.polylines(output, [np.asarray(coords, dtype=np.int32)], True, color, self.line_width)
+            suffix = "triggered" if active_event else ("enabled" if enabled else "disabled")
+            label = f"{zone.get('name', zone.get('zoneName', region_id))} ({suffix})"
+            if active_event:
+                label = f"{label} {active_event.get('durationSeconds', 0):.1f}s"
+            _draw_label(cv2, output, label, coords[0][0], coords[0][1], color, self.label_scale)
         return output
 
     def draw_test_box(self, frame, frame_id: str | None = None):
@@ -46,7 +94,7 @@ class FrameAnnotator:
         label = f"TEST BOX {frame_id or ''}".strip()
         color = (0, 255, 0)
         cv2.rectangle(output, (x1, y1), (x2, y2), color, self.line_width)
-        _draw_label(cv2, output, label, x1, y1, color)
+        _draw_label(cv2, output, label, x1, y1, color, self.label_scale)
         return output
 
     def draw_debug_overlay(self, frame, metrics: dict | None = None):
@@ -82,11 +130,15 @@ class FrameAnnotator:
 def _label_for_result(result: dict):
     """Create compact display label from one AI result."""
     result_type = result.get("type", "AI")
+    helmet_status = result.get("helmetStatus")
+    if result_type == "HELMET_DETECTION":
+        return _helmet_label(helmet_status, result.get("helmetConfidence"))
+
     confidence = result.get("confidence")
     track_id = result.get("trackId")
     employee_name = result.get("employeeName") or result.get("name")
 
-    parts = [result_type.replace("_", " ")]
+    parts = ["Person" if result_type == "PERSON_DETECTION" else result_type.replace("_", " ")]
     if track_id:
         parts.append(str(track_id))
     if employee_name:
@@ -96,6 +148,8 @@ def _label_for_result(result: dict):
             parts.append(f"{float(confidence):.2f}")
         except (TypeError, ValueError):
             pass
+    if result_type == "PERSON_DETECTION":
+        parts.append(_helmet_label(helmet_status))
     return " ".join(parts)
 
 
@@ -104,15 +158,28 @@ def _color_for_result(result: dict):
     result_type = result.get("type", "")
     if "FACE" in result_type:
         return (255, 180, 0)
+    if result_type == "HELMET_DETECTION":
+        return (0, 0, 255) if result.get("helmetStatus") == "no_helmet" else (0, 255, 0)
     if "WARNING" in result_type or "ALERT" in result_type:
         return (0, 0, 255)
     return (0, 255, 0)
 
 
-def _draw_label(cv2, frame, label: str, x: int, y: int, color):
+def _helmet_label(status, confidence=None):
+    """Use a consistent, human-readable PPE label for people and helmet boxes."""
+    labels = {"helmet": "Helmet", "no_helmet": "No Helmet"}
+    label = labels.get(status, "Unknown")
+    if confidence is None:
+        return label
+    try:
+        return f"{label} {float(confidence):.2f}"
+    except (TypeError, ValueError):
+        return label
+
+
+def _draw_label(cv2, frame, label: str, x: int, y: int, color, scale: float = 0.28):
     """Draw readable label background and text."""
     font = cv2.FONT_HERSHEY_SIMPLEX
-    scale = 0.55
     thickness = 1
     (text_width, text_height), baseline = cv2.getTextSize(label, font, scale, thickness)
     top = max(0, y - text_height - baseline - 6)

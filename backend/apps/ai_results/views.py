@@ -1,18 +1,31 @@
+from asgiref.sync import async_to_sync
+from channels.layers import get_channel_layer
 from django.db import transaction
+from django.db.models import Count, Q
+from django.db.models.functions import TruncHour
 from django.utils import timezone
 from rest_framework.decorators import api_view
-from drf_spectacular.utils import OpenApiExample, extend_schema
+from rest_framework import status as http_status
+from drf_spectacular.utils import OpenApiExample, OpenApiParameter, OpenApiTypes, extend_schema
 
 from apps.cameras.models import Camera
 from apps.cameras.serializers import CameraListSerializer
 from apps.employees.models import Employee
 from apps.employees.serializers import EmployeeListSerializer
+from apps.events.models import Event
 from apps.zones.models import Zone
 from apps.zones.serializers import ZoneListSerializer
 from common.response import api_response
 
-from .models import AIEvent, Alert
-from .serializers import AIResultPlaceholderSerializer, AIResultReportSerializer, HealthCheckSerializer
+from .models import Alert
+from .serializers import (
+    AIResultPlaceholderSerializer,
+    AIResultReportSerializer,
+    AlertHandleSerializer,
+    AlertSerializer,
+    DashboardSummarySerializer,
+    HealthCheckSerializer,
+)
 
 
 ALERT_EVENT_TYPES = {
@@ -35,6 +48,10 @@ DEFAULT_THRESHOLDS = {
     "stranger": {"similarity": 0.45},
     "face": {"similarity": 0.45},
 }
+
+DEFAULT_PAGE_SIZE = 20
+MAX_PAGE_SIZE = 100
+RECENT_ALERT_LIMIT = 5
 
 
 @extend_schema(
@@ -93,7 +110,7 @@ def placeholder_view(_request):
                 "code": 200,
                 "message": "AI results accepted",
                 "data": {
-                    "eventIds": [],
+                    "eventIds": [1],
                     "alertIds": [],
                     "acceptedResults": 1,
                     "cameraId": 1,
@@ -129,6 +146,7 @@ def report_ai_results(request):
     event_ids = []
     alert_ids = []
     rejected_results = 0
+    _pushed_face_keys = set()
 
     with transaction.atomic():
         for result in validated["results"]:
@@ -137,18 +155,57 @@ def report_ai_results(request):
                 rejected_results += 1
                 continue
 
-            event = AIEvent.objects.create(
+            event = Event.objects.create(
                 camera=camera,
                 camera_identifier=str(validated["cameraId"]),
                 frame_id=validated.get("frameId", ""),
                 event_type=result_type,
-                confidence=_extract_confidence(result),
+                source=Event.Source.AI_SERVICE,
+                severity=_event_severity(result_type, result),
+                status=Event.Status.NEW,
+                occurred_at=validated["timestamp"],
+                track_id=_extract_track_id(result),
                 bbox=_extract_bbox(result),
+                confidence=_extract_confidence(result),
                 snapshot_path=_extract_snapshot_path(result, validated.get("eventMedia", [])),
                 payload=result,
-                occurred_at=validated["timestamp"],
             )
             event_ids.append(event.id)
+
+            should_push = _should_create_alert(result_type)
+            if result_type == "FACE_RESULT" and result.get("matched") and result.get("employeeId"):
+                # 同一员工同一 trackId 只推一次
+                key = (event.track_id, str(result["employeeId"]))
+                if key not in _pushed_face_keys:
+                    _pushed_face_keys.add(key)
+                    should_push = True
+
+            if should_push:
+                # 推 WebSocket：告警级事件 + 员工首次识别（供考勤/实时事件流使用）
+                try:
+                    channel_layer = get_channel_layer()
+                    async_to_sync(channel_layer.group_send)(
+                        f"realtime_{validated['cameraId']}",
+                        {
+                            "type": "event.message",
+                            "data": {
+                                "type": "EVENT_CREATED",
+                                "cameraId": validated["cameraId"],
+                                "timestamp": str(validated["timestamp"]),
+                                "payload": {
+                                    "eventId": event.id,
+                                    "eventType": event.event_type,
+                                    "severity": event.severity,
+                                    "trackId": event.track_id,
+                                    "bbox": event.bbox,
+                                    "confidence": event.confidence,
+                                    "occurredAt": str(event.occurred_at),
+                                },
+                            },
+                        },
+                    )
+                except Exception:
+                    pass  # WebSocket 推送失败不影响核心流程
 
             if _should_create_alert(result_type):
                 alert = Alert.objects.create(
@@ -175,6 +232,200 @@ def report_ai_results(request):
             "frameId": validated.get("frameId", ""),
         },
     )
+
+
+def _parse_positive_int(value):
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed > 0 else None
+
+
+@extend_schema(
+    summary="查询告警列表",
+    description="查询告警中心列表，支持关键词（标题）、等级、状态、摄像头和时间范围筛选，支持分页。",
+    parameters=[
+        OpenApiParameter("page", OpenApiTypes.INT, OpenApiParameter.QUERY, description="页码，正整数，默认 1"),
+        OpenApiParameter("pageSize", OpenApiTypes.INT, OpenApiParameter.QUERY, description="每页数量，1~100，默认 20"),
+        OpenApiParameter("keyword", OpenApiTypes.STR, OpenApiParameter.QUERY, description="关键词，模糊搜索告警标题"),
+        OpenApiParameter("severity", OpenApiTypes.STR, OpenApiParameter.QUERY, description="等级：info/low/medium/high"),
+        OpenApiParameter("status", OpenApiTypes.STR, OpenApiParameter.QUERY, description="状态：pending/processing/closed"),
+        OpenApiParameter("cameraId", OpenApiTypes.INT, OpenApiParameter.QUERY, description="摄像头 ID"),
+        OpenApiParameter("startTime", OpenApiTypes.STR, OpenApiParameter.QUERY, description="开始时间，ISO 格式"),
+        OpenApiParameter("endTime", OpenApiTypes.STR, OpenApiParameter.QUERY, description="结束时间，ISO 格式"),
+    ],
+    responses={200: AlertSerializer(many=True), 400: None},
+    examples=[
+        OpenApiExample(
+            "告警列表响应",
+            value={
+                "code": 200,
+                "message": "success",
+                "data": {
+                    "total": 1,
+                    "items": [
+                        {
+                            "id": 1,
+                            "title": "危险区域入侵",
+                            "eventType": "ZONE_INTRUSION",
+                            "severity": "high",
+                            "status": "pending",
+                            "cameraId": 1,
+                            "cameraName": "一号车间入口",
+                            "occurredAt": "2026-07-10T14:05:03+08:00",
+                            "description": "trackId t-1 进入 危险设备区",
+                        }
+                    ],
+                },
+                "requestId": "uuid",
+            },
+            response_only=True,
+            status_codes=["200"],
+        ),
+    ],
+)
+@api_view(["GET"])
+def alert_list_view(request):
+    page = _parse_positive_int(request.query_params.get("page", 1))
+    page_size = _parse_positive_int(request.query_params.get("pageSize", DEFAULT_PAGE_SIZE))
+    camera_id = request.query_params.get("cameraId")
+
+    if page is None or page_size is None or page_size > MAX_PAGE_SIZE:
+        return api_response(
+            code=400,
+            message="分页参数必须为正整数，pageSize 不超过 100",
+            data=None,
+            status=http_status.HTTP_400_BAD_REQUEST,
+        )
+    if camera_id and not str(camera_id).isdigit():
+        return api_response(
+            code=400,
+            message="cameraId 必须为正整数",
+            data=None,
+            status=http_status.HTTP_400_BAD_REQUEST,
+        )
+
+    alerts = Alert.objects.select_related("event", "camera").all()
+
+    keyword = request.query_params.get("keyword")
+    severity = request.query_params.get("severity")
+    alert_status = request.query_params.get("status")
+    start_time = request.query_params.get("startTime")
+    end_time = request.query_params.get("endTime")
+
+    if keyword:
+        alerts = alerts.filter(title__icontains=keyword)
+    if severity:
+        alerts = alerts.filter(event__severity=severity)
+    if alert_status:
+        alerts = alerts.filter(status=alert_status)
+    if camera_id:
+        alerts = alerts.filter(camera_id=int(camera_id))
+    if start_time:
+        alerts = alerts.filter(occurred_at__gte=start_time)
+    if end_time:
+        alerts = alerts.filter(occurred_at__lte=end_time)
+
+    total = alerts.count()
+    start = (page - 1) * page_size
+    items = AlertSerializer(alerts[start:start + page_size], many=True).data
+    return api_response(data={"total": total, "items": items}, message="success")
+
+
+@extend_schema(
+    summary="处置告警",
+    description="更新告警状态（pending→processing→closed）。该接口需要 Bearer JWT 认证。",
+    request=AlertHandleSerializer,
+    responses={200: AlertSerializer, 400: None, 404: None},
+    examples=[
+        OpenApiExample(
+            "处置请求",
+            value={"status": "processing"},
+            request_only=True,
+        ),
+        OpenApiExample(
+            "处置成功",
+            value={
+                "code": 200,
+                "message": "success",
+                "data": {
+                    "id": 1,
+                    "title": "危险区域入侵",
+                    "eventType": "ZONE_INTRUSION",
+                    "severity": "high",
+                    "status": "processing",
+                    "cameraId": 1,
+                    "cameraName": "一号车间入口",
+                    "occurredAt": "2026-07-10T14:05:03+08:00",
+                    "description": "",
+                },
+                "requestId": "uuid",
+            },
+            response_only=True,
+            status_codes=["200"],
+        ),
+        OpenApiExample(
+            "告警不存在",
+            value={"code": 404, "message": "告警不存在", "data": None, "requestId": "uuid"},
+            response_only=True,
+            status_codes=["404"],
+        ),
+    ],
+)
+@api_view(["POST"])
+def alert_handle_view(request, alert_id):
+    serializer = AlertHandleSerializer(data=request.data)
+    if not serializer.is_valid():
+        return api_response(
+            code=400,
+            message="请求参数错误",
+            data=serializer.errors,
+            status=http_status.HTTP_400_BAD_REQUEST,
+        )
+
+    alert = Alert.objects.select_related("event", "camera").filter(id=alert_id).first()
+    if alert is None:
+        return api_response(
+            code=404,
+            message="告警不存在",
+            data=None,
+            status=http_status.HTTP_404_NOT_FOUND,
+        )
+
+    alert.status = serializer.validated_data["status"]
+    alert.save(update_fields=["status"])
+    return api_response(data=AlertSerializer(alert).data, message="success")
+
+
+@extend_schema(
+    summary="Dashboard summary",
+    description="Return database-backed operational counts, recent alerts, and today's hourly event trend.",
+    responses={200: DashboardSummarySerializer},
+)
+@api_view(["GET"])
+def dashboard_summary_view(_request):
+    today = timezone.localdate()
+    today_events = Event.objects.filter(occurred_at__date=today)
+    today_alerts = Alert.objects.filter(occurred_at__date=today)
+    event_trend = (
+        today_events.annotate(hour=TruncHour("occurred_at", tzinfo=timezone.get_current_timezone()))
+        .values("hour")
+        .annotate(count=Count("id"))
+        .order_by("hour")
+    )
+    recent_alerts = Alert.objects.select_related("event", "camera").all()[:RECENT_ALERT_LIMIT]
+    summary = {
+        "cameraCount": Camera.objects.count(),
+        "onlineCameraCount": Camera.objects.filter(status=Camera.Status.ONLINE).count(),
+        "employeeCount": Employee.objects.count(),
+        "todayEventCount": today_events.count(),
+        "todayAlertCount": today_alerts.count(),
+        "pendingAlertCount": Alert.objects.filter(status=Alert.Status.PENDING).count(),
+        "recentAlerts": recent_alerts,
+        "eventTrend": list(event_trend),
+    }
+    return api_response(data=DashboardSummarySerializer(summary).data, message="success")
 
 
 @extend_schema(
@@ -249,6 +500,11 @@ def _extract_bbox(result):
     return bbox if isinstance(bbox, dict) else {}
 
 
+def _extract_track_id(result):
+    value = result.get("trackId") or result.get("track_id") or result.get("id")
+    return "" if value is None else str(value)
+
+
 def _extract_snapshot_path(result, event_media):
     for key in ("snapshotPath", "snapshotUrl", "imagePath"):
         value = result.get(key)
@@ -275,6 +531,15 @@ def _default_level(result_type):
     if result_type == "EMPLOYEE_RETURNED":
         return "low"
     return "medium"
+
+
+def _event_severity(result_type, result):
+    level = str(result.get("level") or "").lower()
+    if level in {choice.value for choice in Event.Severity}:
+        return level
+    if _should_create_alert(result_type):
+        return _default_level(result_type)
+    return Event.Severity.INFO
 
 
 def _alert_title(result_type):

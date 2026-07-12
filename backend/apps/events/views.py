@@ -3,7 +3,8 @@ from drf_spectacular.utils import OpenApiExample, extend_schema
 
 from common.response import api_response
 
-from .serializers import EventPlaceholderSerializer
+from .models import Event
+from .serializers import EventListSerializer, EventPlaceholderSerializer
 
 
 @extend_schema(
@@ -27,5 +28,19 @@ from .serializers import EventPlaceholderSerializer
 def placeholder_view(_request):
     serializer = EventPlaceholderSerializer()
     return api_response(data=serializer.data, message="Events module placeholder")
+
+
+@extend_schema(
+    summary="List formal events",
+    description="Return formal Event records without any AIEvent compatibility data.",
+    responses={200: EventListSerializer(many=True)},
+)
+@api_view(["GET"])
+def event_list_view(_request):
+    events = Event.objects.select_related("camera").all()
+    return api_response(
+        data={"total": events.count(), "items": EventListSerializer(events, many=True).data},
+        message="success",
+    )
 
 # Create your views here.

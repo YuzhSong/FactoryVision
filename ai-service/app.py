@@ -3,6 +3,7 @@ from typing import Any
 
 from fastapi import FastAPI, File, Form, Request, UploadFile
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 import uvicorn
 
 from ai_config import Config
@@ -10,6 +11,7 @@ from modules.backend_client import BackendClient
 from modules.dependencies import check_dependencies
 from modules.face_recognition_service import FaceRecognitionService
 from modules.frame_processor import FrameProcessor
+from modules.frame_annotator import FrameAnnotator
 from modules.person_detector import PersonDetector
 from modules.processed_stream_service import ProcessedStreamService, normalize_camera_frame
 from modules.runtime_cache import RuntimeCache
@@ -51,6 +53,12 @@ face_service = FaceRecognitionService(
     enrollment_min_quality_score=Config.FACE_ENROLLMENT_MIN_QUALITY_SCORE,
     enrollment_min_face_size=Config.FACE_ENROLLMENT_MIN_FACE_SIZE,
     enrollment_max_pose_yaw=Config.FACE_ENROLLMENT_MAX_POSE_YAW,
+    liveness_enabled=Config.LIVENESS_ENABLED,
+    liveness_required=Config.LIVENESS_REQUIRED,
+    liveness_provider=Config.LIVENESS_PROVIDER,
+    liveness_threshold=Config.LIVENESS_THRESHOLD,
+    liveness_model_path=Config.LIVENESS_MODEL_PATH,
+    liveness_min_face_size=Config.LIVENESS_MIN_FACE_SIZE,
     det_size=Config.FACE_DETECTION_SIZE,
     provider=Config.FACE_PROVIDER,
     library_path=Config.FACE_LIBRARY_PATH,
@@ -77,6 +85,8 @@ frame_processor = FrameProcessor(
         "helmetClassIds": Config.HELMET_CLASS_IDS,
         "helmetClassId": Config.HELMET_CLASS_ID,
         "noHelmetClassId": Config.NO_HELMET_CLASS_ID,
+        "zoneMinStaySeconds": Config.ZONE_MIN_STAY_SECONDS,
+        "zoneStateTtlSeconds": Config.ZONE_STATE_TTL_SECONDS,
         "fallRatioThreshold": Config.FALL_RATIO_THRESHOLD,
         "fallConfirmFrames": Config.FALL_CONFIRM_FRAMES,
         "fallMinConfidence": Config.FALL_MIN_CONFIDENCE,
@@ -105,6 +115,16 @@ processed_stream_service = ProcessedStreamService(
     output_fps=Config.STREAM_OUTPUT_FPS,
     ffmpeg_path=Config.STREAM_FFMPEG_PATH,
     detect_interval=Config.FRAME_DETECT_INTERVAL,
+    person_detect_interval=Config.PERSON_DETECT_INTERVAL,
+    helmet_detect_interval=Config.HELMET_DETECT_INTERVAL,
+    helmet_detect_offset=Config.HELMET_DETECT_OFFSET,
+    face_detect_interval=Config.FACE_DETECT_INTERVAL,
+    face_detect_offset=Config.FACE_DETECT_OFFSET,
+    detection_cache_max_age_frames=Config.DETECTION_CACHE_MAX_AGE_FRAMES,
+    annotator=FrameAnnotator(
+        line_width=Config.ANNOTATION_LINE_WIDTH,
+        label_scale=Config.ANNOTATION_LABEL_SCALE,
+    ),
     input_width=Config.INPUT_WIDTH,
     input_height=Config.INPUT_HEIGHT,
     event_media_enabled=Config.EVENT_MEDIA_ENABLED,
@@ -172,7 +192,7 @@ def create_app() -> FastAPI:
     def face_status():
         return {"code": 200, "message": "success", "data": face_service.status()}
 
-    @app.post("/faces/extract", tags=["faces"])
+    @app.post("/faces/extract", tags=["faces"], response_model=FaceExtractResponse)
     async def extract_face_feature(
         request: Request,
         image: UploadFile | None = File(default=None),
@@ -413,6 +433,31 @@ def create_app() -> FastAPI:
         }
 
     return app
+
+
+class FaceExtractDetail(BaseModel):
+    faceCount: int = 1
+    featureVector: list[float] = [0.12, -0.34]
+    dimension: int = 512
+    qualityScore: float = 0.92
+    enrollmentAccepted: bool = True
+    faceBox: dict[str, float] | None = None
+    modelName: str = "buffalo_l"
+    provider: str = "CPUExecutionProvider"
+    livenessAvailable: bool = False
+    livenessPassed: bool | None = None
+    livenessScore: float | None = None
+    livenessThreshold: float | None = None
+    livenessProvider: str | None = None
+    livenessWarning: str | None = None
+    qualityHeuristicPassed: bool | None = None
+    qualityHeuristicScore: float | None = None
+
+
+class FaceExtractResponse(BaseModel):
+    code: int = 200
+    message: str = "success"
+    data: FaceExtractDetail
 
 
 app = create_app()

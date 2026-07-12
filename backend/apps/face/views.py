@@ -2,6 +2,7 @@ import base64
 import os
 import re
 import uuid
+import math
 from pathlib import Path
 
 import requests
@@ -20,6 +21,8 @@ from .serializers import FaceEnrollResultSerializer, FaceEnrollSerializer
 
 AI_SERVICE_URL = os.getenv("AI_SERVICE_URL", "http://127.0.0.1:9000")
 FACE_MEDIA_ROOT = Path(settings.BASE_DIR) / "media" / "faces"
+FACE_FEATURE_DIMENSION = 512
+LIVENESS_REQUIRED = os.getenv("LIVENESS_REQUIRED", "False").lower() == "true"
 
 
 def _save_image(employee_id: int, face_type: str, image_base64: str) -> str:
@@ -37,26 +40,74 @@ def _save_image(employee_id: int, face_type: str, image_base64: str) -> str:
     return str(Path("faces") / rel_dir / filename)
 
 
-def _call_ai_extract(image_base64: str) -> list:
+def _call_ai_extract(image_base64: str) -> list[float]:
     """
     调用 AI Service 提取人脸编码。
 
-    当前占位，等成员 2 部署 /faces/extract 接口后替换。
+    Call AI Service and validate one complete face embedding response.
     """
     try:
         resp = requests.post(
             f"{AI_SERVICE_URL}/faces/extract",
             json={"imageBase64": image_base64},
-            timeout=10,
+            timeout=60,
         )
     except requests.RequestException:
         raise RuntimeError("AI 服务不可用")
 
     if resp.status_code == 200:
-        return resp.json()["data"]["featureVector"]
+        try:
+            return _validate_feature_payload(resp.json().get("data"), liveness_required=LIVENESS_REQUIRED)
+        except (AttributeError, TypeError, ValueError) as exc:
+            raise ValueError(f"AI 服务返回了无效的人脸特征: {exc}") from exc
 
     msg = resp.json().get("message", "未知错误")
     raise ValueError(msg)
+
+
+def _validate_feature_payload(data: dict, liveness_required: bool = False) -> list[float]:
+    """Reject incomplete, non-finite, or unexpected-size embeddings before storage."""
+    if not isinstance(data, dict):
+        raise ValueError("missing response data")
+    if data.get("faceCount") != 1:
+        raise ValueError("expected exactly one detected face")
+    if data.get("enrollmentAccepted") is False:
+        raise ValueError("AI service did not accept the face for enrollment")
+    if liveness_required and not (
+        data.get("livenessAvailable") is True
+        and data.get("livenessPassed") is True
+        and data.get("livenessProvider") == "onnx"
+    ):
+        raise ValueError("a verified liveness provider did not explicitly pass")
+
+    vector = data.get("featureVector")
+    dimension = data.get("dimension")
+    if not isinstance(vector, list) or dimension != FACE_FEATURE_DIMENSION:
+        raise ValueError(f"expected a {FACE_FEATURE_DIMENSION}-dimension feature vector")
+    if len(vector) != dimension:
+        raise ValueError("feature vector length does not match dimension")
+
+    normalized = []
+    for value in vector:
+        if isinstance(value, bool):
+            raise ValueError("feature vector contains a non-numeric value")
+        try:
+            number = float(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("feature vector contains a non-numeric value") from exc
+        if not math.isfinite(number):
+            raise ValueError("feature vector contains a non-finite value")
+        normalized.append(number)
+    return normalized
+
+
+def _remove_saved_images(image_paths: list[str]):
+    """Remove files written before a later enrollment image invalidates the transaction."""
+    for image_path in image_paths:
+        try:
+            (FACE_MEDIA_ROOT / image_path.removeprefix("faces/")).unlink(missing_ok=True)
+        except OSError:
+            continue
 
 
 @extend_schema(
@@ -175,11 +226,7 @@ def face_enroll_view(request):
                 face_type = item["faceType"]
                 image_b64 = item["imageBase64"]
 
-                # ① 存盘
-                image_path = _save_image(employee_id, face_type, image_b64)
-                saved_images.append(image_path)
-
-                # ② 调 AI Service 提取编码
+                # Extract and validate before writing either the image or database record.
                 try:
                     feature_vector = _call_ai_extract(image_b64)
                 except RuntimeError:
@@ -187,7 +234,9 @@ def face_enroll_view(request):
                 except ValueError as e:
                     raise ValueError(f"{face_type}: {e}")
 
-                # ③ 写入 face_feature
+                image_path = _save_image(employee_id, face_type, image_b64)
+                saved_images.append(image_path)
+
                 feature = FaceFeature.objects.create(
                     employee_id=employee_id,
                     feature_vector=feature_vector,
@@ -198,6 +247,7 @@ def face_enroll_view(request):
                 results.append({"faceType": face_type, "faceFeatureId": feature.id})
 
     except ValueError as e:
+        _remove_saved_images(saved_images)
         return api_response(
             code=422,
             message=str(e),
@@ -206,6 +256,7 @@ def face_enroll_view(request):
         )
 
     except RuntimeError:
+        _remove_saved_images(saved_images)
         return api_response(
             code=500,
             message="AI 服务暂不可用，请稍后重试",

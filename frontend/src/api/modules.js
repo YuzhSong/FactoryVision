@@ -18,6 +18,12 @@ export const healthApi = {
   },
 }
 
+export const dashboardApi = {
+  summary() {
+    return http.get('/dashboard/summary/')
+  },
+}
+
 export const usersApi = {
   getPlaceholder() {
     return http.get('/users/')
@@ -55,11 +61,20 @@ export const camerasApi = {
   create(data) {
     return http.post('/cameras/', data)
   },
+  update(cameraId, data) {
+    return http.put(`/cameras/${cameraId}/`, data)
+  },
+  toggle(cameraId, data) {
+    return http.post(`/cameras/${cameraId}/toggle/`, data)
+  },
 }
 
 export const zonesApi = {
   getPlaceholder() {
     return http.get('/zones/')
+  },
+  list(params = {}) {
+    return http.get('/zones/list/', { params })
   },
   save(data) {
     return http.post('/zones/', data)

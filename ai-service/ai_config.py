@@ -29,7 +29,8 @@ class Config:
     SERVICE_NAME = "smart-factory-ai-service"
     HOST = os.getenv("AI_SERVICE_HOST", "0.0.0.0")
     PORT = int(os.getenv("AI_SERVICE_PORT", "9000"))
-    DEBUG = os.getenv("AI_SERVICE_DEBUG", "True").lower() == "true"
+    # Reloading starts a parent/child process pair and makes local stop/restart unreliable.
+    DEBUG = os.getenv("AI_SERVICE_DEBUG", "False").lower() == "true"
     BACKEND_API_BASE_URL = os.getenv("BACKEND_API_BASE_URL", "http://127.0.0.1:8000/api")
     BACKEND_API_TOKEN = os.getenv("BACKEND_API_TOKEN", "")
     BACKEND_TIMEOUT_SECONDS = float(os.getenv("BACKEND_TIMEOUT_SECONDS", "5"))
@@ -95,6 +96,12 @@ class Config:
     FACE_ENROLLMENT_MIN_QUALITY_SCORE = float(os.getenv("FACE_ENROLLMENT_MIN_QUALITY_SCORE", "0.5"))
     FACE_ENROLLMENT_MIN_FACE_SIZE = int(os.getenv("FACE_ENROLLMENT_MIN_FACE_SIZE", "40"))
     FACE_ENROLLMENT_MAX_POSE_YAW = float(os.getenv("FACE_ENROLLMENT_MAX_POSE_YAW", "75"))
+    LIVENESS_ENABLED = os.getenv("LIVENESS_ENABLED", "False").lower() == "true"
+    LIVENESS_REQUIRED = os.getenv("LIVENESS_REQUIRED", "False").lower() == "true"
+    LIVENESS_PROVIDER = os.getenv("LIVENESS_PROVIDER", "rgb_quality_heuristic")
+    LIVENESS_THRESHOLD = float(os.getenv("LIVENESS_THRESHOLD", "0.70"))
+    LIVENESS_MODEL_PATH = os.getenv("LIVENESS_MODEL_PATH", "")
+    LIVENESS_MIN_FACE_SIZE = int(os.getenv("LIVENESS_MIN_FACE_SIZE", "48"))
     FACE_PROVIDER = os.getenv("FACE_PROVIDER", "auto")
     AUTO_LOAD_FACES_FROM_BACKEND = os.getenv("AUTO_LOAD_FACES_FROM_BACKEND", "True").lower() == "true"
 
@@ -108,9 +115,21 @@ class Config:
     STREAM_PROCESS_MODE = os.getenv("STREAM_PROCESS_MODE", "detect")
     STREAM_REPORT_TO_BACKEND = os.getenv("STREAM_REPORT_TO_BACKEND", "False").lower() == "true"
     STREAM_REPORT_REALTIME_TO_BACKEND = os.getenv("STREAM_REPORT_REALTIME_TO_BACKEND", "False").lower() == "true"
+    EVENT_REPORT_QUEUE_SIZE = int(os.getenv("EVENT_REPORT_QUEUE_SIZE", "128"))
     STREAM_OUTPUT_FPS = float(os.getenv("OUTPUT_FPS", os.getenv("STREAM_OUTPUT_FPS", "10")))
     STREAM_FFMPEG_PATH = os.getenv("STREAM_FFMPEG_PATH", "ffmpeg")
     FRAME_DETECT_INTERVAL = int(os.getenv("FRAME_DETECT_INTERVAL", "5"))
+    # Run one expensive model per analysis tick by default. The intervals are based on
+    # processed output frames, so they remain stable when capture drops source frames.
+    PERSON_DETECT_INTERVAL = int(os.getenv("PERSON_DETECT_INTERVAL", "10"))
+    HELMET_DETECT_INTERVAL = int(os.getenv("HELMET_DETECT_INTERVAL", "10"))
+    HELMET_DETECT_OFFSET = int(os.getenv("HELMET_DETECT_OFFSET", "5"))
+    STREAM_INCLUDE_FACES_DEFAULT = os.getenv("STREAM_INCLUDE_FACES_DEFAULT", "False").lower() == "true"
+    FACE_DETECT_INTERVAL = int(os.getenv("FACE_DETECT_INTERVAL", "60"))
+    FACE_DETECT_OFFSET = int(os.getenv("FACE_DETECT_OFFSET", "2"))
+    DETECTION_CACHE_MAX_AGE_FRAMES = int(os.getenv("DETECTION_CACHE_MAX_AGE_FRAMES", "20"))
+    ANNOTATION_LINE_WIDTH = int(os.getenv("ANNOTATION_LINE_WIDTH", "1"))
+    ANNOTATION_LABEL_SCALE = float(os.getenv("ANNOTATION_LABEL_SCALE", "0.28"))
     EVENT_MEDIA_ENABLED = os.getenv("EVENT_MEDIA_ENABLED", "True").lower() == "true"
     EVENT_MEDIA_DIR = os.getenv("EVENT_MEDIA_DIR", str(DATA_DIR / "event_media"))
     EVENT_MEDIA_PRE_SECONDS = float(os.getenv("EVENT_MEDIA_PRE_SECONDS", "3"))
@@ -120,6 +139,8 @@ class Config:
     INPUT_WIDTH = int(os.getenv("INPUT_WIDTH", "640"))
     INPUT_HEIGHT = int(os.getenv("INPUT_HEIGHT", "360"))
     RUNNING_SPEED_THRESHOLD = float(os.getenv("RUNNING_SPEED_THRESHOLD", "120.0"))
+    ZONE_MIN_STAY_SECONDS = float(os.getenv("ZONE_MIN_STAY_SECONDS", "10"))
+    ZONE_STATE_TTL_SECONDS = float(os.getenv("ZONE_STATE_TTL_SECONDS", "30"))
     FALL_RATIO_THRESHOLD = float(os.getenv("FALL_RATIO_THRESHOLD", "1.2"))
     FALL_CONFIRM_FRAMES = int(os.getenv("FALL_CONFIRM_FRAMES", "5"))
     FALL_MIN_CONFIDENCE = float(os.getenv("FALL_MIN_CONFIDENCE", "0.6"))

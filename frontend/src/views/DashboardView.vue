@@ -1,21 +1,50 @@
 <script setup>
-import { onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { ElMessage } from 'element-plus'
 import { BarChart } from 'echarts/charts'
 import { GridComponent, TooltipComponent } from 'echarts/components'
 import * as echarts from 'echarts/core'
 import { CanvasRenderer } from 'echarts/renderers'
 import SectionHeader from '../components/SectionHeader.vue'
 import StatusTag from '../components/StatusTag.vue'
-import { alerts, cameras, attendanceRecords } from '../data/placeholders'
+import { dashboardApi } from '../api/modules'
 import { getStoredTheme } from '../utils/theme'
 
 echarts.use([BarChart, GridComponent, TooltipComponent, CanvasRenderer])
 
 const chartRef = ref(null)
+const loading = ref(false)
+const summary = ref({
+  cameraCount: 0,
+  onlineCameraCount: 0,
+  employeeCount: 0,
+  todayEventCount: 0,
+  todayAlertCount: 0,
+  pendingAlertCount: 0,
+  recentAlerts: [],
+  eventTrend: [],
+})
 let chartInstance = null
 
-const trendLabels = ['08:00', '09:00', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00']
-const trendValues = [12, 18, 15, 27, 22, 31, 24, 28]
+const recentAlertRows = computed(() => summary.value.recentAlerts.map((alert) => ({
+  ...alert,
+  level: alert.severity,
+  time: formatDateTime(alert.occurredAt),
+})))
+
+function formatDateTime(value) {
+  if (!value) return '无'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  return date.toLocaleString('zh-CN', { hour12: false })
+}
+
+function formatHour(value) {
+  if (!value) return '--:--'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false })
+}
 
 function renderChart() {
   if (!chartRef.value) return
@@ -47,7 +76,7 @@ function renderChart() {
     },
     xAxis: {
       type: 'category',
-      data: trendLabels,
+      data: summary.value.eventTrend.map((item) => formatHour(item.hour)),
       axisTick: { show: false },
       axisLine: { lineStyle: { color: lineColor } },
       axisLabel: { color: axisColor },
@@ -61,8 +90,8 @@ function renderChart() {
       {
         name: '事件数',
         type: 'bar',
-        data: trendValues.map((value, index) => ({
-          value,
+        data: summary.value.eventTrend.map((item, index) => ({
+          value: item.count,
           itemStyle: {
             color: index === 5 ? accentColor : primaryColor,
           },
@@ -74,6 +103,25 @@ function renderChart() {
   })
 }
 
+async function loadSummary() {
+  loading.value = true
+  try {
+    const response = await dashboardApi.summary()
+    summary.value = {
+      ...summary.value,
+      ...(response?.data || {}),
+      recentAlerts: response?.data?.recentAlerts || [],
+      eventTrend: response?.data?.eventTrend || [],
+    }
+    await nextTick()
+    renderChart()
+  } catch (error) {
+    ElMessage.error(error?.response?.data?.message || '首页汇总数据加载失败')
+  } finally {
+    loading.value = false
+  }
+}
+
 function resizeChart() {
   chartInstance?.resize()
 }
@@ -83,7 +131,7 @@ function handleThemeChange() {
 }
 
 onMounted(() => {
-  renderChart()
+  loadSummary()
   window.addEventListener('resize', resizeChart)
   window.addEventListener('factory-theme-change', handleThemeChange)
 })
@@ -98,37 +146,37 @@ onBeforeUnmount(() => {
 <template>
   <div class="page-grid">
     <div class="metric-grid">
-      <div class="metric-card">
+      <div v-loading="loading" class="metric-card">
         <p class="metric-label">今日告警</p>
-        <p class="metric-value">{{ alerts.length }}</p>
-        <p class="metric-note">告警中心接口 planned</p>
+        <p class="metric-value">{{ summary.todayAlertCount }}</p>
+        <p class="metric-note">待处理 {{ summary.pendingAlertCount }} 条</p>
       </div>
-      <div class="metric-card">
+      <div v-loading="loading" class="metric-card">
         <p class="metric-label">在线摄像头</p>
-        <p class="metric-value">{{ cameras.filter((item) => item.status === 'online').length }}</p>
-        <p class="metric-note">视频流状态待接入</p>
+        <p class="metric-value">{{ summary.onlineCameraCount }}</p>
+        <p class="metric-note">总计 {{ summary.cameraCount }} 个摄像头</p>
       </div>
-      <div class="metric-card">
+      <div v-loading="loading" class="metric-card">
         <p class="metric-label">事件记录</p>
-        <p class="metric-value">128</p>
-        <p class="metric-note">示例趋势数据</p>
+        <p class="metric-value">{{ summary.todayEventCount }}</p>
+        <p class="metric-note">今日 AI 事件</p>
       </div>
-      <div class="metric-card">
-        <p class="metric-label">考勤异常</p>
-        <p class="metric-value">{{ attendanceRecords.filter((item) => item.status === 'abnormal').length }}</p>
-        <p class="metric-note">考勤统计 planned</p>
+      <div v-loading="loading" class="metric-card">
+        <p class="metric-label">员工档案</p>
+        <p class="metric-value">{{ summary.employeeCount }}</p>
+        <p class="metric-note">后端员工总数</p>
       </div>
     </div>
 
     <div class="dashboard-main-grid">
       <div class="panel dashboard-chart">
-        <SectionHeader title="事件趋势" description="ECharts placeholder 数据，后续由事件统计接口替换。" />
+        <SectionHeader title="事件趋势" description="来自 /api/dashboard/summary/ 的今日小时趋势。" />
         <div ref="chartRef" class="dashboard-chart__canvas" aria-label="事件趋势图" />
       </div>
 
       <div class="panel table-panel compact-table">
-        <SectionHeader title="近期告警" description="后续由 /api/alerts/list/ 提供数据。" />
-        <el-table :data="alerts" stripe>
+        <SectionHeader title="近期告警" description="来自后端 recentAlerts 汇总。" />
+        <el-table v-loading="loading" :data="recentAlertRows" stripe>
           <el-table-column prop="title" label="告警标题" min-width="150" />
           <el-table-column prop="level" label="等级" width="86">
             <template #default="{ row }"><StatusTag :value="row.level" /></template>
@@ -138,6 +186,7 @@ onBeforeUnmount(() => {
           </el-table-column>
           <el-table-column prop="time" label="时间" min-width="150" />
         </el-table>
+        <el-empty v-if="!loading && recentAlertRows.length === 0" description="暂无近期告警" />
       </div>
     </div>
   </div>
