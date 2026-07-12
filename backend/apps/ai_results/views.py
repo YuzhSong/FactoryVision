@@ -1,3 +1,6 @@
+import logging
+import threading
+
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
 from django.db import transaction
@@ -8,6 +11,7 @@ from rest_framework.decorators import api_view
 from rest_framework import status as http_status
 from drf_spectacular.utils import OpenApiExample, OpenApiParameter, OpenApiTypes, extend_schema
 
+from apps.ai_results.services.dingtalk import DingTalkNotifier, DingTalkNotificationError
 from apps.cameras.models import Camera
 from apps.cameras.serializers import CameraListSerializer
 from apps.employees.models import Employee
@@ -18,6 +22,9 @@ from apps.zones.serializers import ZoneListSerializer
 from common.response import api_response
 
 from .models import Alert
+
+logger = logging.getLogger(__name__)
+
 from .serializers import (
     AIResultPlaceholderSerializer,
     AIResultReportSerializer,
@@ -219,6 +226,7 @@ def report_ai_results(request):
                     occurred_at=event.occurred_at,
                 )
                 alert_ids.append(alert.id)
+                transaction.on_commit(lambda a=alert: _notify_dingtalk_alert(a))
 
     return api_response(
         code=200,
@@ -572,5 +580,93 @@ def _serialize_employee_for_bootstrap(employee):
         for feature in employee.face_features.all()
     ]
     return data
+
+
+_ALERT_LEVEL_DISPLAY = {
+    "low": "低",
+    "medium": "中",
+    "high": "高",
+}
+
+
+def _is_alert_handled(alert: Alert) -> bool:
+    """Return True if the alert has been acted upon (not pending)."""
+    return alert.status != Alert.Status.PENDING
+
+
+def _notify_dingtalk_alert(alert: Alert) -> None:
+    """Send initial DingTalk notification and schedule escalation.
+
+    Runs after the outer transaction commits.  Failures never
+    propagate to the caller — only logged.
+    """
+    from django.conf import settings
+
+    # --- initial notification ---
+    try:
+        DingTalkNotifier().send_alert(
+            alert_title=alert.title,
+            level=_ALERT_LEVEL_DISPLAY.get(alert.level, alert.level),
+            content=alert.description or alert.title,
+            occurred_at=alert.occurred_at.isoformat() if alert.occurred_at else None,
+            camera_name=alert.camera.name if alert.camera else None,
+            location=alert.camera.location if alert.camera else None,
+            responsible_name=settings.DINGTALK_RESPONSIBLE_NAME or None,
+            responsible_mobile=settings.DINGTALK_RESPONSIBLE_MOBILE or None,
+        )
+    except DingTalkNotificationError:
+        logger.exception("DingTalk initial notification failed for alert id=%s", alert.id)
+    except Exception:
+        logger.exception("Unexpected error in DingTalk initial notification for alert id=%s", alert.id)
+
+    # --- schedule escalation ---
+    escalation_seconds = settings.DINGTALK_ESCALATION_SECONDS
+    if escalation_seconds < 1:
+        return
+
+    logger.info(
+        "Scheduled DingTalk escalation for alert id=%s in %s seconds",
+        alert.id,
+        escalation_seconds,
+    )
+    t = threading.Timer(
+        escalation_seconds,
+        _escalate_alert,
+        args=[alert.id],
+    )
+    t.daemon = True
+    t.start()
+
+
+def _escalate_alert(alert_id: int) -> None:
+    """Check if alert is still unhandled and send escalation if so."""
+    from django.conf import settings
+
+    alert = Alert.objects.filter(id=alert_id).first()
+    if alert is None:
+        logger.info("Escalation skipped: alert id=%s no longer exists", alert_id)
+        return
+
+    if _is_alert_handled(alert):
+        logger.info("Escalation skipped: alert id=%s already handled", alert_id)
+        return
+
+    logger.info("Sending escalation for alert id=%s", alert_id)
+    try:
+        DingTalkNotifier().send_alert(
+            alert_title=f"[告警升级] {alert.title}",
+            level=_ALERT_LEVEL_DISPLAY.get(alert.level, alert.level),
+            content=alert.description or alert.title,
+            occurred_at=alert.occurred_at.isoformat() if alert.occurred_at else None,
+            camera_name=alert.camera.name if alert.camera else None,
+            location=alert.camera.location if alert.camera else None,
+            responsible_name=settings.DINGTALK_LEADER_NAME or None,
+            responsible_mobile=settings.DINGTALK_LEADER_MOBILE or None,
+        )
+    except DingTalkNotificationError:
+        logger.exception("DingTalk escalation failed for alert id=%s", alert_id)
+    except Exception:
+        logger.exception("Unexpected error in DingTalk escalation for alert id=%s", alert_id)
+
 
 # Create your views here.
