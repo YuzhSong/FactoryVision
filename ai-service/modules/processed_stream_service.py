@@ -167,7 +167,7 @@ class ProcessedStreamService:
         self._helmet_cache_frame = None
         self._timing_samples = {
             name: deque(maxlen=300)
-            for name in ("person", "helmet", "face", "zoneRules", "draw", "encode", "overall")
+            for name in ("person", "helmet", "face", "zoneRules", "draw", "stream_write", "encode", "overall")
         }
         self._frame_age_samples = deque(maxlen=120)
         self._schedule_frames = {name: deque(maxlen=20) for name in ("person", "helmet", "face")}
@@ -416,6 +416,7 @@ class ProcessedStreamService:
             encode_started_at = time.perf_counter()
             writer.write(output_frame)
             encode_ms = (time.perf_counter() - encode_started_at) * 1000
+            self._record_timing("stream_write", encode_ms)
             self._record_timing("encode", encode_ms)
             elapsed_ms = (time.monotonic() - started_at) * 1000
             frame_age_ms = (time.monotonic() - snapshot.captured_at) * 1000

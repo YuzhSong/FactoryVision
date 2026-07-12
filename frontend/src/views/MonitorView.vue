@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import SectionHeader from '../components/SectionHeader.vue'
 import StatusTag from '../components/StatusTag.vue'
+import mpegts from 'mpegts.js'
 import { aiServiceApi, camerasApi, eventsApi } from '../api/modules'
 import { createRealtimeConnection } from '../api/realtime'
 import { normalizeStoredEvent, prependRealtimeEvent } from '../utils/realtimeEvents'
@@ -21,7 +22,6 @@ const streamAgeSamples = ref([])
 let player = null
 let realtimeSocket = null
 let sdkPromise = null
-let flvPromise = null
 let streamStatusTimer = null
 
 function syncHeaderStatus() {
@@ -130,19 +130,7 @@ function loadSrsSdk() {
 }
 
 function loadMpegtsSdk() {
-  if (window.mpegts) {
-    return Promise.resolve()
-  }
-
-  if (!flvPromise) {
-    flvPromise = loadScript('https://webrtc.rainycode.cn:8443/players/js/mpegts-1.7.2.min.js')
-      .catch((error) => {
-        flvPromise = null
-        throw error
-      })
-  }
-
-  return flvPromise
+  return Promise.resolve(mpegts)
 }
 
 function wait(milliseconds) {
@@ -275,12 +263,12 @@ async function startRtcPlayback() {
 
 async function startFlvPlayback() {
   await loadMpegtsSdk()
-  if (!window.mpegts?.getFeatureList().mseLivePlayback) {
+  if (!mpegts.getFeatureList().mseLivePlayback) {
     throw new Error('当前浏览器不支持 HTTP-FLV MSE 直播播放')
   }
 
   const playUrl = detectedFlvUrl.value
-  player = window.mpegts.createPlayer({
+  player = mpegts.createPlayer({
     type: 'flv',
     url: playUrl,
     isLive: true,
@@ -395,11 +383,6 @@ watch(systemStatus, () => {
 onMounted(async () => {
   startStreamStatusPolling()
   await loadCameras()
-  if (activeCamera.value) {
-    await loadEventHistory()
-    startPlayback({ ensureStream: true })
-    connectRealtime()
-  }
 })
 
 onBeforeUnmount(() => {
