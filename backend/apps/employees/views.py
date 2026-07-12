@@ -406,7 +406,7 @@ def employee_face_list_view(request, employee_id):
         {
             "id": f.id,
             "faceType": f.face_type,
-            "imagePath": f.image_path,
+            "imageUrl": request.build_absolute_uri(settings.MEDIA_URL + f.image_path.replace("\\", "/")) if f.image_path else None,
             "createdAt": f.created_at.isoformat(),
         }
         for f in faces
