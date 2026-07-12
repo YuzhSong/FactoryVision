@@ -304,8 +304,73 @@ def face_enroll_view(request):
             status=status.HTTP_500_INTERNAL_SERVER_ERROR,
         )
 
+    # 通知 AI Service 刷新人脸库
+    _notify_ai_cache("employees/upsert", {"employees": [{"id": employee_id}]})
+
     return api_response(
         code=200,
         message="success",
         data={"results": results},
     )
+
+
+@extend_schema(
+    summary="删除单张人脸",
+    description="删除指定的人脸特征记录和本地图片，并通知 AI Service。该接口需要 Bearer JWT 认证。",
+    responses={200: None, 404: None},
+    examples=[
+        OpenApiExample(
+            "删除成功",
+            value={"code": 200, "message": "success", "data": {"id": 1}, "requestId": "uuid"},
+            response_only=True,
+            status_codes=["200"],
+        ),
+        OpenApiExample(
+            "人脸不存在",
+            value={"code": 404, "message": "人脸记录不存在", "data": None, "requestId": "uuid"},
+            response_only=True,
+            status_codes=["404"],
+        ),
+    ],
+)
+@api_view(["DELETE"])
+@permission_classes([IsAuthenticated])
+def face_delete_view(request, face_id):
+    try:
+        face = FaceFeature.objects.select_related("employee").get(id=face_id)
+    except FaceFeature.DoesNotExist:
+        return api_response(
+            code=404,
+            message="人脸记录不存在",
+            data=None,
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    employee_id = face.employee_id
+    image_path = face.image_path
+
+    face.delete()
+
+    if image_path:
+        abs_path = FACE_MEDIA_ROOT / image_path
+        if abs_path.exists():
+            abs_path.unlink(missing_ok=True)
+
+    _notify_ai_cache("employees/upsert", {"employees": [{"id": employee_id}]})
+
+    return api_response(
+        code=200,
+        message="success",
+        data={"id": face_id},
+    )
+
+
+def _notify_ai_cache(path: str, payload: dict):
+    try:
+        requests.post(
+            f"{AI_SERVICE_URL}/cache/{path}",
+            json=payload,
+            timeout=5,
+        )
+    except Exception:
+        pass

@@ -2,6 +2,7 @@ from django.urls import path
 
 from .views import (
     camera_create_view,
+    camera_delete_view,
     camera_list_view,
     camera_stream_start_view,
     camera_stream_status_view,
@@ -20,4 +21,5 @@ urlpatterns = [
     path("<int:camera_id>/stream/stop/", camera_stream_stop_view, name="camera-stream-stop"),
     path("<int:camera_id>/", camera_update_view, name="camera-update"),
     path("<int:camera_id>/toggle/", camera_toggle_view, name="camera-toggle"),
+    path("<int:camera_id>/delete/", camera_delete_view, name="camera-delete"),
 ]

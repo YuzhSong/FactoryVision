@@ -218,6 +218,7 @@ def camera_create_view(request):
     if not camera.code:
         camera.code = f"CAM{camera.id:03d}"
         camera.save(update_fields=["code"])
+    _notify_ai_cache("cameras/reload")
 
     return api_response(
         code=200,
@@ -305,6 +306,7 @@ def camera_update_view(request, camera_id):
         camera.include_faces = validated["includeFaces"]
 
     camera.save()
+    _notify_ai_cache("cameras/reload")
 
     return api_response(
         code=200,
@@ -368,6 +370,7 @@ def camera_toggle_view(request, camera_id):
 
     camera.status = serializer.validated_data["status"]
     camera.save(update_fields=["status", "updated_at"])
+    _notify_ai_cache("cameras/reload")
 
     return api_response(
         code=200,
@@ -401,6 +404,37 @@ def camera_stream_status_view(_request, camera_id):
 
     data["cameraConfig"] = _camera_stream_payload(camera)
     return api_response(code=200, message="success", data=data)
+
+
+@api_view(["DELETE"])
+@permission_classes([IsAuthenticated])
+def camera_delete_view(_request, camera_id):
+    try:
+        camera = Camera.objects.get(id=camera_id)
+    except Camera.DoesNotExist:
+        return api_response(
+            code=404,
+            message="摄像头不存在",
+            data=None,
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    deleted_id = camera.id
+    camera.delete()
+    _notify_ai_cache("cameras/reload")
+    return api_response(code=200, message="success", data={"id": deleted_id})
+
+
+def _notify_ai_cache(path: str, payload: dict | None = None):
+    try:
+        requests.post(
+            f"{AI_SERVICE_URL}/cache/{path}",
+            json=payload or {},
+            headers=_ai_service_headers(),
+            timeout=5,
+        )
+    except requests.RequestException:
+        pass
 
 
 @api_view(["POST"])
