@@ -135,6 +135,17 @@ REST_FRAMEWORK = {
 # Shared only between the local AI service and backend. Do not commit its value.
 AI_SERVICE_API_TOKEN = os.getenv("AI_SERVICE_API_TOKEN", "")
 
+# DingTalk robot notification. Keep real webhook and secret in server env only.
+DINGTALK_ENABLED = os.getenv("DINGTALK_ENABLED", "False").lower() == "true"
+DINGTALK_WEBHOOK = os.getenv("DINGTALK_WEBHOOK", "")
+DINGTALK_SECRET = os.getenv("DINGTALK_SECRET", "")
+DINGTALK_TIMEOUT_SECONDS = int(os.getenv("DINGTALK_TIMEOUT_SECONDS", "10"))
+DINGTALK_RESPONSIBLE_NAME = os.getenv("DINGTALK_RESPONSIBLE_NAME", "")
+DINGTALK_RESPONSIBLE_MOBILE = os.getenv("DINGTALK_RESPONSIBLE_MOBILE", "")
+DINGTALK_LEADER_NAME = os.getenv("DINGTALK_LEADER_NAME", "")
+DINGTALK_LEADER_MOBILE = os.getenv("DINGTALK_LEADER_MOBILE", "")
+DINGTALK_ESCALATION_SECONDS = int(os.getenv("DINGTALK_ESCALATION_SECONDS", "60"))
+
 SPECTACULAR_SETTINGS = {
     "TITLE": "Smart Factory Vision API",
     "DESCRIPTION": "API skeleton for Smart Factory Real-time Video Analysis and Safety Monitoring System.",

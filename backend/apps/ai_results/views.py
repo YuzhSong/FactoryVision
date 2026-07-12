@@ -1,5 +1,6 @@
 from asgiref.sync import async_to_sync
 import logging
+import threading
 from datetime import timedelta
 from channels.layers import get_channel_layer
 from django.db import transaction
@@ -10,6 +11,7 @@ from rest_framework.decorators import api_view
 from rest_framework import status as http_status
 from drf_spectacular.utils import OpenApiExample, OpenApiParameter, OpenApiTypes, extend_schema
 
+from apps.ai_results.services.dingtalk import DingTalkNotificationError, DingTalkNotifier
 from apps.cameras.models import Camera
 from apps.cameras.serializers import CameraListSerializer
 from apps.employees.models import Employee
@@ -69,6 +71,14 @@ ALERT_EVENT_TYPES = {
     "ZONE_WARNING",
     "RUNNING_ALERT",
     "NO_HELMET",
+}
+
+ALERT_TRIGGER_TYPES = {
+    "helmet_violation",
+    "region_intrusion",
+    "region_dwell",
+    "stranger_detected",
+    "fall_detected",
 }
 
 DEFAULT_THRESHOLDS = {
@@ -264,6 +274,7 @@ def report_ai_results(request):
                     occurred_at=event.occurred_at,
                 )
                 alert_ids.append(alert.id)
+                transaction.on_commit(lambda a=alert: _notify_dingtalk_alert(a))
 
     return api_response(
         code=200,
@@ -683,5 +694,88 @@ def _serialize_employee_for_bootstrap(employee):
         for feature in employee.face_features.all()
     ]
     return data
+
+
+_ALERT_LEVEL_DISPLAY = {
+    "low": "低",
+    "medium": "中",
+    "high": "高",
+    "info": "信息",
+}
+
+_ALERT_TYPE_DISPLAY = {
+    "helmet_violation": "未佩戴安全帽",
+    "region_intrusion": "区域闯入",
+    "region_dwell": "区域滞留",
+    "stranger_detected": "陌生人闯入",
+    "fall_detected": "人员跌倒",
+}
+
+
+def _alert_type_display(alert: Alert) -> str:
+    return _ALERT_TYPE_DISPLAY.get(alert.event_type, alert.title)
+
+
+def _is_alert_handled(alert: Alert) -> bool:
+    return alert.status != Alert.Status.PENDING
+
+
+def _notify_dingtalk_alert(alert: Alert) -> None:
+    """Send DingTalk notification after alert creation.
+
+    Notification failures must not break AI result reporting or database writes.
+    """
+    from django.conf import settings
+
+    if alert.event_type not in ALERT_TRIGGER_TYPES:
+        return
+
+    try:
+        DingTalkNotifier().send_alert(
+            alert_title=_alert_type_display(alert),
+            level=_ALERT_LEVEL_DISPLAY.get(alert.level, alert.level),
+            content=alert.description or alert.title,
+            occurred_at=alert.occurred_at.isoformat() if alert.occurred_at else None,
+            camera_name=alert.camera.name if alert.camera else None,
+            location=alert.camera.location if alert.camera else None,
+            responsible_name=settings.DINGTALK_RESPONSIBLE_NAME or None,
+            responsible_mobile=settings.DINGTALK_RESPONSIBLE_MOBILE or None,
+        )
+    except DingTalkNotificationError:
+        logger.exception("DingTalk initial notification failed alert_id=%s", alert.id)
+    except Exception:
+        logger.exception("Unexpected DingTalk initial notification error alert_id=%s", alert.id)
+
+    escalation_seconds = settings.DINGTALK_ESCALATION_SECONDS
+    if escalation_seconds < 1:
+        return
+
+    timer = threading.Timer(escalation_seconds, _escalate_alert, args=[alert.id])
+    timer.daemon = True
+    timer.start()
+
+
+def _escalate_alert(alert_id: int) -> None:
+    from django.conf import settings
+
+    alert = Alert.objects.filter(id=alert_id).select_related("camera").first()
+    if alert is None or _is_alert_handled(alert) or alert.event_type not in ALERT_TRIGGER_TYPES:
+        return
+
+    try:
+        DingTalkNotifier().send_alert(
+            alert_title=f"[告警升级] {_alert_type_display(alert)}",
+            level=_ALERT_LEVEL_DISPLAY.get(alert.level, alert.level),
+            content=alert.description or alert.title,
+            occurred_at=alert.occurred_at.isoformat() if alert.occurred_at else None,
+            camera_name=alert.camera.name if alert.camera else None,
+            location=alert.camera.location if alert.camera else None,
+            responsible_name=settings.DINGTALK_LEADER_NAME or None,
+            responsible_mobile=settings.DINGTALK_LEADER_MOBILE or None,
+        )
+    except DingTalkNotificationError:
+        logger.exception("DingTalk escalation failed alert_id=%s", alert_id)
+    except Exception:
+        logger.exception("Unexpected DingTalk escalation error alert_id=%s", alert_id)
 
 # Create your views here.
