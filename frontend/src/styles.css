@@ -268,6 +268,30 @@ body {
   font-weight: 700;
 }
 
+.table-panel .el-table__body-wrapper {
+  max-height: min(520px, calc(100vh - 360px));
+  overflow-y: auto;
+}
+
+.table-panel .el-table__body-wrapper::-webkit-scrollbar,
+.event-list::-webkit-scrollbar,
+.camera-card-list::-webkit-scrollbar {
+  width: 6px;
+}
+
+.table-panel .el-table__body-wrapper::-webkit-scrollbar-thumb,
+.event-list::-webkit-scrollbar-thumb,
+.camera-card-list::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: rgba(56, 189, 248, 0.42);
+}
+
+.table-panel .el-table__body-wrapper::-webkit-scrollbar-track,
+.event-list::-webkit-scrollbar-track,
+.camera-card-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+
 .table-panel .el-table__body tr.is-selected-zone-row > td.el-table__cell {
   background: rgba(56, 189, 248, 0.14);
 }

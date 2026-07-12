@@ -395,15 +395,31 @@ onBeforeUnmount(() => {
   grid-template-columns: 192px minmax(0, 1fr) 295px;
   gap: 10px;
   align-items: stretch;
+  --monitor-list-max-height: min(520px, calc(100vh - 330px));
 }
 
 .monitor-layout > .panel {
   height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .camera-card-list {
   display: grid;
   gap: 10px;
+  max-height: var(--monitor-list-max-height);
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.monitor-layout > .panel:not(.monitor-center) .event-list {
+  flex: 1;
+  max-height: var(--monitor-list-max-height);
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 4px;
 }
 
 .camera-select-card {
