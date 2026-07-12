@@ -494,8 +494,8 @@ GET /api/employees/list/?page=1&pageSize=20&status=active
 {
   "code": 200,
   "data": [
-    {"id": 1, "faceType": "front", "imagePath": "faces/3/3_front.jpg", "createdAt": "2026-07-12T10:00:00+08:00"},
-    {"id": 2, "faceType": "left",  "imagePath": "faces/3/3_left.jpg",  "createdAt": "2026-07-12T10:00:01+08:00"}
+    {"id": 1, "faceType": "front", "imageUrl": "http://127.0.0.1:8000/media/faces/3/3_front.jpg", "createdAt": "2026-07-12T10:00:00+08:00"},
+    {"id": 2, "faceType": "left",  "imageUrl": "http://127.0.0.1:8000/media/faces/3/3_left.jpg",  "createdAt": "2026-07-12T10:00:01+08:00"}
   ]
 }
 ```
