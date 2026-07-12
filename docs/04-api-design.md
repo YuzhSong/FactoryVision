@@ -25,9 +25,12 @@
 - `GET /api/alerts/list/`: implemented
 - `POST /api/alerts/{alertId}/handle/`: implemented
 - `GET /api/events/`: placeholder
+- `GET /api/events/list/`: implemented
 - `GET /api/attendance/`: placeholder
 - `GET /api/ai-results/`: placeholder
-- `POST /api/ai-results/report/`: implemented (stub)
+- `POST /api/ai-results/report/`: implemented
+- `GET /api/ai/bootstrap/`: implemented
+- `GET /api/dashboard/summary/`: implemented
 - `GET /api/schema/`: implemented
 - `GET /api/docs/`: implemented
 
@@ -860,17 +863,17 @@ GET /api/events/
 
 | 项 | 内容 |
 | --- | --- |
-| 接口说明 | 查询监控事件日志 |
+| 接口说明 | 查询正式事件日志，返回由 AI 上报生成的 `Event` 记录 |
 | URL | `/api/events/list/` |
 | Method | `GET` |
-| 状态 | planned |
+| 状态 | implemented |
 
-请求参数：通用分页参数，可增加 `cameraId`、`eventType`、`startTime`、`endTime`。
+请求参数：当前实现返回全部事件，后续可扩展 `cameraId`、`eventType`、`startTime`、`endTime` 和分页参数。
 
 请求示例：
 
 ```http
-GET /api/events/list/?cameraId=1&eventType=ZONE_WARNING
+GET /api/events/list/
 ```
 
 响应示例：
@@ -885,9 +888,18 @@ GET /api/events/list/?cameraId=1&eventType=ZONE_WARNING
       {
         "id": 1,
         "cameraId": 1,
-        "eventType": "ZONE_WARNING",
-        "level": "high",
-        "eventTime": "2026-07-07T10:00:00+08:00"
+        "cameraIdentifier": "CAM001",
+        "event_type": "ZONE_WARNING",
+        "source": "ai_service",
+        "severity": "high",
+        "status": "new",
+        "occurred_at": "2026-07-07T10:00:00+08:00",
+        "frameId": "frame-0001",
+        "trackId": "t-1",
+        "bbox": {"x1": 100, "y1": 120, "x2": 240, "y2": 420},
+        "confidence": 0.94,
+        "snapshotPath": "events/cam001/frame-0001.jpg",
+        "payload": {}
       }
     ]
   },
@@ -895,7 +907,7 @@ GET /api/events/list/?cameraId=1&eventType=ZONE_WARNING
 }
 ```
 
-状态说明：用于日志追溯和告警详情跳转。
+状态说明：用于日志追溯和告警详情跳转；事件由 `/api/ai-results/report/` 接收 AI 上报后生成。
 
 ## Alerts 告警中心接口
 
@@ -995,20 +1007,44 @@ GET /api/alerts/list/?keyword=入侵&severity=high&status=pending&startTime=2026
 }
 ```
 
-状态说明：告警不存在返回 `404`。
+状态说明：告警不存在返回 `404`；当前实现按传入 `status` 更新，状态枚举由序列化器校验。
+
+## Dashboard 看板接口
+
+### 看板统计摘要
+
+| 项 | 内容 |
+| --- | --- |
+| 接口说明 | 查询看板统计摘要，包括摄像头、员工、今日事件、今日告警、待处理告警、最近告警和今日小时趋势 |
+| URL | `/api/dashboard/summary/` |
+| Method | `GET` |
+| 状态 | implemented |
+
+请求参数：无。
+
+响应示例：
 
 ```json
 {
   "code": 200,
   "message": "success",
   "data": {
-    "status": "closed"
+    "cameraCount": 2,
+    "onlineCameraCount": 1,
+    "employeeCount": 8,
+    "todayEventCount": 12,
+    "todayAlertCount": 3,
+    "pendingAlertCount": 1,
+    "recentAlerts": [],
+    "eventTrend": [
+      {"hour": "2026-07-10T10:00:00+08:00", "count": 4}
+    ]
   },
   "requestId": "uuid"
 }
 ```
 
-状态说明：非法状态流转返回 `8001`。
+状态说明：该接口基于数据库中的 `Camera`、`Employee`、`Event` 和 `Alert` 实时统计。
 
 ## Attendance 考勤接口
 
@@ -1128,16 +1164,17 @@ GET /api/ai-results/
 | 接口说明 | AI 服务向后端上报检测结果 |
 | URL | `/api/ai-results/report/` |
 | Method | `POST` |
-| 状态 | implemented (stub) |
+| 状态 | implemented |
 
 请求参数：
 
 | 参数 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
-| `cameraId` | number | 是 | 摄像头 ID |
-| `frameId` | string | 是 | 帧 ID |
+| `cameraId` | number/string | 是 | 摄像头 ID 或摄像头编码 |
+| `frameId` | string | 否 | 帧 ID，未传时默认为空字符串 |
 | `timestamp` | string | 是 | 检测时间 |
-| `results` | array | 是 | 检测结果列表 |
+| `results` | array | 是 | 检测结果列表，可为空数组 |
+| `eventMedia` | array | 否 | 事件截图/短视频等媒体元数据 |
 
 请求示例：
 
@@ -1170,18 +1207,19 @@ GET /api/ai-results/
 }
 ```
 
-当前实现说明：已实现基础字段校验和验收响应，事件生成、告警生成和数据持久化仍为 `planned`。
+当前实现说明：后端会校验上报 payload，按 `cameraId` 匹配摄像头，为每个有效结果创建 `events.Event`；告警类结果会同步创建 `ai_results.Alert`，并尝试通过 WebSocket 推送实时事件。
 
 响应示例：
 
 ```json
 {
   "code": 200,
-  "message": "success",
+  "message": "AI results accepted",
   "data": {
-    "eventIds": [],
+    "eventIds": [1],
     "alertIds": [],
     "acceptedResults": 1,
+    "rejectedResults": 0,
     "cameraId": 1,
     "frameId": "frame-0001"
   },
@@ -1190,6 +1228,41 @@ GET /api/ai-results/
 ```
 
 状态说明：后端根据结果类型生成事件日志和告警。
+
+### AI 服务启动数据
+
+| 项 | 内容 |
+| --- | --- |
+| 接口说明 | 为 AI Service 启动或缓存刷新提供摄像头、区域、员工、人脸特征和阈值配置 |
+| URL | `/api/ai/bootstrap/` |
+| Method | `GET` |
+| 状态 | implemented |
+
+请求参数：无。
+
+响应示例：
+
+```json
+{
+  "code": 200,
+  "message": "success",
+  "data": {
+    "cameras": [],
+    "zones": [],
+    "employees": [],
+    "thresholds": {
+      "helmet": {"confidence": 0.6, "warning": 0.8},
+      "fall": {"confidence": 0.6},
+      "stranger": {"similarity": 0.45},
+      "face": {"similarity": 0.45}
+    },
+    "timestamp": "2026-07-10T10:00:00+08:00"
+  },
+  "requestId": "uuid"
+}
+```
+
+状态说明：AI Service 可通过该接口初始化运行时缓存，避免直接访问数据库。
 
 ## AI Service Stream 带框流控制接口
 
