@@ -12,7 +12,11 @@
 - `GET /api/employees/`: placeholder
 - `GET /api/employees/list/`: implemented
 - `POST /api/employees/`: implemented
+- `PUT /api/employees/{id}/`: implemented
+- `DELETE /api/employees/{id}/delete/`: implemented
+- `GET /api/employees/{id}/faces/`: implemented
 - `POST /api/face/enroll/`: implemented
+- `DELETE /api/face/{id}/delete/`: implemented
 - `WS /ws/realtime/{cameraId}/`: implemented
 - `GET /api/cameras/`: placeholder
 - `GET /api/cameras/list/`: implemented
@@ -420,6 +424,82 @@ GET /api/employees/list/?page=1&pageSize=20&status=active
 
 状态说明：工号重复返回 `409`。
 
+### 编辑员工
+
+| 项 | 内容 |
+| --- | --- |
+| 接口说明 | 编辑员工档案，所有字段可选 |
+| URL | `/api/employees/{id}/` |
+| Method | `PUT` |
+| 状态 | implemented |
+
+请求参数（全部可选）：
+
+| 参数 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `employeeNo` | string | 否 | 工号，重复返回 409 |
+| `name` | string | 否 | 姓名 |
+| `department` | string | 否 | 部门 |
+| `position` | string | 否 | 岗位 |
+| `phone` | string | 否 | 手机号 |
+| `status` | string | 否 | active / inactive |
+
+请求示例：
+
+```json
+{"name": "张三（更新）", "department": "质检部"}
+```
+
+响应示例：
+
+```json
+{"code": 200, "data": {"id": 1}}
+```
+
+状态说明：编辑成功通知 AI Service 刷新人脸缓存。
+
+### 删除员工
+
+| 项 | 内容 |
+| --- | --- |
+| 接口说明 | 删除员工，级联删除人脸特征和本地图片 |
+| URL | `/api/employees/{id}/delete/` |
+| Method | `DELETE` |
+| 状态 | implemented |
+
+请求参数：无。
+
+响应示例：
+
+```json
+{"code": 200, "data": {"id": 1}}
+```
+
+状态说明：删除成功通知 AI Service 清除人脸缓存。
+
+### 员工人脸列表
+
+| 项 | 内容 |
+| --- | --- |
+| 接口说明 | 查看指定员工的所有已录入人脸 |
+| URL | `/api/employees/{id}/faces/` |
+| Method | `GET` |
+| 状态 | implemented |
+
+请求参数：无。
+
+响应示例：
+
+```json
+{
+  "code": 200,
+  "data": [
+    {"id": 1, "faceType": "front", "imagePath": "faces/3/3_front.jpg", "createdAt": "2026-07-12T10:00:00+08:00"},
+    {"id": 2, "faceType": "left",  "imagePath": "faces/3/3_left.jpg",  "createdAt": "2026-07-12T10:00:01+08:00"}
+  ]
+}
+```
+
 ## Face 人脸录入接口
 
 ### 人脸录入
@@ -481,6 +561,25 @@ GET /api/employees/list/?page=1&pageSize=20&status=active
 - `faces` 数组不足 3 张或 faceType 缺失返回 `400`。
 - 图片无人脸返回 `422`，质量过低返回 `422`，AI 服务不可用返回 `500`。
 - 质量判断由 AI Service 内部完成，后端不存储质量分数。
+
+### 删除人脸
+
+| 项 | 内容 |
+| --- | --- |
+| 接口说明 | 删除单张人脸特征记录和本地图片 |
+| URL | `/api/face/{id}/delete/` |
+| Method | `DELETE` |
+| 状态 | implemented |
+
+请求参数：无。
+
+响应示例：
+
+```json
+{"code": 200, "data": {"id": 1}}
+```
+
+状态说明：删除成功通知 AI Service 刷新人脸缓存。
 
 ## Cameras 摄像头接口
 
