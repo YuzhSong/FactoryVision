@@ -26,6 +26,8 @@ Thumbs.db
 # Local runtime artifacts and test outputs
 *.log
 .codex-runlogs/
+deploy/.env.prod
+deploy/backups/
 ai-service/data/event_media/
 ai-service/models/helmet/*.pt
 yolov8n.pt
