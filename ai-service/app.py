@@ -1,4 +1,7 @@
 from datetime import datetime, timezone
+import logging
+import threading
+import time
 from typing import Any
 
 from fastapi import FastAPI, File, Form, Request, UploadFile
@@ -17,6 +20,8 @@ from modules.processed_stream_service import ProcessedStreamService, normalize_c
 from modules.runtime_cache import RuntimeCache
 from modules.stream_reader import StreamReader
 
+
+logger = logging.getLogger("uvicorn.error")
 
 backend_client = BackendClient(
     base_url=Config.BACKEND_API_BASE_URL,
@@ -89,6 +94,9 @@ frame_processor = FrameProcessor(
         "helmetEventCooldownSeconds": Config.HELMET_EVENT_COOLDOWN_SECONDS,
         "trackStateTtlSeconds": Config.TRACK_STATE_TTL_SECONDS,
         "faceIdentityCacheSeconds": Config.FACE_IDENTITY_CACHE_SECONDS,
+        "faceUnknownCacheSeconds": Config.FACE_UNKNOWN_CACHE_SECONDS,
+        "faceTrackTtlSeconds": Config.FACE_TRACK_TTL_SECONDS,
+        "faceRecognizedCooldownSeconds": Config.FACE_RECOGNIZED_COOLDOWN_SECONDS,
         "fallRatioThreshold": Config.FALL_RATIO_THRESHOLD,
         "fallConfirmFrames": Config.FALL_CONFIRM_FRAMES,
         "fallMinConfidence": Config.FALL_MIN_CONFIDENCE,
@@ -152,6 +160,8 @@ def create_app() -> FastAPI:
                 _bootstrap_from_backend()
             except Exception as exc:
                 runtime_cache.set_error(exc)
+        if Config.MODEL_WARMUP_ON_STARTUP:
+            _start_model_warmup()
 
     @app.get("/health", tags=["system"])
     def health_check():
@@ -181,7 +191,10 @@ def create_app() -> FastAPI:
             if camera_id and not isinstance(payload.get("zones"), list):
                 payload["zones"] = _resolve_zones({**payload, "loadZonesFromBackend": True}, camera_id) or []
             if _to_bool(payload.get("includeFaces", Config.STREAM_INCLUDE_FACES_DEFAULT)):
-                _maybe_load_faces_for_stream(payload, True)
+                try:
+                    _maybe_load_faces_for_stream(payload, True)
+                except Exception as exc:
+                    logger.warning("Face library load failed before stream start; continuing without faces: %s", exc)
             status = processed_stream_service.start(payload)
         except Exception as exc:
             return _error_response(exc)
@@ -566,6 +579,37 @@ def _reload_runtime_cache(payload):
 def _bootstrap_from_backend():
     payload = backend_client.get_bootstrap()
     return _apply_bootstrap_payload(payload)
+
+
+def _start_model_warmup():
+    """Warm heavy model runtimes after startup without blocking health checks."""
+    thread = threading.Thread(target=_warmup_models, name="ai-model-warmup", daemon=True)
+    thread.start()
+
+
+def _warmup_models():
+    started_at = time.perf_counter()
+    try:
+        import numpy as np
+
+        height = max(64, int(Config.INPUT_HEIGHT or 360))
+        width = max(64, int(Config.INPUT_WIDTH or 640))
+        frame = np.zeros((height, width, 3), dtype=np.uint8)
+
+        person_detector.detect(frame, frame_id="warmup-person")
+        if hasattr(person_detector, "reset_tracks"):
+            person_detector.reset_tracks()
+
+        helmet_detector = frame_processor.abnormal_service.helmet_detector
+        helmet_detector.detect(frame, person_detections=[], frame_id="warmup-helmet")
+
+        if Config.MODEL_WARMUP_INCLUDE_FACE:
+            face_service.recognize(frame, person_detections=[], frame_id="warmup-face")
+
+        elapsed_ms = (time.perf_counter() - started_at) * 1000
+        logger.info("AI model warmup finished in %.2f ms", elapsed_ms)
+    except Exception as exc:
+        logger.warning("AI model warmup skipped or failed: %s", exc)
 
 
 def _apply_bootstrap_payload(payload):

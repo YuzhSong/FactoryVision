@@ -14,7 +14,7 @@ class FrameAnnotator:
 
         output = frame.copy()
         for result in results or []:
-            bbox = result.get("bbox")
+            bbox = result.get("bbox") or result.get("faceBox")
             if not bbox:
                 continue
 

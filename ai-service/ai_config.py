@@ -101,6 +101,8 @@ class Config:
     LIVENESS_MIN_FACE_SIZE = int(os.getenv("LIVENESS_MIN_FACE_SIZE", "48"))
     FACE_PROVIDER = os.getenv("FACE_PROVIDER", "auto")
     AUTO_LOAD_FACES_FROM_BACKEND = os.getenv("AUTO_LOAD_FACES_FROM_BACKEND", "True").lower() == "true"
+    MODEL_WARMUP_ON_STARTUP = os.getenv("MODEL_WARMUP_ON_STARTUP", "False").lower() == "true"
+    MODEL_WARMUP_INCLUDE_FACE = os.getenv("MODEL_WARMUP_INCLUDE_FACE", "True").lower() == "true"
 
     STREAM_RECONNECT_ATTEMPTS = int(os.getenv("STREAM_RECONNECT_ATTEMPTS", "3"))
     STREAM_RECONNECT_DELAY_SECONDS = float(os.getenv("STREAM_RECONNECT_DELAY_SECONDS", "1.0"))
@@ -136,7 +138,11 @@ class Config:
     INPUT_WIDTH = int(os.getenv("INPUT_WIDTH", "640"))
     INPUT_HEIGHT = int(os.getenv("INPUT_HEIGHT", "360"))
     RUNNING_SPEED_THRESHOLD = float(os.getenv("RUNNING_SPEED_THRESHOLD", "120.0"))
-    FACE_IDENTITY_CACHE_SECONDS = float(os.getenv("FACE_IDENTITY_CACHE_SECONDS", "5"))
+    # Keep a confirmed identity across the default 30-frame face interval at ~5 FPS.
+    FACE_IDENTITY_CACHE_SECONDS = float(os.getenv("FACE_IDENTITY_CACHE_SECONDS", "10"))
+    FACE_UNKNOWN_CACHE_SECONDS = float(os.getenv("FACE_UNKNOWN_CACHE_SECONDS", "1"))
+    FACE_TRACK_TTL_SECONDS = float(os.getenv("FACE_TRACK_TTL_SECONDS", "30"))
+    FACE_RECOGNIZED_COOLDOWN_SECONDS = float(os.getenv("FACE_RECOGNIZED_COOLDOWN_SECONDS", "60"))
     ZONE_MIN_STAY_SECONDS = float(os.getenv("ZONE_MIN_STAY_SECONDS", "5"))
     ZONE_STATE_TTL_SECONDS = float(os.getenv("ZONE_STATE_TTL_SECONDS", "30"))
     ZONE_REFRESH_INTERVAL_SECONDS = float(os.getenv("ZONE_REFRESH_INTERVAL_SECONDS", "10"))

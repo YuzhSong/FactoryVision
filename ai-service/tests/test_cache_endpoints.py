@@ -39,7 +39,7 @@ class _FakeFaceService:
         return {
             "image": image,
             "faceCount": 1,
-            "featureVector": [1.0, 0.0, 0.0],
+            "featureVector": [1.0] + [0.0] * 511,
             "dimension": 3,
             "qualityScore": 0.99,
             "faceBox": {"x1": 1, "y1": 2, "x2": 3, "y2": 4},

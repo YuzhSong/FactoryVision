@@ -15,6 +15,11 @@ function Get-RepoRoot {
 $repoRoot = Get-RepoRoot
 $backendDir = Join-Path $repoRoot "backend"
 $pythonExe = Join-Path $backendDir ".venv\Scripts\python.exe"
+$localAiToken = "factoryvision-local-e2e-token"
+
+if (-not $env:AI_SERVICE_API_TOKEN) {
+    $env:AI_SERVICE_API_TOKEN = $localAiToken
+}
 
 if (-not (Test-Path -LiteralPath $pythonExe)) {
     Fail "Backend interpreter not found: $pythonExe"

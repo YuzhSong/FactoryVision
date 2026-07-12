@@ -22,7 +22,7 @@ class AIResultsReportTests(TestCase):
             status=Camera.Status.ONLINE,
         )
 
-    def test_report_endpoint_accepts_valid_payload(self):
+    def test_report_endpoint_rejects_non_actionable_detection(self):
         response = self.client.post(
             "/api/ai-results/report/",
             {
@@ -43,17 +43,100 @@ class AIResultsReportTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data["code"], 200)
         self.assertEqual(response.data["message"], "AI results accepted")
-        self.assertEqual(response.data["data"]["acceptedResults"], 1)
-        self.assertEqual(response.data["data"]["rejectedResults"], 0)
+        self.assertEqual(response.data["data"]["acceptedResults"], 0)
+        self.assertEqual(response.data["data"]["rejectedResults"], 1)
         self.assertEqual(str(response.data["data"]["cameraId"]), str(self.camera.id))
         self.assertEqual(response.data["data"]["frameId"], "frame-0001")
-        self.assertEqual(Event.objects.count(), 1)
+        self.assertEqual(Event.objects.count(), 0)
         self.assertEqual(Alert.objects.count(), 0)
-        event = Event.objects.get()
-        self.assertEqual(response.data["data"]["eventIds"], [event.id])
-        self.assertEqual(event.event_type, "PERSON_DETECTION")
-        self.assertEqual(event.severity, Event.Severity.INFO)
-        self.assertEqual(event.track_id, "t-1")
+        self.assertEqual(response.data["data"]["eventIds"], [])
+
+    def test_face_recognized_is_canonical_and_broadcast(self):
+        from unittest.mock import patch
+
+        with patch("apps.ai_results.views.async_to_sync") as sync_mock:
+            sync_mock.return_value.return_value = None
+            response = self.client.post(
+                "/api/ai-results/report/",
+                {
+                    "cameraId": self.camera.id,
+                    "frameId": "face-frame",
+                    "timestamp": "2026-07-07T10:00:00+08:00",
+                    "results": [{
+                        "type": "FACE_RECOGNIZED",
+                        "trackId": "t-face",
+                        "employeeId": 4,
+                        "name": "Employee 4",
+                        "similarity": 0.82,
+                    }],
+                },
+                format="json",
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(Event.objects.get().event_type, "face_recognized")
+        self.assertEqual(response.data["data"]["acceptedResults"], 1)
+        sync_mock.assert_called_once()
+        call = sync_mock.return_value.call_args
+        self.assertEqual(call.args[0], f"realtime_{self.camera.id}")
+        self.assertEqual(call.args[1]["data"]["payload"]["eventType"], "face_recognized")
+
+    def test_person_detection_cannot_spoof_actionable_event_type(self):
+        response = self.client.post(
+            "/api/ai-results/report/",
+            {
+                "cameraId": self.camera.id,
+                "frameId": "person-spoof",
+                "timestamp": "2026-07-07T10:00:00+08:00",
+                "results": [{
+                    "type": "PERSON_DETECTION",
+                    "eventType": "face_recognized",
+                    "trackId": "t-person",
+                    "employeeId": 4,
+                    "matched": True,
+                }],
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["data"]["acceptedResults"], 0)
+        self.assertEqual(response.data["data"]["rejectedResults"], 1)
+        self.assertEqual(Event.objects.count(), 0)
+
+    def test_face_recognized_is_deduplicated_across_fragmented_tracks(self):
+        from unittest.mock import patch
+
+        def report(timestamp, track_id):
+            return self.client.post(
+                "/api/ai-results/report/",
+                {
+                    "cameraId": self.camera.id,
+                    "frameId": f"face-{track_id}",
+                    "timestamp": timestamp,
+                    "results": [{
+                        "type": "FACE_RECOGNIZED",
+                        "eventType": "face_recognized",
+                        "trackId": track_id,
+                        "employeeId": 4,
+                        "name": "Employee 4",
+                        "similarity": 0.82,
+                    }],
+                },
+                format="json",
+            )
+
+        with patch("apps.ai_results.views.async_to_sync") as sync_mock:
+            sync_mock.return_value.return_value = None
+            first = report("2026-07-07T10:00:00+08:00", "t-1")
+            duplicate = report("2026-07-07T10:00:30+08:00", "t-2")
+            after_cooldown = report("2026-07-07T10:01:01+08:00", "t-3")
+
+        self.assertEqual(first.data["data"]["acceptedResults"], 1)
+        self.assertEqual(duplicate.data["data"]["acceptedResults"], 0)
+        self.assertEqual(duplicate.data["data"]["rejectedResults"], 1)
+        self.assertEqual(after_cooldown.data["data"]["acceptedResults"], 1)
+        self.assertEqual(Event.objects.filter(event_type="face_recognized").count(), 2)
+        self.assertEqual(sync_mock.call_count, 2)
 
     def test_report_endpoint_persists_helmet_warning_event_and_alert(self):
         response = self.client.post(

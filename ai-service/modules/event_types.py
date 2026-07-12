@@ -4,10 +4,14 @@ FORMAL_EVENT_TYPES = {
     "region_intrusion": "region_intrusion",
     "region_dwell": "region_dwell",
     "FACE_RESULT": "face_recognized",
+    "FACE_RECOGNIZED": "face_recognized",
     "face_recognized": "face_recognized",
     "STRANGER_DETECTED": "stranger_detected",
     "STRANGER_ALERT": "stranger_detected",
     "stranger_detected": "stranger_detected",
+    "FALL_DETECTED": "fall_detected",
+    "FALL_ALERT": "fall_detected",
+    "fall_detected": "fall_detected",
 }
 
 

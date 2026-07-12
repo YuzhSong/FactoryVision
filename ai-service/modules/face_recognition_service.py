@@ -141,6 +141,8 @@ class FaceRecognitionService:
                     "name": match.name,
                     "matched": True,
                     "similarity": round(float(similarity), 4),
+                    "bestSimilarity": round(float(decision["bestSimilarity"]), 4),
+                    "secondBestSimilarity": round(float(decision["secondBestSimilarity"]), 4),
                     "threshold": round(float(decision["threshold"]), 4),
                     "scoreMargin": round(float(decision["scoreMargin"]), 4),
                     "sampleCount": decision["sampleCount"],
@@ -154,6 +156,8 @@ class FaceRecognitionService:
                     "matched": False,
                     "label": "unknown",
                     "similarity": round(float(similarity), 4),
+                    "bestSimilarity": round(float(decision["bestSimilarity"]), 4),
+                    "secondBestSimilarity": round(float(decision["secondBestSimilarity"]), 4),
                     "threshold": round(float(decision["threshold"]), 4),
                     "scoreMargin": round(float(decision["scoreMargin"]), 4),
                     "rejectReason": decision["rejectReason"],
@@ -496,6 +500,8 @@ class FaceRecognitionService:
                 score_margin=0.0,
                 sample_count=0,
                 reject_reason="empty_face_library",
+                best_similarity=0.0,
+                second_best_similarity=0.0,
             )
 
         best = scored_people[0]
@@ -515,6 +521,8 @@ class FaceRecognitionService:
             score_margin=max(0.0, score_margin),
             sample_count=best["sampleCount"],
             reject_reason=reject_reason,
+            best_similarity=max(0.0, best["score"]),
+            second_best_similarity=max(0.0, second_score),
         )
 
     def _score_people(self, feature):
@@ -744,13 +752,25 @@ def _normalize_vector(feature):
         feature = json.loads(feature)
 
     vector = np.asarray(feature, dtype="float32")
+    if vector.ndim != 1 or vector.size != 512:
+        raise ValueError(f"Face feature vector must contain exactly 512 values, got {vector.size}.")
+    if not np.isfinite(vector).all():
+        raise ValueError("Face feature vector contains NaN or infinity.")
     norm = float(np.linalg.norm(vector))
     if norm <= 0:
         raise ValueError("Face feature vector norm is zero.")
     return vector / norm
 
 
-def _match_decision(accepted, threshold, score_margin, sample_count, reject_reason):
+def _match_decision(
+    accepted,
+    threshold,
+    score_margin,
+    sample_count,
+    reject_reason,
+    best_similarity=0.0,
+    second_best_similarity=0.0,
+):
     """Return a serializable face match decision."""
     return {
         "accepted": bool(accepted),
@@ -758,6 +778,8 @@ def _match_decision(accepted, threshold, score_margin, sample_count, reject_reas
         "scoreMargin": float(score_margin),
         "sampleCount": int(sample_count),
         "rejectReason": reject_reason,
+        "bestSimilarity": float(best_similarity),
+        "secondBestSimilarity": float(second_best_similarity),
     }
 
 

@@ -20,6 +20,20 @@ class ModelSchedulerTests(unittest.TestCase):
         service._status.processed_frames = 2
         self.assertFalse(service._model_runs(include_faces=False)["face"])
 
+    def test_face_run_is_deferred_instead_of_dropped_when_due_frame_conflicts(self):
+        service = ProcessedStreamService(frame_processor=None)
+        executed = {"person": [], "helmet": [], "face": []}
+        for frame in range(94):
+            service._status.processed_frames = frame
+            runs = service._model_runs(include_faces=True)
+            for model, should_run in runs.items():
+                if should_run:
+                    executed[model].append(frame)
+        self.assertIn(92, executed["helmet"])
+        self.assertNotIn(92, executed["face"])
+        self.assertIn(93, executed["face"])
+        self.assertEqual(executed["face"], [2, 32, 62, 93])
+
 
 if __name__ == "__main__":
     unittest.main()

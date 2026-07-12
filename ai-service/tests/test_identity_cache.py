@@ -38,6 +38,13 @@ class FaceIdentityCacheTests(unittest.TestCase):
         self.cache.purge_missing(1, [])
         self.assertIsNone(self.cache.get(1, "t1"))
 
+    def test_reappearing_track_id_does_not_inherit_identity(self):
+        self.cache.put(1, {"trackId": "t1", "matched": True, "employeeId": 7})
+        self.cache.purge_missing(1, [])
+        self.clock.now = 1
+        self.cache.purge_missing(1, ["t1"])
+        self.assertIsNone(self.cache.get(1, "t1"))
+
 
 if __name__ == "__main__":
     unittest.main()
