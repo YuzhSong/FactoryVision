@@ -21,12 +21,6 @@ let realtimeSocket = null
 let sdkPromise = null
 let flvPromise = null
 
-const systemStatus = computed(() => [
-  { label: 'Backend', value: cameras.value.length ? 'connected' : 'waiting', type: cameras.value.length ? 'success' : 'warning' },
-  { label: 'WebSocket', value: realtimeStatus.value, type: realtimeStatus.value === 'connected' ? 'success' : 'warning' },
-  { label: 'Video Stream', value: playbackStatus.value, type: playbackStatus.value === 'connected' ? 'success' : 'warning' },
-])
-
 const currentCamera = computed(() => cameras.value.find((camera) => camera.id === activeCamera.value) || cameras.value[0] || null)
 const detectedPlayUrl = computed(() => currentCamera.value?.playUrl || currentCamera.value?.processedStreamUrl || currentCamera.value?.streamUrl || '')
 const monitorStats = computed(() => {
@@ -324,33 +318,26 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="page-grid monitor-page">
-    <div class="panel">
-      <SectionHeader title="实时监控工作台">
-        <div class="status-strip">
-          <span v-for="item in systemStatus" :key="item.label" class="status-pill">
-            <i class="status-dot" :class="item.type" />{{ item.label }}: {{ item.value }}
-          </span>
-        </div>
-      </SectionHeader>
-    </div>
-
     <div class="monitor-layout">
       <div class="panel">
         <SectionHeader title="摄像头列表" />
-        <el-radio-group v-model="activeCamera" v-loading="camerasLoading" class="camera-list">
-          <el-radio-button v-for="camera in cameras" :key="camera.id" :label="camera.id">
-            {{ camera.name }}
-          </el-radio-button>
-        </el-radio-group>
         <el-empty v-if="!camerasLoading && cameras.length === 0" description="暂无摄像头数据" />
-        <div class="event-list">
-          <div v-for="camera in cameras" :key="camera.id" class="event-item">
+        <div v-loading="camerasLoading" class="camera-card-list">
+          <button
+            v-for="camera in cameras"
+            :key="camera.id"
+            type="button"
+            class="camera-select-card"
+            :class="{ 'is-active': String(activeCamera) === String(camera.id) }"
+            @click="activeCamera = camera.id"
+          >
             <div class="event-title">
               <strong>{{ camera.name }}</strong>
               <StatusTag :value="camera.status" />
             </div>
-            <p class="event-meta">{{ camera.location }}</p>
-          </div>
+            <p class="event-meta">编码：{{ camera.code || '未配置' }}</p>
+            <p class="event-meta">位置：{{ camera.location || '未配置位置' }}</p>
+          </button>
         </div>
       </div>
 
@@ -405,21 +392,46 @@ onBeforeUnmount(() => {
 <style scoped>
 .monitor-layout {
   display: grid;
-  grid-template-columns: 260px minmax(0, 1fr) 300px;
-  gap: 18px;
+  grid-template-columns: 192px minmax(0, 1fr) 295px;
+  gap: 10px;
+  align-items: stretch;
 }
 
-.camera-list {
+.monitor-layout > .panel {
+  height: 100%;
+}
+
+.camera-card-list {
   display: grid;
   gap: 10px;
-  margin-bottom: 16px;
 }
 
-.camera-list :deep(.el-radio-button__inner) {
+.camera-select-card {
   width: 100%;
-  border-left: var(--el-border);
+  padding: 14px;
+  border: 1px solid var(--fv-border);
   border-radius: 8px;
+  background: var(--fv-panel-bg);
+  color: var(--fv-text);
   text-align: left;
+  cursor: pointer;
+  transition: border-color 180ms ease, box-shadow 180ms ease, background 180ms ease;
+}
+
+.camera-select-card .event-title {
+  align-items: flex-start;
+}
+
+.camera-select-card:hover,
+.camera-select-card.is-active {
+  border-color: #38bdf8;
+  background: rgba(37, 99, 235, 0.12);
+  box-shadow: 0 0 0 1px rgba(56, 189, 248, 0.24), 0 10px 24px rgba(15, 23, 42, 0.12);
+}
+
+.camera-select-card:focus-visible {
+  outline: 2px solid #38bdf8;
+  outline-offset: 2px;
 }
 
 .stream-actions {

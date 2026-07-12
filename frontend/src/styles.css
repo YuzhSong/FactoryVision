@@ -120,11 +120,19 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  min-height: 72px;
+  min-height: 77px;
   padding: 12px 24px;
   border-bottom: 1px solid var(--fv-border);
   background: rgba(255, 255, 255, 0.92);
   backdrop-filter: blur(12px);
+}
+
+.app-header > div:first-child {
+  align-self: stretch;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  transform: translateY(8px);
 }
 
 .app-header h2 {
@@ -258,6 +266,10 @@ body {
 
 .table-panel .el-table th {
   font-weight: 700;
+}
+
+.table-panel .el-table__body tr.is-selected-zone-row > td.el-table__cell {
+  background: rgba(56, 189, 248, 0.14);
 }
 
 .filter-row {
@@ -511,6 +523,32 @@ body {
   stroke-dasharray: 1.2 1.2;
   stroke-linecap: round;
   stroke-width: 0.34;
+  vector-effect: non-scaling-stroke;
+}
+
+.zone-saved-fill {
+  fill: rgba(37, 99, 235, 0.22);
+  stroke: rgba(56, 189, 248, 0.96);
+  stroke-width: 0.36;
+  vector-effect: non-scaling-stroke;
+}
+
+.zone-saved-line {
+  fill: none;
+  stroke: rgba(56, 189, 248, 0.98);
+  stroke-linecap: round;
+  stroke-width: 0.36;
+  vector-effect: non-scaling-stroke;
+}
+
+.zone-saved-point {
+  pointer-events: none;
+}
+
+.zone-saved-point circle {
+  fill: #22d3ee;
+  stroke: rgba(248, 250, 252, 0.92);
+  stroke-width: 0.28;
   vector-effect: non-scaling-stroke;
 }
 

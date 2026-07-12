@@ -13,6 +13,7 @@ const savingZone = ref(false)
 const editorRef = ref(null)
 const draftPoints = ref([])
 const draggingPointIndex = ref(null)
+const selectedZoneId = ref(null)
 
 const zoneForm = reactive({
   name: '',
@@ -42,6 +43,15 @@ const polygonPoints = computed(() => draftPoints.value
   .join(' '))
 
 const canPreviewPolygon = computed(() => draftPoints.value.length >= 3)
+const selectedZone = computed(() => zoneRows.value.find((zone) => zone.id === selectedZoneId.value) || null)
+const selectedZonePoints = computed(() => {
+  const points = selectedZone.value?.points
+  return Array.isArray(points) ? points : []
+})
+const selectedZonePolygonPoints = computed(() => selectedZonePoints.value
+  .map((point) => `${point.x * 100},${point.y * 100}`)
+  .join(' '))
+const canPreviewSelectedZone = computed(() => selectedZonePoints.value.length >= 3 && draftPoints.value.length === 0)
 
 const clamp = (value) => Math.min(Math.max(value, 0), 1)
 
@@ -63,6 +73,7 @@ const addDraftPoint = (event) => {
 
   const point = pointFromEvent(event)
   if (!point) return
+  selectedZoneId.value = null
   draftPoints.value.push(point)
 }
 
@@ -95,6 +106,11 @@ const clearDraftPoints = () => {
   draftPoints.value = []
 }
 
+const selectZone = (zone) => {
+  selectedZoneId.value = zone.id
+  clearDraftPoints()
+}
+
 const resetZoneForm = () => {
   Object.assign(zoneForm, {
     name: '',
@@ -105,6 +121,7 @@ const resetZoneForm = () => {
 }
 
 const useExamplePolygon = () => {
+  selectedZoneId.value = null
   draftPoints.value = [
     { x: 0.56, y: 0.45 },
     { x: 0.82, y: 0.43 },
@@ -159,6 +176,7 @@ const saveZone = async () => {
     })
     ElMessage.success('警戒区域已创建')
     clearDraftPoints()
+    selectedZoneId.value = null
     resetZoneForm()
     await loadZones()
   } catch (error) {
@@ -191,6 +209,9 @@ const loadZones = async () => {
       cameraId: cameraId.value || undefined,
     })
     zones.value = response?.data?.items || []
+    if (selectedZoneId.value && !zones.value.some((zone) => zone.id === selectedZoneId.value)) {
+      selectedZoneId.value = null
+    }
   } catch (error) {
     zones.value = []
     ElMessage.error(error?.response?.data?.message || '区域列表加载失败')
@@ -201,6 +222,7 @@ const loadZones = async () => {
 
 watch(cameraId, () => {
   clearDraftPoints()
+  selectedZoneId.value = null
   resetZoneForm()
   loadZones()
 })
@@ -261,8 +283,19 @@ onMounted(async () => {
           <span>{{ selectedCamera?.processedStreamUrl || selectedCamera?.streamUrl || '视频流待配置' }}</span>
         </div>
         <svg class="zone-editor-layer" viewBox="0 0 100 100" preserveAspectRatio="none">
+          <polygon v-if="canPreviewSelectedZone" class="zone-saved-fill" :points="selectedZonePolygonPoints" />
+          <polyline v-if="selectedZonePoints.length > 1 && draftPoints.length === 0" class="zone-saved-line" :points="selectedZonePolygonPoints" />
           <polygon v-if="canPreviewPolygon" class="zone-draft-fill" :points="polygonPoints" />
           <polyline v-if="draftPoints.length > 1" class="zone-draft-line" :points="polygonPoints" />
+          <g
+            v-for="(point, index) in selectedZonePoints"
+            :key="`saved-${selectedZoneId}-${index}`"
+            class="zone-saved-point"
+            v-show="canPreviewSelectedZone"
+            :transform="`translate(${point.x * 100} ${point.y * 100})`"
+          >
+            <circle r="1.15" />
+          </g>
           <g
             v-for="(point, index) in draftPoints"
             :key="`${index}-${point.x}-${point.y}`"
@@ -275,7 +308,7 @@ onMounted(async () => {
             <text x="2.4" y="-2">{{ index + 1 }}</text>
           </g>
         </svg>
-        <div v-if="draftPoints.length === 0" class="zone-editor-empty">
+        <div v-if="draftPoints.length === 0 && !canPreviewSelectedZone" class="zone-editor-empty">
           <strong>在视频区域中点击开始框选危险区域</strong>
           <span>至少 3 个点形成多边形，双击点位可删除</span>
         </div>
@@ -299,7 +332,14 @@ onMounted(async () => {
 
     <div class="panel table-panel">
       <SectionHeader title="区域列表" />
-      <el-table v-loading="zonesLoading" :data="zoneRows" stripe>
+      <el-table
+        v-loading="zonesLoading"
+        :data="zoneRows"
+        stripe
+        highlight-current-row
+        :row-class-name="({ row }) => (row.id === selectedZoneId ? 'is-selected-zone-row' : '')"
+        @row-click="selectZone"
+      >
         <el-table-column prop="name" label="区域名称" min-width="160" />
         <el-table-column prop="cameraName" label="摄像头" min-width="150" />
         <el-table-column prop="type" label="类型" width="120" />

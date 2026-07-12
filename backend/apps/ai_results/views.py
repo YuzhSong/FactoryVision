@@ -471,8 +471,10 @@ def ai_bootstrap(_request):
 )
 @api_view(["GET"])
 def health_check(_request):
-    serializer = HealthCheckSerializer()
-    return api_response(data=serializer.data, message="Backend service is healthy")
+    return api_response(
+        data={"service": "backend", "status": "ok", "stage": "development"},
+        message="Backend service is healthy",
+    )
 
 
 def _find_camera(camera_id):

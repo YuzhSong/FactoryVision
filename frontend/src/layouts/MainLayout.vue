@@ -86,7 +86,7 @@ onMounted(() => {
 
 <template>
   <el-container class="app-shell">
-    <el-aside width="240px" class="app-sidebar">
+    <el-aside width="234px" class="app-sidebar">
       <div class="brand-block">
         <div class="brand-mark">FV</div>
         <h1>工厂监测</h1>
