@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import SectionHeader from '../components/SectionHeader.vue'
+import mpegts from 'mpegts.js'
 import { aiServiceApi, camerasApi, zonesApi } from '../api/modules'
 
 const cameraId = ref('')
@@ -22,7 +23,6 @@ const videoLayout = reactive({ left: 0, top: 0, width: 0, height: 0 })
 
 let player = null
 let sdkPromise = null
-let flvPromise = null
 let resizeObserver = null
 
 const zoneForm = reactive({
@@ -115,15 +115,7 @@ const loadScript = (src) => new Promise((resolve, reject) => {
 })
 
 const loadMpegtsSdk = () => {
-  if (window.mpegts) return Promise.resolve()
-  if (!flvPromise) {
-    flvPromise = loadScript('https://webrtc.rainycode.cn:8443/players/js/mpegts-1.7.2.min.js')
-      .catch((error) => {
-        flvPromise = null
-        throw error
-      })
-  }
-  return flvPromise
+  return Promise.resolve(mpegts)
 }
 
 const loadSrsSdk = () => {
@@ -222,8 +214,8 @@ const startPlayback = async (options = {}) => {
       await ensureProcessedStream()
     }
     await loadMpegtsSdk()
-    if (!window.mpegts?.getFeatureList().mseLivePlayback) throw new Error('当前浏览器不支持 HTTP-FLV 直播播放')
-    player = window.mpegts.createPlayer({ type: 'flv', url: playUrl, isLive: true, enableStashBuffer: false })
+    if (!mpegts.getFeatureList().mseLivePlayback) throw new Error('当前浏览器不支持 HTTP-FLV 直播播放')
+    player = mpegts.createPlayer({ type: 'flv', url: playUrl, isLive: true, enableStashBuffer: false })
     player.attachMediaElement(videoRef.value)
     player.load()
     await withTimeout(player.play(), 8000, '处理后视频流连接超时，请检查 SRS 或 processedStreamUrl')
