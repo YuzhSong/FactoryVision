@@ -32,6 +32,7 @@ class FaceIdentityCache:
             "recognizedAt": _iso_now(),
             "expiresAt": now + ttl,
             "lastSeenAt": now,
+            "missingSince": None,
             "generation": self.generation,
         }
         self._items[(str(camera_id), str(track_id))] = item
@@ -56,7 +57,15 @@ class FaceIdentityCache:
         now = self.clock()
         visible = {str(value) for value in visible_track_ids}
         for key, item in list(self._items.items()):
-            if key[0] == str(camera_id) and key[1] not in visible and now - item["lastSeenAt"] > self.track_ttl_seconds:
+            if key[0] != str(camera_id):
+                continue
+            if key[1] in visible:
+                if item.get("missingSince") is not None:
+                    # A tracker id that disappeared and reappeared is a new continuity.
+                    self._items.pop(key, None)
+                continue
+            item["missingSince"] = item.get("missingSince") or now
+            if now - item["lastSeenAt"] > self.track_ttl_seconds:
                 self._items.pop(key, None)
 
     def invalidate_library(self):

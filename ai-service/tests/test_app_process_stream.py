@@ -32,7 +32,7 @@ class _FakeBackendClient:
                 "id": 1,
                 "employeeNo": "E001",
                 "name": "Zhang San",
-                "faceFeatures": [{"featureVector": [1.0, 0.0, 0.0]}],
+                "faceFeatures": [{"featureVector": [1.0] + [0.0] * 511}],
             }
         ]
 

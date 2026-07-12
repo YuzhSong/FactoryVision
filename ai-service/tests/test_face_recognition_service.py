@@ -8,6 +8,10 @@ from modules.face_recognition_service import FaceRecognitionService, _should_use
 from modules.liveness_detector import LivenessResult
 
 
+def _vector(x=0.0, y=0.0, z=0.0):
+    return [x, y, z] + [0.0] * 509
+
+
 class FaceRecognitionServiceTests(unittest.TestCase):
     """Test face-library loading and matching helpers."""
 
@@ -22,8 +26,8 @@ class FaceRecognitionServiceTests(unittest.TestCase):
                     "employeeNo": "E001",
                     "name": "Zhang San",
                     "faceFeatures": [
-                        {"id": 100, "featureVector": [1.0, 0.0, 0.0]},
-                        {"id": 101, "featureVector": [0.0, 1.0, 0.0]},
+                        {"id": 100, "featureVector": _vector(1.0)},
+                        {"id": 101, "featureVector": _vector(0.0, 1.0)},
                     ],
                 }
             ]
@@ -39,12 +43,12 @@ class FaceRecognitionServiceTests(unittest.TestCase):
         service = FaceRecognitionService(similarity_threshold=0.45)
         service.load_face_library(
             records=[
-                {"employeeId": 1, "employeeNo": "E001", "featureVector": [1.0, 0.0, 0.0]},
-                {"employeeId": 2, "employeeNo": "E002", "featureVector": [0.0, 1.0, 0.0]},
+                {"employeeId": 1, "employeeNo": "E001", "featureVector": _vector(1.0)},
+                {"employeeId": 2, "employeeNo": "E002", "featureVector": _vector(0.0, 1.0)},
             ]
         )
 
-        match, similarity = service._match(np.asarray([1.0, 0.0, 0.0], dtype="float32"))
+        match, similarity = service._match(np.asarray(_vector(1.0), dtype="float32"))
 
         self.assertEqual(match.employee_id, 1)
         self.assertGreater(similarity, 0.99)
@@ -54,12 +58,12 @@ class FaceRecognitionServiceTests(unittest.TestCase):
         service = FaceRecognitionService(similarity_threshold=0.45, min_score_margin=0.03)
         service.load_face_library(
             records=[
-                {"employeeId": 1, "employeeNo": "E001", "featureVector": [1.0, 0.0, 0.0]},
-                {"employeeId": 2, "employeeNo": "E002", "featureVector": [0.999, 0.045, 0.0]},
+                {"employeeId": 1, "employeeNo": "E001", "featureVector": _vector(1.0)},
+                {"employeeId": 2, "employeeNo": "E002", "featureVector": _vector(0.999, 0.045)},
             ]
         )
 
-        match, similarity, decision = service._classify_match(np.asarray([1.0, 0.0, 0.0], dtype="float32"))
+        match, similarity, decision = service._classify_match(np.asarray(_vector(1.0), dtype="float32"))
 
         self.assertEqual(match.employee_id, 1)
         self.assertGreater(similarity, 0.99)
@@ -75,11 +79,11 @@ class FaceRecognitionServiceTests(unittest.TestCase):
         )
         service.load_face_library(
             records=[
-                {"employeeId": 1, "employeeNo": "E001", "featureVector": [0.5, 0.8660254, 0.0]},
+                {"employeeId": 1, "employeeNo": "E001", "featureVector": _vector(0.5, 0.8660254)},
             ]
         )
 
-        match, similarity, decision = service._classify_match(np.asarray([1.0, 0.0, 0.0], dtype="float32"))
+        match, similarity, decision = service._classify_match(np.asarray(_vector(1.0), dtype="float32"))
 
         self.assertEqual(match.employee_id, 1)
         self.assertAlmostEqual(similarity, 0.5, places=4)
@@ -114,14 +118,14 @@ class FaceRecognitionServiceTests(unittest.TestCase):
         service = FaceRecognitionService(similarity_threshold=0.45)
         service.load_face_library(
             employee_items=[
-                {"id": 1, "employeeNo": "E001", "faceFeatures": [{"featureVector": [1.0, 0.0, 0.0]}]},
-                {"id": 2, "employeeNo": "E002", "faceFeatures": [{"featureVector": [0.0, 1.0, 0.0]}]},
+                {"id": 1, "employeeNo": "E001", "faceFeatures": [{"featureVector": _vector(1.0)}]},
+                {"id": 2, "employeeNo": "E002", "faceFeatures": [{"featureVector": _vector(0.0, 1.0)}]},
             ]
         )
 
         result = service.upsert_face_library(
             employee_items=[
-                {"id": 1, "employeeNo": "E001", "faceFeatures": [{"featureVector": [0.0, 0.0, 1.0]}]},
+                {"id": 1, "employeeNo": "E001", "faceFeatures": [{"featureVector": _vector(0.0, 0.0, 1.0)}]},
             ]
         )
 
@@ -135,6 +139,17 @@ class FaceRecognitionServiceTests(unittest.TestCase):
         self.assertEqual(delete_result["deleted"], 1)
         self.assertEqual(len(service.face_records), 1)
         self.assertEqual(service.face_records[0].employee_no, "E002")
+
+    def test_rejects_non_512_or_non_finite_feature(self):
+        service = FaceRecognitionService()
+        result = service.load_face_library(records=[{"employeeId": 1, "featureVector": [1.0, 0.0]}])
+        self.assertEqual(result["count"], 0)
+        self.assertIn("exactly 512", result["errors"][0])
+        invalid = _vector(1.0)
+        invalid[10] = float("nan")
+        result = service.load_face_library(records=[{"employeeId": 1, "featureVector": invalid}])
+        self.assertEqual(result["count"], 0)
+        self.assertIn("NaN or infinity", result["errors"][0])
 
     def test_enrollment_returns_liveness_metadata_when_not_required(self):
         service = _EnrollmentService(

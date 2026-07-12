@@ -5,6 +5,7 @@ import SectionHeader from '../components/SectionHeader.vue'
 import StatusTag from '../components/StatusTag.vue'
 import { aiServiceApi, camerasApi, eventsApi } from '../api/modules'
 import { createRealtimeConnection } from '../api/realtime'
+import { normalizeStoredEvent, prependRealtimeEvent } from '../utils/realtimeEvents'
 
 const activeCamera = ref('')
 const cameras = ref([])
@@ -15,11 +16,13 @@ const videoRef = ref(null)
 const playbackStatus = ref('idle')
 const playbackMessage = ref('等待播放 AI 处理后视频流')
 const playbackMode = ref('flv')
+const streamStatus = ref(null)
 
 let player = null
 let realtimeSocket = null
 let sdkPromise = null
 let flvPromise = null
+let streamStatusTimer = null
 
 function syncHeaderStatus() {
   if (typeof window === 'undefined') return
@@ -34,7 +37,7 @@ const systemStatus = computed(() => [
   { label: 'Video Stream', value: playbackStatus.value, type: playbackStatus.value === 'connected' ? 'success' : 'warning' },
 ])
 
-const currentCamera = computed(() => cameras.value.find((camera) => camera.id === activeCamera.value) || cameras.value[0] || null)
+const currentCamera = computed(() => cameras.value.find((camera) => String(camera.id) === String(activeCamera.value)) || cameras.value[0] || null)
 const detectedPlayUrl = computed(() => currentCamera.value?.processedStreamUrl || currentCamera.value?.playUrl || '')
 const monitorStats = computed(() => {
   const highRiskTypes = new Set(['high', 'medium'])
@@ -56,6 +59,12 @@ const detectedFlvUrl = computed(() => {
   return url
     .replace('webrtc://', 'https://')
     .replace(/\/([^/?]+)(\?.*)?$/, '/$1.flv')
+})
+const streamHudMetrics = computed(() => {
+  const status = streamStatus.value || {}
+  const dropped = Number.isFinite(Number(status.dropped_frames)) ? Number(status.dropped_frames) : 0
+  const age = Number.isFinite(Number(status.latest_frame_age_ms)) ? Math.round(Number(status.latest_frame_age_ms)) : 0
+  return { dropped, age }
 })
 
 function normalizeSrsWebRtcUrl(url) {
@@ -189,6 +198,28 @@ async function ensureProcessedStream() {
   }
 }
 
+async function refreshStreamStatus() {
+  try {
+    const response = await aiServiceApi.streamStatus()
+    streamStatus.value = response?.data?.data || response?.data || null
+  } catch (error) {
+    streamStatus.value = null
+  }
+}
+
+function startStreamStatusPolling() {
+  stopStreamStatusPolling()
+  refreshStreamStatus()
+  streamStatusTimer = window.setInterval(refreshStreamStatus, 2000)
+}
+
+function stopStreamStatusPolling() {
+  if (streamStatusTimer) {
+    window.clearInterval(streamStatusTimer)
+    streamStatusTimer = null
+  }
+}
+
 async function startPlayback(options = {}) {
   const { ensureStream = false } = options
   stopPlayback()
@@ -203,6 +234,7 @@ async function startPlayback(options = {}) {
   try {
     if (ensureStream) {
       await ensureProcessedStream()
+      await refreshStreamStatus()
     }
     if (playbackMode.value === 'flv') {
       await startFlvPlayback()
@@ -269,43 +301,6 @@ function stopPlayback() {
   }
 }
 
-function formatTime(value) {
-  if (!value) return new Date().toLocaleTimeString('zh-CN', { hour12: false })
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return value
-  return date.toLocaleTimeString('zh-CN', { hour12: false })
-}
-
-function normalizeRealtimeMessage(message) {
-  const payload = message?.payload || {}
-  const eventType = payload.eventType || message.eventType || message.type || 'EVENT_CREATED'
-  const severity = payload.severity || message.severity || payload.level || 'normal'
-  const trackId = payload.trackId ? ` trackId ${payload.trackId}` : ''
-  const confidence = typeof payload.confidence === 'number' ? ` / ${(payload.confidence * 100).toFixed(1)}%` : ''
-
-  return {
-    id: payload.eventId || `${Date.now()}-${Math.random()}`,
-    type: eventType,
-    level: severity,
-    text: `${eventType}${trackId}${confidence}`,
-    time: formatTime(payload.occurredAt || message.timestamp || message.occurredAt),
-  }
-}
-
-function normalizeStoredEvent(event) {
-  const eventType = event.event_type || event.eventType || 'EVENT_CREATED'
-  const trackId = event.trackId ? ` trackId ${event.trackId}` : ''
-  const confidence = typeof event.confidence === 'number' ? ` / ${(event.confidence * 100).toFixed(1)}%` : ''
-
-  return {
-    id: event.id,
-    type: eventType,
-    level: event.severity || 'normal',
-    text: `${eventType}${trackId}${confidence}`,
-    time: formatTime(event.occurred_at || event.occurredAt),
-  }
-}
-
 function closeRealtimeConnection() {
   if (realtimeSocket) {
     realtimeSocket.close()
@@ -333,7 +328,7 @@ function connectRealtime() {
       realtimeStatus.value = 'error'
     },
     onMessage: (message) => {
-      realtimeEvents.value = [normalizeRealtimeMessage(message), ...realtimeEvents.value].slice(0, 30)
+      realtimeEvents.value = prependRealtimeEvent(realtimeEvents.value, message)
     },
   })
 }
@@ -356,8 +351,9 @@ async function loadCameras() {
   try {
     const response = await camerasApi.list()
     cameras.value = response?.data?.items || []
-    if (!activeCamera.value && cameras.value.length > 0) {
-      activeCamera.value = cameras.value[0].id
+    const activeExists = cameras.value.some((camera) => String(camera.id) === String(activeCamera.value))
+    if (!activeCamera.value || !activeExists) {
+      activeCamera.value = (cameras.value.find((camera) => camera.status === 'online') || cameras.value[0] || {}).id || ''
     }
   } catch (error) {
     cameras.value = []
@@ -365,6 +361,14 @@ async function loadCameras() {
   } finally {
     camerasLoading.value = false
   }
+}
+
+function selectCamera(camera) {
+  if (camera?.status !== 'online') {
+    ElMessage.warning('当前摄像头离线，无法启动 AI 处理流')
+    return
+  }
+  activeCamera.value = camera.id
 }
 
 watch(activeCamera, () => {
@@ -382,6 +386,7 @@ watch(systemStatus, () => {
 }, { deep: true, immediate: true })
 
 onMounted(async () => {
+  startStreamStatusPolling()
   await loadCameras()
   if (activeCamera.value) {
     await loadEventHistory()
@@ -395,6 +400,7 @@ onBeforeUnmount(() => {
     window.dispatchEvent(new CustomEvent('factory-vision-monitor-status', { detail: null }))
   }
   stopPlayback()
+  stopStreamStatusPolling()
   closeRealtimeConnection()
 })
 </script>
@@ -411,8 +417,9 @@ onBeforeUnmount(() => {
             :key="camera.id"
             type="button"
             class="camera-select-card"
-            :class="{ 'is-active': String(activeCamera) === String(camera.id) }"
-            @click="activeCamera = camera.id"
+            :class="{ 'is-active': String(activeCamera) === String(camera.id), 'is-disabled': camera.status !== 'online' }"
+            :disabled="camera.status !== 'online'"
+            @click="selectCamera(camera)"
           >
             <div class="event-title">
               <strong>{{ camera.name }}</strong>
@@ -437,8 +444,8 @@ onBeforeUnmount(() => {
         <div class="monitor-screen stream-player" :class="playbackStatus">
           <video ref="videoRef" autoplay playsinline controls muted />
           <div class="stream-head">
-            <span>{{ currentCamera?.name || '未选择摄像头' }}</span>
-            <StatusTag :value="playbackStatus" />
+            <span>drop {{ streamHudMetrics.dropped }}</span>
+            <span>age {{ streamHudMetrics.age }}ms</span>
           </div>
           <div class="stream-foot">
             <span>原始流：{{ currentCamera?.streamUrl || '未配置' }}</span>
@@ -526,6 +533,17 @@ onBeforeUnmount(() => {
   border-color: #38bdf8;
   background: rgba(37, 99, 235, 0.12);
   box-shadow: 0 0 0 1px rgba(56, 189, 248, 0.24), 0 10px 24px rgba(15, 23, 42, 0.12);
+}
+
+.camera-select-card.is-disabled {
+  cursor: not-allowed;
+  opacity: 0.68;
+}
+
+.camera-select-card.is-disabled:hover {
+  border-color: var(--fv-border);
+  background: var(--fv-panel);
+  box-shadow: none;
 }
 
 .camera-select-card:focus-visible {

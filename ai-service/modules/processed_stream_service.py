@@ -5,6 +5,7 @@ import queue
 import time
 import threading
 import traceback
+from collections import deque
 
 from ai_config import Config
 from .event_media_recorder import EventMediaRecorder
@@ -40,6 +41,8 @@ class StreamTaskStatus:
     process_time_ms: float = 0.0
     latest_frame_age_ms: float = 0.0
     output_fps: float = Config.STREAM_OUTPUT_FPS
+    input_fps: float = 0.0
+    actual_output_fps: float = 0.0
     event_media_count: int = 0
     last_event_media: dict | None = None
     input_frame_shape: list[int] | None = None
@@ -52,12 +55,15 @@ class StreamTaskStatus:
     filtered_results: int = 0
     last_report_error: str | None = None
     last_report_succeeded_at: str | None = None
+    last_report_attempted_at: str | None = None
+    last_report_response: dict | None = None
     person_inference_ms: float | None = None
     helmet_inference_ms: float | None = None
     face_inference_ms: float | None = None
     last_person_frame_id: str | None = None
     last_helmet_frame_id: str | None = None
     last_face_frame_id: str | None = None
+    timing_summary_ms: dict | None = None
     active_config: dict | None = None
 
 
@@ -159,6 +165,12 @@ class ProcessedStreamService:
         self._cached_helmet_detections = []
         self._person_cache_frame = None
         self._helmet_cache_frame = None
+        self._timing_samples = {
+            name: deque(maxlen=300)
+            for name in ("person", "helmet", "face", "zoneRules", "draw", "encode", "overall")
+        }
+        self._schedule_frames = {name: deque(maxlen=20) for name in ("person", "helmet", "face")}
+        self._last_face_due_frame = -1
 
     def start(self, payload: dict | None = None):
         """Start background stream processing, or return existing task status."""
@@ -183,6 +195,11 @@ class ProcessedStreamService:
             self._cached_helmet_detections = []
             self._person_cache_frame = None
             self._helmet_cache_frame = None
+            for samples in self._timing_samples.values():
+                samples.clear()
+            for frames in self._schedule_frames.values():
+                frames.clear()
+            self._last_face_due_frame = -1
             with self._frame_condition:
                 self._latest_frame = None
                 self._latest_sequence = 0
@@ -248,7 +265,16 @@ class ProcessedStreamService:
     def status(self):
         """Return a JSON-serializable status snapshot."""
         with self._lock:
-            return asdict(self._status)
+            snapshot = asdict(self._status)
+            snapshot["pending_events"] = self._event_report_queue.qsize()
+            snapshot["filtered_events"] = snapshot["filtered_results"]
+            snapshot["timing_summary_ms"] = {
+                name: _timing_summary(samples) for name, samples in self._timing_samples.items()
+            }
+            snapshot["model_schedule_frames"] = {
+                name: list(frames) for name, frames in self._schedule_frames.items()
+            }
+            return snapshot
 
     def _run(self, payload: dict, run_config: dict):
         reader = None
@@ -268,6 +294,7 @@ class ProcessedStreamService:
             output_fps = self._resolve_output_fps(first_packet.fps)
             with self._lock:
                 self._status.output_fps = output_fps
+                self._status.input_fps = round(float(first_packet.fps or 0), 2)
                 self._status.output_frame_size = [width, height]
 
             logger.info(
@@ -379,7 +406,10 @@ class ProcessedStreamService:
                 last_report,
                 run_config,
             )
+            encode_started_at = time.perf_counter()
             writer.write(output_frame)
+            encode_ms = (time.perf_counter() - encode_started_at) * 1000
+            self._record_timing("encode", encode_ms)
             elapsed_ms = (time.monotonic() - started_at) * 1000
             frame_age_ms = (time.monotonic() - snapshot.captured_at) * 1000
             self._mark_processed(snapshot, elapsed_ms, frame_age_ms)
@@ -389,6 +419,7 @@ class ProcessedStreamService:
                 with self._lock:
                     processed_frames = self._status.processed_frames
                     self._status.process_fps = round((processed_frames - last_process_count) / (now - last_log_at), 2)
+                    self._status.actual_output_fps = self._status.process_fps
                     status = asdict(self._status)
                 last_process_count = processed_frames
                 last_log_at = now
@@ -441,11 +472,15 @@ class ProcessedStreamService:
             )
             self._update_detection_cache(report)
             self._record_model_metrics(report, packet.frame_id)
+            draw_started_at = time.perf_counter()
             output_frame = self._draw_detection_frame(packet.frame, zones, report.get("results", []))
+            self._record_timing("draw", (time.perf_counter() - draw_started_at) * 1000)
             last_report = report
         else:
             report = last_report or {"results": []}
+            draw_started_at = time.perf_counter()
             output_frame = self._draw_detection_frame(packet.frame, zones, report.get("results", []))
+            self._record_timing("draw", (time.perf_counter() - draw_started_at) * 1000)
 
         overlay = self._overlay_metrics(frame_age_ms=(time.monotonic() - snapshot.captured_at) * 1000)
         output_frame = self.annotator.draw_debug_overlay(output_frame, overlay)
@@ -490,7 +525,7 @@ class ProcessedStreamService:
             try:
                 self._event_report_queue.put_nowait((payload, event_keys))
             except queue.Full:
-                dropped = max(1, len(event_keys))
+                dropped = len(payload["results"])
                 with self._lock:
                     self._status.dropped_events += dropped
                 logger.error(
@@ -501,7 +536,7 @@ class ProcessedStreamService:
                 return False
             self._queued_region_event_keys.update(event_keys)
             with self._lock:
-                self._status.queued_events += max(1, len(event_keys))
+                self._status.queued_events += len(payload["results"])
             logger.info("event queued camera_id=%s count=%s", payload.get("cameraId"), len(payload["results"]))
             self._start_report_worker_locked()
         return True
@@ -511,12 +546,10 @@ class ProcessedStreamService:
         allowed_types = {
             "HELMET_WARNING",
             "ZONE_WARNING",
-            "FALL_DETECTED",
-            "FALL_ALERT",
             "RUNNING_ALERT",
             "STRANGER_DETECTED",
             "STRANGER_ALERT",
-            "EMPLOYEE_PRESENCE_EVENT",
+            "FACE_RECOGNIZED",
         }
         payload = dict(report)
         source_results = report.get("results") or []
@@ -524,10 +557,7 @@ class ProcessedStreamService:
             normalize_event_result(result)
             for result in source_results
             if isinstance(result, dict)
-            and (
-                result.get("type") in allowed_types
-                or (result.get("type") == "FACE_RESULT" and result.get("matched") is True)
-            )
+            and result.get("type") in allowed_types
         ]
         with self._lock:
             self._status.filtered_results += max(0, len(source_results) - len(payload["results"]))
@@ -546,15 +576,18 @@ class ProcessedStreamService:
             except queue.Empty:
                 continue
             try:
-                self.backend_client.report_ai_results(report)
                 with self._lock:
-                    self._status.reported_events += max(1, len(event_keys))
+                    self._status.last_report_attempted_at = _now()
+                response = self.backend_client.report_ai_results(report)
+                with self._lock:
+                    self._status.reported_events += len(report.get("results") or [])
                     self._status.last_report_succeeded_at = _now()
                     self._status.last_report_error = None
+                    self._status.last_report_response = response.get("data", response) if isinstance(response, dict) else None
                 logger.info("event report succeeded camera_id=%s count=%s", report.get("cameraId"), len(report.get("results") or []))
             except Exception as exc:
                 with self._lock:
-                    self._status.failed_events += max(1, len(event_keys))
+                    self._status.failed_events += len(report.get("results") or [])
                     self._status.last_report_error = str(exc)
                 logger.exception("AI result report failed without blocking video processing: %s", exc)
             finally:
@@ -602,6 +635,7 @@ class ProcessedStreamService:
             self._status.last_frame_id = snapshot.packet.frame_id
             self._status.process_time_ms = round(process_time_ms, 2)
             self._status.latest_frame_age_ms = round(frame_age_ms, 2)
+        self._record_timing("overall", process_time_ms)
 
     def _record_event_media(self, output_frame, packet, report):
         if self.event_media_recorder is None:
@@ -665,12 +699,16 @@ class ProcessedStreamService:
             and self._should_run_interval(frame_number - 1, person_interval)
         )
         helmet = not person and (helmet_due or helmet_deferred)
-        face = (
+        face_due_frame = _latest_due_frame(frame_number, face_interval, face_offset)
+        face = bool(
             include_faces
             and not person
             and not helmet
-            and self._should_run_interval(frame_number, face_interval, face_offset)
+            and face_due_frame is not None
+            and face_due_frame > self._last_face_due_frame
         )
+        if face:
+            self._last_face_due_frame = face_due_frame
         return {
             "person": person,
             "helmet": helmet,
@@ -714,12 +752,28 @@ class ProcessedStreamService:
             if model_runs.get("person"):
                 self._status.person_inference_ms = timings.get("person")
                 self._status.last_person_frame_id = frame_id
+                self._schedule_frames["person"].append(self._status.processed_frames)
             if model_runs.get("helmet"):
                 self._status.helmet_inference_ms = timings.get("helmet")
                 self._status.last_helmet_frame_id = frame_id
+                self._schedule_frames["helmet"].append(self._status.processed_frames)
             if model_runs.get("face"):
                 self._status.face_inference_ms = timings.get("face")
                 self._status.last_face_frame_id = frame_id
+                self._schedule_frames["face"].append(self._status.processed_frames)
+        for name in ("person", "helmet", "face", "zoneRules"):
+            if name in timings:
+                self._record_timing(name, timings[name])
+
+    def _record_timing(self, name, value):
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return
+        with self._lock:
+            samples = self._timing_samples.get(name)
+            if samples is not None:
+                samples.append(number)
 
     def _overlay_metrics(self, frame_age_ms: float):
         with self._lock:
@@ -829,3 +883,22 @@ def _region_event_key(result):
         str(result.get("eventType")),
         str(result.get("enteredAt")),
     )
+
+
+def _timing_summary(samples):
+    values = sorted(float(value) for value in samples)
+    if not values:
+        return {"count": 0, "average": None, "p95": None, "max": None}
+    index = min(len(values) - 1, max(0, int((len(values) * 0.95) + 0.999999) - 1))
+    return {
+        "count": len(values),
+        "average": round(sum(values) / len(values), 2),
+        "p95": round(values[index], 2),
+        "max": round(values[-1], 2),
+    }
+
+
+def _latest_due_frame(frame_number, interval, offset):
+    if frame_number < offset:
+        return None
+    return frame_number - ((frame_number - offset) % interval)

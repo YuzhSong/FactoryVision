@@ -130,14 +130,20 @@ onMounted(() => {
         <el-date-picker v-model="filters.dateRange" type="daterange" start-placeholder="开始日期" end-placeholder="结束日期" />
         <el-button type="primary" @click="queryAlerts">查询</el-button>
       </div>
-      <el-table v-loading="loading" :data="alertTableRows" stripe>
-        <el-table-column prop="title" label="告警标题" min-width="160" />
-        <el-table-column prop="camera" label="摄像头" min-width="140" />
-        <el-table-column prop="type" label="类型" min-width="150" />
+      <el-table v-loading="loading" :data="alertTableRows" stripe class="stable-alert-table" table-layout="fixed">
+        <el-table-column prop="title" label="告警标题" width="260" show-overflow-tooltip>
+          <template #default="{ row }"><span class="table-cell-ellipsis">{{ row.title }}</span></template>
+        </el-table-column>
+        <el-table-column prop="camera" label="摄像头" width="160" show-overflow-tooltip>
+          <template #default="{ row }"><span class="table-cell-ellipsis">{{ row.camera }}</span></template>
+        </el-table-column>
+        <el-table-column prop="type" label="类型" width="150" show-overflow-tooltip>
+          <template #default="{ row }"><span class="table-cell-ellipsis">{{ row.type }}</span></template>
+        </el-table-column>
         <el-table-column label="等级" width="100"><template #default="{ row }"><StatusTag :value="row.level" /></template></el-table-column>
         <el-table-column label="状态" width="110"><template #default="{ row }"><StatusTag :value="row.status" /></template></el-table-column>
-        <el-table-column prop="time" label="时间" min-width="170" />
-        <el-table-column label="操作" width="120" fixed="right">
+        <el-table-column prop="time" label="时间" width="180" />
+        <el-table-column label="操作" width="120">
           <template #default="{ row }"><el-button link type="primary" @click="openDetail(row)">查看</el-button></template>
         </el-table-column>
       </el-table>
@@ -184,5 +190,24 @@ onMounted(() => {
   display: flex;
   gap: 10px;
   margin-top: 16px;
+}
+
+.stable-alert-table {
+  width: 100%;
+}
+
+.stable-alert-table :deep(.el-table__inner-wrapper),
+.stable-alert-table :deep(.el-table__header-wrapper),
+.stable-alert-table :deep(.el-table__body-wrapper) {
+  width: 100%;
+  max-width: 100%;
+}
+
+.table-cell-ellipsis {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 </style>

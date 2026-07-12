@@ -41,6 +41,10 @@ body {
   background: var(--fv-bg);
 }
 
+.app-shell > .el-container {
+  min-width: 0;
+}
+
 .app-sidebar {
   border-right: 1px solid #bfd7f4;
   background:
@@ -146,6 +150,9 @@ body {
 }
 
 .app-main {
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: hidden;
   padding: 24px;
 }
 
@@ -159,6 +166,8 @@ body {
 }
 
 .panel {
+  min-width: 0;
+  max-width: 100%;
   padding: 20px;
 }
 
@@ -201,6 +210,8 @@ body {
 
 .page-grid {
   display: grid;
+  min-width: 0;
+  max-width: 100%;
   gap: 18px;
 }
 
@@ -261,6 +272,8 @@ body {
   --el-table-header-bg-color: #f8fafc;
   --el-table-header-text-color: #334155;
   --el-table-row-hover-bg-color: #eef4ff;
+  width: 100%;
+  max-width: 100%;
   font-size: 13px;
 }
 
@@ -313,18 +326,23 @@ body {
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
+  justify-content: flex-end;
+  max-width: min(760px, 58vw);
 }
 
 .status-pill {
   display: inline-flex;
   align-items: center;
   gap: 7px;
+  flex: 0 0 auto;
+  min-width: 150px;
   padding: 6px 8px;
   border: 1px solid transparent;
   border-radius: 8px;
   background: transparent;
   color: var(--fv-text-muted);
   font-size: 13px;
+  white-space: nowrap;
 }
 
 .status-pill:hover {
@@ -399,6 +417,13 @@ body {
 .stream-head {
   top: 14px;
   left: 14px;
+  gap: 6px;
+  max-width: min(220px, calc(100% - 32px));
+  padding: 4px 7px;
+  border-radius: 6px;
+  font-size: 11px;
+  line-height: 1.2;
+  opacity: 0.88;
 }
 
 .stream-foot {

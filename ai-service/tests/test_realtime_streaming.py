@@ -26,6 +26,12 @@ class _FakeDetector:
 
 
 class _FakeFaceService:
+    def __init__(self, loaded_faces=1):
+        self.loaded_faces = loaded_faces
+
+    def status(self):
+        return {"loadedFaces": self.loaded_faces}
+
     def recognize(self, _frame, person_detections=None, frame_id=None):
         return [
             {
@@ -42,9 +48,13 @@ class _FakeFaceService:
 
 
 class _SequencedFaceService:
-    def __init__(self, results_by_call):
+    def __init__(self, results_by_call, loaded_faces=1):
         self.results_by_call = results_by_call
+        self.loaded_faces = loaded_faces
         self.index = 0
+
+    def status(self):
+        return {"loadedFaces": self.loaded_faces}
 
     def recognize(self, _frame, person_detections=None, frame_id=None):
         results = self.results_by_call[min(self.index, len(self.results_by_call) - 1)]
@@ -58,7 +68,7 @@ class _FakeAlertFrameProcessor:
             "cameraId": kwargs.get("camera_id"),
             "frameId": kwargs.get("frame_id"),
             "timestamp": kwargs.get("timestamp"),
-            "results": [{"type": "FALL_ALERT", "trackId": "t-1", "isFall": True}],
+            "results": [{"type": "HELMET_WARNING", "trackId": "t-1", "helmetStatus": "no_helmet"}],
         }
 
 
@@ -260,7 +270,7 @@ class RealtimeStreamingTests(unittest.TestCase):
 
         self.assertEqual(service.status()["event_media_count"], 1)
         self.assertEqual(backend.report["eventMedia"][0]["eventId"], "event-1")
-        self.assertEqual(recorder.calls[0]["report"]["results"][0]["type"], "FALL_ALERT")
+        self.assertEqual(recorder.calls[0]["report"]["results"][0]["type"], "HELMET_WARNING")
 
     def test_live_stream_reports_only_actionable_results(self):
         service = ProcessedStreamService(frame_processor=None)
@@ -268,10 +278,12 @@ class RealtimeStreamingTests(unittest.TestCase):
             "cameraId": 1,
             "results": [
                 {"type": "PERSON_DETECTION", "trackId": "person-1"},
+                {"type": "PERSON_DETECTION", "eventType": "face_recognized", "trackId": "person-spoof"},
                 {"type": "HELMET_DETECTION", "trackId": "person-1"},
                 {"type": "HELMET_WARNING", "trackId": "person-1"},
                 {"type": "FACE_RESULT", "trackId": "person-1", "matched": False},
                 {"type": "FACE_RESULT", "trackId": "person-2", "matched": True, "employeeId": 4},
+                {"type": "FACE_RECOGNIZED", "trackId": "person-2", "employeeId": 4},
                 {"type": "ZONE_WARNING", "trackId": "person-1"},
             ],
         }
@@ -280,9 +292,9 @@ class RealtimeStreamingTests(unittest.TestCase):
 
         self.assertEqual(
             [item["type"] for item in filtered["results"]],
-            ["HELMET_WARNING", "FACE_RESULT", "ZONE_WARNING"],
+            ["HELMET_WARNING", "FACE_RECOGNIZED", "ZONE_WARNING"],
         )
-        self.assertEqual(service.status()["filtered_results"], 3)
+        self.assertEqual(service.status()["filtered_results"], 5)
 
     def test_reporting_requires_camera_id_and_rejects_legacy_realtime_path(self):
         service = ProcessedStreamService(frame_processor=None, default_report_to_backend=True)
@@ -355,6 +367,25 @@ class RealtimeStreamingTests(unittest.TestCase):
         self.assertFalse(any(result.get("type") == "STRANGER_ALERT" for result in reports[0]["results"]))
         self.assertFalse(any(result.get("type") == "STRANGER_ALERT" for result in reports[1]["results"]))
         self.assertTrue(any(result.get("type") == "STRANGER_ALERT" for result in reports[2]["results"]))
+
+    def test_frame_processor_does_not_confirm_stranger_without_loaded_face_library(self):
+        processor = FrameProcessor(
+            person_detector=_FakeDetector(),
+            face_service=_FakeFaceService(loaded_faces=0),
+            abnormal_config={"strangerConfirmFrames": 1},
+        )
+
+        report = processor.process_frame(
+            frame=object(),
+            camera_id=1,
+            frame_id="frame-no-library",
+            timestamp="2026-07-08T03:00:00+08:00",
+            include_faces=True,
+            frame_index=1,
+            fps=10,
+        )
+
+        self.assertFalse(any(result.get("type") == "STRANGER_ALERT" for result in report["results"]))
 
     def test_frame_processor_emits_leave_and_return_presence_events(self):
         recognized = {
