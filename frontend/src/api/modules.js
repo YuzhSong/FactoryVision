@@ -49,6 +49,12 @@ export const employeesApi = {
   create(data) {
     return http.post('/employees/', data)
   },
+  update(employeeId, data) {
+    return http.put(`/employees/${employeeId}/`, data)
+  },
+  remove(employeeId) {
+    return http.delete(`/employees/${employeeId}/delete/`)
+  },
 }
 
 export const faceApi = {
@@ -69,6 +75,9 @@ export const camerasApi = {
   },
   update(cameraId, data) {
     return http.put(`/cameras/${cameraId}/`, data)
+  },
+  remove(cameraId) {
+    return http.delete(`/cameras/${cameraId}/delete/`)
   },
   toggle(cameraId, data) {
     return http.post(`/cameras/${cameraId}/toggle/`, data)

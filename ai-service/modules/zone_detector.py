@@ -26,9 +26,12 @@ class ZoneDetector:
         for detection in detections or []:
             track_id = detection.get("trackId")
             foot_point = self._get_foot_point(detection)
-            if track_id in (None, "") or foot_point is None:
+            if track_id in (None, ""):
                 continue
             confidence = detection.get("confidence")
+            hit_points = self._get_hit_points(detection)
+            if not hit_points:
+                continue
 
             for zone in self.zones:
                 if not isinstance(zone, dict) or not zone.get("enabled", True):
@@ -38,7 +41,8 @@ class ZoneDetector:
                 if region_id in (None, "") or len(points) < 3:
                     continue
                 key = self._state_key(camera_id, region_id, track_id)
-                inside = self._point_in_polygon(foot_point, points)
+                hit_point = next((point for point in hit_points if self._point_in_polygon(point, points)), None)
+                inside = hit_point is not None
                 if not inside:
                     continue
 
@@ -59,10 +63,10 @@ class ZoneDetector:
 
                 duration = max(0.0, now - state["enteredSeconds"])
                 if self._is_restricted(zone) and not state["intrusionEmitted"]:
-                    events.append(self._event("region_intrusion", camera_id, track_id, zone, state, duration, confidence, foot_point))
+                    events.append(self._event("region_intrusion", camera_id, track_id, zone, state, duration, confidence, hit_point))
                     state["intrusionEmitted"] = True
                 if duration >= self._min_stay_seconds(zone) and not state["dwellEmitted"]:
-                    events.append(self._event("region_dwell", camera_id, track_id, zone, state, duration, confidence, foot_point))
+                    events.append(self._event("region_dwell", camera_id, track_id, zone, state, duration, confidence, hit_point))
                     state["dwellEmitted"] = True
 
         # Keep a briefly missing track until TTL expiry; detector tracking can drop frames temporarily.
@@ -124,6 +128,30 @@ class ZoneDetector:
         if isinstance(bbox, (list, tuple)) and len(bbox) == 4:
             return (float(bbox[0]) + float(bbox[2])) / 2, float(bbox[3])
         return None
+
+    def _get_hit_points(self, detection):
+        points = []
+        foot_point = self._get_foot_point(detection)
+        if foot_point is not None:
+            points.append(foot_point)
+        bbox = detection.get("bbox")
+        if isinstance(bbox, dict):
+            x1 = float(bbox.get("x1", 0))
+            y1 = float(bbox.get("y1", 0))
+            x2 = float(bbox.get("x2", 0))
+            y2 = float(bbox.get("y2", 0))
+        elif isinstance(bbox, (list, tuple)) and len(bbox) == 4:
+            x1, y1, x2, y2 = map(float, bbox)
+        else:
+            return points
+        center_x = (x1 + x2) / 2
+        center_y = (y1 + y2) / 2
+        points.extend([
+            (center_x, center_y),
+            (center_x, y1 + (y2 - y1) * 0.33),
+            (center_x, y1 + (y2 - y1) * 0.66),
+        ])
+        return points
 
     def _get_zone_points(self, zone, frame_shape):
         points = zone.get("points") or zone.get("polygonPoints") or []

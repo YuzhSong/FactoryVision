@@ -15,8 +15,8 @@ const realtimeStatus = ref('idle')
 const videoRef = ref(null)
 const playbackStatus = ref('idle')
 const playbackMessage = ref('等待播放 AI 处理后视频流')
-const playbackMode = ref('flv')
 const streamStatus = ref(null)
+const streamAgeSamples = ref([])
 
 let player = null
 let realtimeSocket = null
@@ -32,7 +32,6 @@ function syncHeaderStatus() {
 }
 
 const systemStatus = computed(() => [
-  { label: 'Backend', value: cameras.value.length ? 'connected' : 'waiting', type: cameras.value.length ? 'success' : 'warning' },
   { label: 'WebSocket', value: realtimeStatus.value, type: realtimeStatus.value === 'connected' ? 'success' : 'warning' },
   { label: 'Video Stream', value: playbackStatus.value, type: playbackStatus.value === 'connected' ? 'success' : 'warning' },
 ])
@@ -63,7 +62,14 @@ const detectedFlvUrl = computed(() => {
 const streamHudMetrics = computed(() => {
   const status = streamStatus.value || {}
   const dropped = Number.isFinite(Number(status.dropped_frames)) ? Number(status.dropped_frames) : 0
-  const age = Number.isFinite(Number(status.latest_frame_age_ms)) ? Math.round(Number(status.latest_frame_age_ms)) : 0
+  const serviceAverage = Number(status.latest_frame_age_avg_2s_ms)
+  const localSamples = streamAgeSamples.value.map((sample) => sample.value)
+  const localAverage = localSamples.length
+    ? localSamples.reduce((total, value) => total + value, 0) / localSamples.length
+    : Number(status.latest_frame_age_ms)
+  const age = Number.isFinite(serviceAverage)
+    ? Math.round(serviceAverage)
+    : (Number.isFinite(localAverage) ? Math.round(localAverage) : 0)
   return { dropped, age }
 })
 
@@ -201,16 +207,26 @@ async function ensureProcessedStream() {
 async function refreshStreamStatus() {
   try {
     const response = await aiServiceApi.streamStatus()
-    streamStatus.value = response?.data?.data || response?.data || null
+    const status = response?.data?.data || response?.data || null
+    streamStatus.value = status
+    const age = Number(status?.latest_frame_age_ms)
+    if (Number.isFinite(age)) {
+      const now = Date.now()
+      streamAgeSamples.value = [
+        ...streamAgeSamples.value.filter((sample) => now - sample.time <= 2000),
+        { time: now, value: age },
+      ]
+    }
   } catch (error) {
     streamStatus.value = null
+    streamAgeSamples.value = []
   }
 }
 
 function startStreamStatusPolling() {
   stopStreamStatusPolling()
   refreshStreamStatus()
-  streamStatusTimer = window.setInterval(refreshStreamStatus, 2000)
+  streamStatusTimer = window.setInterval(refreshStreamStatus, 500)
 }
 
 function stopStreamStatusPolling() {
@@ -236,12 +252,7 @@ async function startPlayback(options = {}) {
       await ensureProcessedStream()
       await refreshStreamStatus()
     }
-    if (playbackMode.value === 'flv') {
-      await startFlvPlayback()
-      return
-    }
-
-    await startRtcPlayback()
+    await startFlvPlayback()
   } catch (error) {
     playbackStatus.value = 'error'
     playbackMessage.value = error.message
@@ -377,10 +388,6 @@ watch(activeCamera, () => {
   connectRealtime()
 })
 
-watch(playbackMode, () => {
-  startPlayback()
-})
-
 watch(systemStatus, () => {
   syncHeaderStatus()
 }, { deep: true, immediate: true })
@@ -434,10 +441,6 @@ onBeforeUnmount(() => {
       <div class="panel monitor-center">
         <SectionHeader title="AI 处理后视频">
           <div class="stream-actions">
-            <el-radio-group v-model="playbackMode" size="small">
-              <el-radio-button value="flv">HTTP-FLV</el-radio-button>
-              <el-radio-button value="rtc">WebRTC</el-radio-button>
-            </el-radio-group>
             <el-button size="small" type="primary" @click="startPlayback({ ensureStream: true })">重连</el-button>
           </div>
         </SectionHeader>

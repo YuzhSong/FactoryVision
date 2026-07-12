@@ -107,19 +107,16 @@ class FrameAnnotator:
 
         metrics = metrics or {}
         lines = [
-            f"time: {metrics.get('time', '')}",
-            f"process_fps: {metrics.get('process_fps', 0)}",
-            f"dropped_frames: {metrics.get('dropped_frames', 0)}",
-            f"frame_age_ms: {metrics.get('frame_age_ms', 0)}",
-            f"playback mode: {metrics.get('playback_mode', 'detected stream')}",
+            f"drop {metrics.get('dropped_frames', 0)}",
+            f"age_avg_2s {metrics.get('frame_age_avg_2s_ms', metrics.get('frame_age_ms', 0))}ms",
         ]
         output = frame.copy()
         font = cv2.FONT_HERSHEY_SIMPLEX
-        scale = 0.48
+        scale = 0.4
         thickness = 1
-        line_height = 20
-        padding = 8
-        width = 330
+        line_height = 16
+        padding = 6
+        width = 170
         height = padding * 2 + line_height * len(lines)
         cv2.rectangle(output, (0, 0), (width, height), (0, 0, 0), -1)
         for index, line in enumerate(lines):
@@ -136,14 +133,19 @@ def _label_for_result(result: dict):
         return _helmet_label(helmet_status, result.get("helmetConfidence"))
 
     confidence = result.get("confidence")
+    if confidence is None and result_type == "FACE_RESULT":
+        confidence = result.get("similarity")
     track_id = result.get("trackId")
-    employee_name = result.get("employeeName") or result.get("name")
+    employee_id = result.get("employeeId")
+    employee_no = result.get("employeeNo")
 
     parts = ["Person" if result_type == "PERSON_DETECTION" else result_type.replace("_", " ")]
     if track_id:
         parts.append(str(track_id))
-    if employee_name:
-        parts.append(str(employee_name))
+    if employee_no not in (None, ""):
+        parts.append(f"EmpNo {employee_no}")
+    elif employee_id not in (None, ""):
+        parts.append(f"Emp {employee_id}")
     if confidence is not None:
         try:
             parts.append(f"{float(confidence):.2f}")

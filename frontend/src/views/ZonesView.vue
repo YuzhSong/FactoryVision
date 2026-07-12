@@ -17,7 +17,7 @@ const draggingPointIndex = ref(null)
 const editingZoneId = ref(null)
 const playbackStatus = ref('idle')
 const playbackMessage = ref('等待处理后视频流')
-const playbackMode = ref('flv')
+const switchingZoneId = ref(null)
 const videoLayout = reactive({ left: 0, top: 0, width: 0, height: 0 })
 
 let player = null
@@ -28,7 +28,6 @@ let resizeObserver = null
 const zoneForm = reactive({
   name: '',
   type: 'danger',
-  enabled: true,
   description: '',
 })
 
@@ -210,7 +209,7 @@ const stopPlayback = () => {
 const startPlayback = async (options = {}) => {
   const { ensureStream = false } = options
   stopPlayback()
-  const playUrl = playbackMode.value === 'flv' ? detectedFlvUrl.value : detectedPlayUrl.value
+  const playUrl = detectedFlvUrl.value
   if (!playUrl) {
     playbackStatus.value = 'idle'
     playbackMessage.value = '当前摄像头未配置处理后播放地址'
@@ -222,19 +221,12 @@ const startPlayback = async (options = {}) => {
     if (ensureStream) {
       await ensureProcessedStream()
     }
-    if (playbackMode.value === 'flv') {
-      await loadMpegtsSdk()
-      if (!window.mpegts?.getFeatureList().mseLivePlayback) throw new Error('当前浏览器不支持 HTTP-FLV 直播播放')
-      player = window.mpegts.createPlayer({ type: 'flv', url: playUrl, isLive: true, enableStashBuffer: false })
-      player.attachMediaElement(videoRef.value)
-      player.load()
-      await withTimeout(player.play(), 8000, '处理后视频流连接超时，请检查 SRS 或 processedStreamUrl')
-    } else {
-      await loadSrsSdk()
-      player = new window.SrsRtcPlayerAsync()
-      videoRef.value.srcObject = player.stream
-      await player.play(playUrl.includes('schema=') ? playUrl : `${playUrl}${playUrl.includes('?') ? '&' : '?'}schema=https`)
-    }
+    await loadMpegtsSdk()
+    if (!window.mpegts?.getFeatureList().mseLivePlayback) throw new Error('当前浏览器不支持 HTTP-FLV 直播播放')
+    player = window.mpegts.createPlayer({ type: 'flv', url: playUrl, isLive: true, enableStashBuffer: false })
+    player.attachMediaElement(videoRef.value)
+    player.load()
+    await withTimeout(player.play(), 8000, '处理后视频流连接超时，请检查 SRS 或 processedStreamUrl')
     playbackStatus.value = 'connected'
     playbackMessage.value = `正在播放 ${playUrl}`
   } catch (error) {
@@ -298,7 +290,6 @@ const resetZoneForm = () => {
   Object.assign(zoneForm, {
     name: '',
     type: 'danger',
-    enabled: true,
     description: '',
   })
 }
@@ -353,7 +344,9 @@ const saveZone = async () => {
         x: Number(point.x.toFixed(4)),
         y: Number(point.y.toFixed(4)),
       })),
-      enabled: zoneForm.enabled,
+      enabled: editingZoneId.value
+        ? zones.value.find((zone) => zone.id === editingZoneId.value)?.enabled !== false
+        : true,
       description: zoneForm.description,
     }
     if (editingZoneId.value) await zonesApi.update(editingZoneId.value, payload)
@@ -375,10 +368,33 @@ const editZone = (zone) => {
   Object.assign(zoneForm, {
     name: zone.name,
     type: zone.type,
-    enabled: zone.enabled,
     description: zone.description || '',
   })
   draftPoints.value = (zone.points || []).map((point) => ({ x: Number(point.x), y: Number(point.y) }))
+}
+
+const toggleZoneEnabled = async (zone, enabled) => {
+  const previous = zone.enabled !== false
+  if (previous === enabled) return
+  switchingZoneId.value = zone.id
+  zones.value = zones.value.map((item) => (item.id === zone.id ? { ...item, enabled } : item))
+  try {
+    await zonesApi.update(zone.id, {
+      cameraId: zone.cameraId,
+      name: zone.name,
+      type: zone.type,
+      points: zone.points || [],
+      enabled,
+      description: zone.description || '',
+    })
+    ElMessage.success(enabled ? '区域已启用' : '区域已停用')
+    await loadZones()
+  } catch (error) {
+    zones.value = zones.value.map((item) => (item.id === zone.id ? { ...item, enabled: previous } : item))
+    ElMessage.error(getApiErrorMessage(error, '区域启用状态更新失败'))
+  } finally {
+    switchingZoneId.value = null
+  }
 }
 
 const deleteZone = async (zone) => {
@@ -429,8 +445,6 @@ watch(cameraId, () => {
   startPlayback({ ensureStream: true })
 })
 
-watch(playbackMode, startPlayback)
-
 onMounted(async () => {
   await loadCameras()
   await loadZones()
@@ -453,10 +467,6 @@ onBeforeUnmount(() => {
           <el-option v-for="camera in cameras" :key="camera.id" :label="camera.name" :value="camera.id" />
         </el-select>
         <el-button @click="useExamplePolygon">示例区域</el-button>
-        <el-radio-group v-model="playbackMode" size="small">
-          <el-radio-button value="flv">HTTP-FLV</el-radio-button>
-          <el-radio-button value="rtc">WebRTC</el-radio-button>
-        </el-radio-group>
         <el-button @click="startPlayback({ ensureStream: true })">重连视频</el-button>
         <el-button :disabled="draftPoints.length === 0" @click="undoDraftPoint">撤销点位</el-button>
         <el-button :disabled="draftPoints.length === 0" @click="clearDraftPoints">清空</el-button>
@@ -474,9 +484,6 @@ onBeforeUnmount(() => {
             <el-option label="工位区域" value="workstation" />
             <el-option label="普通区域" value="general" />
           </el-select>
-        </el-form-item>
-        <el-form-item label="启用">
-          <el-switch v-model="zoneForm.enabled" />
         </el-form-item>
         <el-form-item label="说明">
           <el-input v-model="zoneForm.description" placeholder="区域用途或风险说明" />
@@ -549,7 +556,13 @@ onBeforeUnmount(() => {
         <el-table-column prop="pointCount" label="点位数" width="100" />
         <el-table-column prop="description" label="说明" min-width="180" show-overflow-tooltip />
         <el-table-column label="启用" width="100">
-          <template #default="{ row }"><el-switch :model-value="row.enabled" disabled /></template>
+          <template #default="{ row }">
+            <el-switch
+              :model-value="row.enabled"
+              :loading="switchingZoneId === row.id"
+              @change="(value) => toggleZoneEnabled(row, value)"
+            />
+          </template>
         </el-table-column>
         <el-table-column label="操作" width="150">
           <template #default="{ row }">

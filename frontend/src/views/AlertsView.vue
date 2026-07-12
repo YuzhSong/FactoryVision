@@ -15,7 +15,7 @@ const filters = reactive({
   keyword: '',
   severity: '',
   status: '',
-  dateRange: [],
+  alertDate: '',
   page: 1,
   pageSize: 20,
 })
@@ -47,16 +47,27 @@ function getApiErrorMessage(error, fallback) {
   return response.message || fallback
 }
 
+function getSelectedDayRange(value) {
+  if (!value) return {}
+  const start = new Date(`${value}T00:00:00`)
+  const end = new Date(`${value}T23:59:59.999`)
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return {}
+  return {
+    startTime: start.toISOString(),
+    endTime: end.toISOString(),
+  }
+}
+
 async function loadAlerts() {
   loading.value = true
   try {
-    const [startTime, endTime] = filters.dateRange || []
+    const timeRange = getSelectedDayRange(filters.alertDate)
     const response = await alertsApi.list({
       keyword: filters.keyword || undefined,
       severity: filters.severity || undefined,
       status: filters.status || undefined,
-      startTime: startTime ? new Date(startTime).toISOString() : undefined,
-      endTime: endTime ? new Date(endTime).toISOString() : undefined,
+      startTime: timeRange.startTime,
+      endTime: timeRange.endTime,
       page: filters.page,
       pageSize: filters.pageSize,
     })
@@ -127,7 +138,7 @@ onMounted(() => {
           <el-option label="处理中" value="processing" />
           <el-option label="已关闭" value="closed" />
         </el-select>
-        <el-date-picker v-model="filters.dateRange" type="daterange" start-placeholder="开始日期" end-placeholder="结束日期" />
+        <el-date-picker v-model="filters.alertDate" type="date" value-format="YYYY-MM-DD" placeholder="选择日期" clearable />
         <el-button type="primary" @click="queryAlerts">查询</el-button>
       </div>
       <el-table v-loading="loading" :data="alertTableRows" stripe class="stable-alert-table" table-layout="fixed">

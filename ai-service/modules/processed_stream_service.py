@@ -169,6 +169,7 @@ class ProcessedStreamService:
             name: deque(maxlen=300)
             for name in ("person", "helmet", "face", "zoneRules", "draw", "encode", "overall")
         }
+        self._frame_age_samples = deque(maxlen=120)
         self._schedule_frames = {name: deque(maxlen=20) for name in ("person", "helmet", "face")}
         self._last_face_due_frame = -1
 
@@ -197,6 +198,7 @@ class ProcessedStreamService:
             self._helmet_cache_frame = None
             for samples in self._timing_samples.values():
                 samples.clear()
+            self._frame_age_samples.clear()
             for frames in self._schedule_frames.values():
                 frames.clear()
             self._last_face_due_frame = -1
@@ -271,6 +273,11 @@ class ProcessedStreamService:
             snapshot["timing_summary_ms"] = {
                 name: _timing_summary(samples) for name, samples in self._timing_samples.items()
             }
+            snapshot["latest_frame_age_avg_2s_ms"] = _recent_average(
+                self._frame_age_samples,
+                window_seconds=2.0,
+                fallback=self._status.latest_frame_age_ms,
+            )
             snapshot["model_schedule_frames"] = {
                 name: list(frames) for name, frames in self._schedule_frames.items()
             }
@@ -635,6 +642,7 @@ class ProcessedStreamService:
             self._status.last_frame_id = snapshot.packet.frame_id
             self._status.process_time_ms = round(process_time_ms, 2)
             self._status.latest_frame_age_ms = round(frame_age_ms, 2)
+            self._frame_age_samples.append((time.monotonic(), float(frame_age_ms)))
         self._record_timing("overall", process_time_ms)
 
     def _record_event_media(self, output_frame, packet, report):
@@ -782,6 +790,11 @@ class ProcessedStreamService:
                 "process_fps": self._status.process_fps,
                 "dropped_frames": self._status.dropped_frames,
                 "frame_age_ms": round(frame_age_ms, 2),
+                "frame_age_avg_2s_ms": _recent_average(
+                    self._frame_age_samples,
+                    window_seconds=2.0,
+                    fallback=frame_age_ms,
+                ),
                 "playback_mode": "detected stream",
                 "rotation": FIXED_CAMERA_ROTATION,
             }
@@ -896,6 +909,14 @@ def _timing_summary(samples):
         "p95": round(values[index], 2),
         "max": round(values[-1], 2),
     }
+
+
+def _recent_average(samples, window_seconds: float, fallback=None):
+    now = time.monotonic()
+    values = [float(value) for recorded_at, value in samples if now - float(recorded_at) <= window_seconds]
+    if not values:
+        return round(float(fallback), 2) if fallback is not None else None
+    return round(sum(values) / len(values), 2)
 
 
 def _latest_due_frame(frame_number, interval, offset):

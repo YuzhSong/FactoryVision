@@ -89,9 +89,6 @@ function handleMonitorStatusUpdate(event) {
   }
 
   for (const item of details) {
-    if (item?.label === 'Backend' && item.value) {
-      backendStatus.value = item.value
-    }
     if (item?.label === 'WebSocket' && item.value) {
       websocketStatus.value = item.value
     }
@@ -104,7 +101,8 @@ function handleMonitorStatusUpdate(event) {
 async function loadSystemStatus() {
   try {
     const response = await healthApi.getHealth()
-    backendStatus.value = response?.data?.status === 'ok' ? 'connected' : 'warning'
+    const health = response?.data || response
+    backendStatus.value = response?.code === 200 || health?.status === 'ok' ? 'connected' : 'warning'
   } catch (error) {
     backendStatus.value = 'offline'
   }

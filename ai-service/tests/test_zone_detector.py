@@ -19,6 +19,15 @@ def _person(track_id="t-1", x=50, y=100):
     return {"type": "PERSON_DETECTION", "trackId": track_id, "footPoint": {"x": x, "y": y}, "confidence": 0.9}
 
 
+def _person_box(track_id="t-1", x1=40, y1=30, x2=80, y2=130):
+    return {
+        "type": "PERSON_DETECTION",
+        "trackId": track_id,
+        "bbox": {"x1": x1, "y1": y1, "x2": x2, "y2": y2},
+        "confidence": 0.9,
+    }
+
+
 class ZoneDetectorTests(unittest.TestCase):
     def test_point_inside_outside_and_boundary(self):
         detector = ZoneDetector([_zone()], min_stay_seconds=99)
@@ -67,6 +76,12 @@ class ZoneDetectorTests(unittest.TestCase):
         detector = ZoneDetector([_zone(points=[{"x": 40, "y": 40}, {"x": 60, "y": 40}, {"x": 60, "y": 80}, {"x": 40, "y": 80}])], min_stay_seconds=99)
         events = detector.detect_events(1, [_person(x=50, y=70)], "2026-07-11T10:00:00+08:00", frame_shape=(100, 100, 3))
         self.assertEqual(events[0]["eventType"], "region_intrusion")
+
+    def test_bbox_body_point_inside_region_triggers_when_foot_is_outside(self):
+        detector = ZoneDetector([_zone(points=[{"x": 50, "y": 40}, {"x": 70, "y": 40}, {"x": 70, "y": 80}, {"x": 50, "y": 80}])], min_stay_seconds=99)
+        events = detector.detect_events(1, [_person_box()], "2026-07-11T10:00:00+08:00", frame_shape=(100, 100, 3))
+        self.assertEqual(events[0]["eventType"], "region_intrusion")
+        self.assertLessEqual(events[0]["footPoint"]["y"], 80)
 
     def test_disabled_region_does_not_create_or_retain_state(self):
         detector = ZoneDetector([_zone(enabled=False)])
