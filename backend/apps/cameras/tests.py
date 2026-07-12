@@ -30,6 +30,10 @@ class CameraListTests(TestCase):
         self.assertEqual(item["streamUrl"], "rtmp://example/live/a")
         self.assertEqual(item["processedStreamUrl"], "rtmp://example/live/a_ai")
         self.assertTrue(item["enabled"])
+        self.assertFalse(item["includeFaces"])
+        self.assertEqual(item["streamConfig"]["cameraId"], item["id"])
+        self.assertEqual(item["streamConfig"]["inputUrl"], item["streamUrl"])
+        self.assertTrue(item["streamConfig"]["reportToBackend"])
 
 
 class CameraStreamControlTests(TestCase):
@@ -45,6 +49,7 @@ class CameraStreamControlTests(TestCase):
             location="Line 1",
             status=Camera.Status.ONLINE,
             enabled=True,
+            include_faces=True,
         )
 
     @patch("apps.cameras.views.requests.request")
@@ -64,12 +69,22 @@ class CameraStreamControlTests(TestCase):
         self.assertEqual(
             kwargs["json"],
             {
+                "configVersion": 1,
                 "cameraId": self.camera.id,
-                "streamUrl": "rtmp://81.70.90.222:1935/live/1",
+                "inputUrl": "rtmp://81.70.90.222:1935/live/1",
                 "outputUrl": "rtmp://81.70.90.222:1935/live/1_detected",
                 "playUrl": "https://webrtc.rainycode.cn:8443/live/1_detected.flv",
-                "includeFaces": False,
-                "reportToBackend": False,
+                "includeFaces": True,
+                "reportToBackend": True,
+                "personDetectInterval": 5,
+                "helmetDetectInterval": 8,
+                "helmetDetectOffset": 4,
+                "faceDetectInterval": 30,
+                "faceDetectOffset": 2,
+                "zoneRefreshIntervalSeconds": 10.0,
+                "reconnectAttempts": 3,
+                "reconnectDelaySeconds": 1.0,
+                "zones": [],
             },
         )
         self.assertTrue(response.data["data"]["running"])

@@ -246,7 +246,7 @@ const submitEmployeeEdit = () => {
     return
   }
 
-  ElMessage.warning('员工编辑接口 planned，当前仅保留编辑界面，待后端接口接入')
+  ElMessage.warning('员工编辑暂不可保存，待后端接口接入')
   editDialogVisible.value = false
 }
 
@@ -318,7 +318,7 @@ onMounted(() => {
 <template>
   <div class="page-grid">
     <div class="panel table-panel">
-      <SectionHeader title="员工管理" description="员工档案已接入后端列表和创建接口，人脸录入使用三视角照片提交。">
+      <SectionHeader title="员工管理">
         <el-button type="primary" @click="openCreateDialog">新增员工</el-button>
       </SectionHeader>
       <div class="filter-row">
@@ -351,7 +351,7 @@ onMounted(() => {
           </template>
         </el-table-column>
       </el-table>
-      <div class="placeholder-note">共 {{ employeeTotal }} 条员工记录</div>
+      <div class="record-count">共 {{ employeeTotal }} 条员工记录</div>
     </div>
 
     <el-dialog v-model="dialogVisible" title="新增员工" width="520px">
@@ -411,7 +411,7 @@ onMounted(() => {
       </el-form>
       <template #footer>
         <el-button @click="editDialogVisible = false">取消</el-button>
-        <el-button type="primary" @click="submitEmployeeEdit">保存 planned</el-button>
+        <el-button type="primary" @click="submitEmployeeEdit">保存</el-button>
       </template>
     </el-dialog>
 

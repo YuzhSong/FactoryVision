@@ -1,5 +1,4 @@
 import os
-from urllib.parse import urlparse
 
 import requests
 from django.conf import settings
@@ -13,6 +12,7 @@ from common.response import api_response
 
 from .models import Camera
 from .serializers import CameraCreateSerializer, CameraListSerializer, CameraPlaceholderSerializer, CameraToggleSerializer, CameraUpdateSerializer
+from .stream_config import resolve_stream_start_config
 
 AI_SERVICE_URL = os.getenv("AI_SERVICE_URL", "http://127.0.0.1:9000").rstrip("/")
 
@@ -30,56 +30,8 @@ def _ai_service_headers():
     return {"X-AI-Service-Token": token} if token else {}
 
 
-def _extract_stream_key(stream_url: str) -> str:
-    parsed = urlparse(stream_url or "")
-    path_parts = [part for part in parsed.path.split("/") if part]
-    stream_key = path_parts[-1] if path_parts else ""
-    return stream_key[:-4] if stream_key.endswith(".flv") else stream_key
-
-
-def _build_processed_output_url(camera: Camera) -> str:
-    processed_url = (camera.processed_stream_url or "").strip()
-    if processed_url.startswith(("rtmp://", "rtmps://")):
-        return processed_url
-
-    source_url = (camera.stream_url or "").strip()
-    parsed = urlparse(source_url)
-    path_parts = [part for part in parsed.path.split("/") if part]
-    if parsed.scheme not in {"rtmp", "rtmps"} or not parsed.netloc or not path_parts:
-        return processed_url
-
-    path_parts[-1] = f"{path_parts[-1]}_detected"
-    return f"{parsed.scheme}://{parsed.netloc}/{'/'.join(path_parts)}"
-
-
-def _build_processed_play_url(camera: Camera, output_url: str) -> str:
-    processed_url = (camera.processed_stream_url or "").strip()
-    if processed_url:
-        return processed_url
-
-    output_parsed = urlparse(output_url or "")
-    if output_parsed.scheme in {"rtmp", "rtmps"} and output_parsed.netloc:
-        stream_key = _extract_stream_key(output_url)
-        app_name = ""
-        path_parts = [part for part in output_parsed.path.split("/") if part]
-        if len(path_parts) >= 2:
-            app_name = path_parts[-2]
-        if app_name and stream_key:
-            return f"https://{output_parsed.hostname}:8443/{app_name}/{stream_key}.flv"
-
-    return output_url
-
-
 def _camera_stream_payload(camera: Camera) -> dict:
-    output_url = _build_processed_output_url(camera)
-    return {
-        "cameraId": camera.id,
-        "streamUrl": camera.stream_url,
-        "outputUrl": output_url,
-        "playUrl": _build_processed_play_url(camera, output_url),
-        "includeFaces": False,
-        "reportToBackend": False,
-    }
+    return resolve_stream_start_config(camera)
 
 
 def _call_ai_service(method: str, path: str, *, json_payload: dict | None = None):
@@ -260,6 +212,7 @@ def camera_create_view(request):
         stream_url=validated["streamUrl"],
         processed_stream_url=validated.get("processedStreamUrl", ""),
         location=validated.get("location", ""),
+        include_faces=validated.get("includeFaces", False),
     )
 
     if not camera.code:
@@ -348,6 +301,8 @@ def camera_update_view(request, camera_id):
         camera.location = validated["location"]
     if "enabled" in validated:
         camera.enabled = validated["enabled"]
+    if "includeFaces" in validated:
+        camera.include_faces = validated["includeFaces"]
 
     camera.save()
 
@@ -462,10 +417,10 @@ def camera_stream_start_view(_request, camera_id):
         )
 
     payload = _camera_stream_payload(camera)
-    if not payload["streamUrl"]:
+    if not payload["inputUrl"]:
         return api_response(
             code=422,
-            message="Camera streamUrl is required",
+            message="Camera inputUrl is required",
             data=None,
             status=status.HTTP_422_UNPROCESSABLE_ENTITY,
         )

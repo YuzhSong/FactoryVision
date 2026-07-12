@@ -58,6 +58,7 @@ class StreamTaskStatus:
     last_person_frame_id: str | None = None
     last_helmet_frame_id: str | None = None
     last_face_frame_id: str | None = None
+    active_config: dict | None = None
 
 
 @dataclass
@@ -161,11 +162,15 @@ class ProcessedStreamService:
 
     def start(self, payload: dict | None = None):
         """Start background stream processing, or return existing task status."""
-        payload = payload or {}
+        payload = dict(payload or {})
         if _to_bool(payload.get("reportRealtimeToBackend")):
             raise ValueError("`reportRealtimeToBackend` is no longer supported; use `reportToBackend`.")
-        report_to_backend = _to_bool(payload.get("reportToBackend", self.default_report_to_backend))
-        if report_to_backend and not payload.get("cameraId"):
+        input_url = payload.get("inputUrl") or payload.get("streamUrl") or self.default_input_url
+        if not input_url:
+            raise ValueError("`inputUrl` is required.")
+        payload["inputUrl"] = input_url
+        run_config = self._resolve_run_config(payload)
+        if run_config["reportToBackend"] and not payload.get("cameraId"):
             raise ValueError("`cameraId` is required when `reportToBackend` is enabled.")
         with self._lock:
             if self._thread is not None and self._thread.is_alive():
@@ -184,7 +189,7 @@ class ProcessedStreamService:
                 self._processed_sequence = 0
             self._status = StreamTaskStatus(
                 camera_id=payload.get("cameraId"),
-                input_url=payload.get("streamUrl") or payload.get("inputUrl") or self.default_input_url,
+                input_url=input_url,
                 output_url=payload.get("outputUrl") or self.default_output_url,
                 play_url=payload.get("playUrl") or self.default_play_url,
                 mode=payload.get("mode") or self.default_mode,
@@ -197,13 +202,30 @@ class ProcessedStreamService:
                 output_fps=self.output_fps,
                 event_media_count=0,
                 last_event_media=None,
+                active_config=run_config,
             )
             if self.event_media_recorder is not None:
                 self.event_media_recorder.reset()
-            self._thread = threading.Thread(target=self._run, args=(dict(payload),), daemon=True)
+            self._thread = threading.Thread(target=self._run, args=(payload, run_config), daemon=True)
             self._thread.start()
             snapshot = asdict(self._status)
         return snapshot
+
+    def _resolve_run_config(self, payload: dict) -> dict:
+        """Freeze the resolved start payload so all worker threads use one configuration."""
+        return {
+            "configVersion": payload.get("configVersion"),
+            "includeFaces": _to_bool(payload.get("includeFaces", Config.STREAM_INCLUDE_FACES_DEFAULT)),
+            "reportToBackend": _to_bool(payload.get("reportToBackend", self.default_report_to_backend)),
+            "personDetectInterval": _positive_int(payload.get("personDetectInterval"), self.person_detect_interval),
+            "helmetDetectInterval": _positive_int(payload.get("helmetDetectInterval"), self.helmet_detect_interval),
+            "helmetDetectOffset": _non_negative_int(payload.get("helmetDetectOffset"), self.helmet_detect_offset),
+            "faceDetectInterval": _positive_int(payload.get("faceDetectInterval"), self.face_detect_interval),
+            "faceDetectOffset": _non_negative_int(payload.get("faceDetectOffset"), self.face_detect_offset),
+            "zoneRefreshIntervalSeconds": _positive_float(payload.get("zoneRefreshIntervalSeconds"), self.zone_refresh_interval_seconds),
+            "reconnectAttempts": _positive_int(payload.get("reconnectAttempts"), self.reconnect_attempts),
+            "reconnectDelaySeconds": _positive_float(payload.get("reconnectDelaySeconds"), self.reconnect_delay_seconds),
+        }
 
     def stop(self):
         """Request current background stream processing to stop."""
@@ -228,13 +250,13 @@ class ProcessedStreamService:
         with self._lock:
             return asdict(self._status)
 
-    def _run(self, payload: dict):
+    def _run(self, payload: dict, run_config: dict):
         reader = None
         writer = None
         try:
             reader = StreamReader(
-                reconnect_attempts=self.reconnect_attempts,
-                reconnect_delay_seconds=self.reconnect_delay_seconds,
+                reconnect_attempts=run_config["reconnectAttempts"],
+                reconnect_delay_seconds=run_config["reconnectDelaySeconds"],
             ).open_stream(self._status.input_url)
 
             first_packet = reader.read_frame()
@@ -268,7 +290,7 @@ class ProcessedStreamService:
                 ffmpeg_path=self.ffmpeg_path,
             ).open()
 
-            self._process_loop(payload, writer, output_fps)
+            self._process_loop(payload, writer, output_fps, run_config)
         except Exception as exc:
             with self._lock:
                 self._status.last_error = f"{exc}\n{traceback.format_exc(limit=5)}"
@@ -317,9 +339,9 @@ class ProcessedStreamService:
             with self._frame_condition:
                 self._frame_condition.notify_all()
 
-    def _process_loop(self, payload: dict, writer, output_fps: float):
-        include_faces = _to_bool(payload.get("includeFaces", Config.STREAM_INCLUDE_FACES_DEFAULT))
-        report_to_backend = _to_bool(payload.get("reportToBackend", self.default_report_to_backend))
+    def _process_loop(self, payload: dict, writer, output_fps: float, run_config: dict):
+        include_faces = run_config["includeFaces"]
+        report_to_backend = run_config["reportToBackend"]
         max_frames = _optional_positive_int(payload.get("maxFrames"))
         zones = payload.get("zones") if isinstance(payload.get("zones"), list) else None
         zones_last_refreshed_at = time.monotonic()
@@ -332,7 +354,7 @@ class ProcessedStreamService:
             if (
                 self.backend_client is not None
                 and self._status.camera_id
-                and time.monotonic() - zones_last_refreshed_at >= self.zone_refresh_interval_seconds
+                and time.monotonic() - zones_last_refreshed_at >= run_config["zoneRefreshIntervalSeconds"]
             ):
                 try:
                     zones = self.backend_client.list_zones(self._status.camera_id)
@@ -355,6 +377,7 @@ class ProcessedStreamService:
                 report_to_backend,
                 zones,
                 last_report,
+                run_config,
             )
             writer.write(output_frame)
             elapsed_ms = (time.monotonic() - started_at) * 1000
@@ -392,9 +415,10 @@ class ProcessedStreamService:
         report_to_backend: bool,
         zones: list[dict] | None,
         last_report: dict,
+        run_config: dict | None = None,
     ):
         packet = snapshot.packet
-        model_runs = self._model_runs(include_faces)
+        model_runs = self._model_runs(include_faces, run_config)
         should_detect = any(model_runs.values())
         if self._status.mode == "test":
             output_frame = self.annotator.draw_test_box(packet.frame, frame_id=packet.frame_id)
@@ -620,26 +644,32 @@ class ProcessedStreamService:
             return True
         return self._status.processed_frames % self.detect_interval == 0
 
-    def _model_runs(self, include_faces: bool):
+    def _model_runs(self, include_faces: bool, run_config: dict | None = None):
         """Schedule one model per tick while retaining the legacy analysis cadence."""
+        run_config = run_config or {}
         frame_number = self._status.processed_frames
-        person = self._should_run_interval(frame_number, self.person_detect_interval)
+        person_interval = _positive_int(run_config.get("personDetectInterval"), self.person_detect_interval)
+        helmet_interval = _positive_int(run_config.get("helmetDetectInterval"), self.helmet_detect_interval)
+        helmet_offset = _non_negative_int(run_config.get("helmetDetectOffset"), self.helmet_detect_offset)
+        face_interval = _positive_int(run_config.get("faceDetectInterval"), self.face_detect_interval)
+        face_offset = _non_negative_int(run_config.get("faceDetectOffset"), self.face_detect_offset)
+        person = self._should_run_interval(frame_number, person_interval)
         helmet_due = self._should_run_interval(
             frame_number,
-            self.helmet_detect_interval,
-            self.helmet_detect_offset,
+            helmet_interval,
+            helmet_offset,
         )
         helmet_deferred = (
             frame_number > 0
-            and self._should_run_interval(frame_number - 1, self.helmet_detect_interval, self.helmet_detect_offset)
-            and self._should_run_interval(frame_number - 1, self.person_detect_interval)
+            and self._should_run_interval(frame_number - 1, helmet_interval, helmet_offset)
+            and self._should_run_interval(frame_number - 1, person_interval)
         )
         helmet = not person and (helmet_due or helmet_deferred)
         face = (
             include_faces
             and not person
             and not helmet
-            and self._should_run_interval(frame_number, self.face_detect_interval, self.face_detect_offset)
+            and self._should_run_interval(frame_number, face_interval, face_offset)
         )
         return {
             "person": person,
@@ -762,6 +792,27 @@ def _optional_positive_int(value):
     except (TypeError, ValueError):
         return None
     return parsed if parsed > 0 else None
+
+
+def _positive_int(value, default: int) -> int:
+    try:
+        return max(1, int(value))
+    except (TypeError, ValueError):
+        return max(1, int(default))
+
+
+def _non_negative_int(value, default: int) -> int:
+    try:
+        return max(0, int(value))
+    except (TypeError, ValueError):
+        return max(0, int(default))
+
+
+def _positive_float(value, default: float) -> float:
+    try:
+        return max(0.01, float(value))
+    except (TypeError, ValueError):
+        return max(0.01, float(default))
 
 
 def _region_event_keys(report):

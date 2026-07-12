@@ -21,6 +21,13 @@ let realtimeSocket = null
 let sdkPromise = null
 let flvPromise = null
 
+function syncHeaderStatus() {
+  if (typeof window === 'undefined') return
+  window.dispatchEvent(new CustomEvent('factory-vision-monitor-status', {
+    detail: systemStatus.value,
+  }))
+}
+
 const systemStatus = computed(() => [
   { label: 'Backend', value: cameras.value.length ? 'connected' : 'waiting', type: cameras.value.length ? 'success' : 'warning' },
   { label: 'WebSocket', value: realtimeStatus.value, type: realtimeStatus.value === 'connected' ? 'success' : 'warning' },
@@ -138,15 +145,12 @@ function deriveOutputUrl(camera) {
   return `${match[1]}${match[2]}_detected`
 }
 
-function buildAiStreamPayload(camera) {
-  if (!camera) return null
-  return {
-    streamUrl: camera.streamUrl || '',
-    outputUrl: deriveOutputUrl(camera),
-    playUrl: camera.processedStreamUrl || camera.playUrl || '',
-    includeFaces: false,
-    reportToBackend: false,
-  }
+function buildAiStreamPayload(camera, failedStartResponse = null) {
+  const config = failedStartResponse?.cameraConfig
+    || (failedStartResponse?.inputUrl ? failedStartResponse : null)
+    || camera?.streamConfig
+  if (!config) return null
+  return { ...config, zones: Array.isArray(config.zones) ? config.zones : [] }
 }
 
 async function ensureProcessedStream() {
@@ -168,8 +172,8 @@ async function ensureProcessedStream() {
     if (runningStatus?.running) return runningStatus
     return response?.data || null
   } catch (error) {
-    const payload = buildAiStreamPayload(currentCamera.value)
-    if (!payload?.streamUrl || !payload?.outputUrl || !payload?.playUrl) {
+    const payload = buildAiStreamPayload(currentCamera.value, error?.response?.data?.data)
+    if (!payload?.cameraId || !payload?.inputUrl || !payload?.outputUrl || !payload?.playUrl) {
       throw error
     }
     let lastStatus = null
@@ -373,11 +377,23 @@ watch(playbackMode, () => {
   startPlayback()
 })
 
+watch(systemStatus, () => {
+  syncHeaderStatus()
+}, { deep: true, immediate: true })
+
 onMounted(async () => {
   await loadCameras()
+  if (activeCamera.value) {
+    await loadEventHistory()
+    startPlayback({ ensureStream: true })
+    connectRealtime()
+  }
 })
 
 onBeforeUnmount(() => {
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('factory-vision-monitor-status', { detail: null }))
+  }
   stopPlayback()
   closeRealtimeConnection()
 })
@@ -385,38 +401,31 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="page-grid monitor-page">
-    <div class="panel">
-      <SectionHeader title="实时监控工作台" description="当前播放 AI Service 回推到 SRS 的带框 WebRTC 视频流。">
-        <div class="status-strip">
-          <span v-for="item in systemStatus" :key="item.label" class="status-pill">
-            <i class="status-dot" :class="item.type" />{{ item.label }}: {{ item.value }}
-          </span>
-        </div>
-      </SectionHeader>
-    </div>
-
     <div class="monitor-layout">
       <div class="panel">
-        <SectionHeader title="摄像头列表" badge="REST" />
-        <el-radio-group v-model="activeCamera" v-loading="camerasLoading" class="camera-list">
-          <el-radio-button v-for="camera in cameras" :key="camera.id" :label="camera.id">
-            {{ camera.name }}
-          </el-radio-button>
-        </el-radio-group>
+        <SectionHeader title="摄像头列表" />
         <el-empty v-if="!camerasLoading && cameras.length === 0" description="暂无摄像头数据" />
-        <div class="event-list">
-          <div v-for="camera in cameras" :key="camera.id" class="event-item">
+        <div v-loading="camerasLoading" class="camera-card-list">
+          <button
+            v-for="camera in cameras"
+            :key="camera.id"
+            type="button"
+            class="camera-select-card"
+            :class="{ 'is-active': String(activeCamera) === String(camera.id) }"
+            @click="activeCamera = camera.id"
+          >
             <div class="event-title">
               <strong>{{ camera.name }}</strong>
               <StatusTag :value="camera.status" />
             </div>
-            <p class="placeholder-note">{{ camera.location }}</p>
-          </div>
+            <p class="event-meta">编码：{{ camera.code || '未配置' }}</p>
+            <p class="event-meta">位置：{{ camera.location || '未配置位置' }}</p>
+          </button>
         </div>
       </div>
 
       <div class="panel monitor-center">
-        <SectionHeader title="AI 处理后视频" description="画面由 AI Service 拉流检测后写入检测框，再回推到 SRS 播放。">
+        <SectionHeader title="AI 处理后视频">
           <div class="stream-actions">
             <el-radio-group v-model="playbackMode" size="small">
               <el-radio-button value="flv">HTTP-FLV</el-radio-button>
@@ -447,7 +456,7 @@ onBeforeUnmount(() => {
               <StatusTag :value="event.level" />
             </div>
             <p>{{ event.text }}</p>
-            <p class="placeholder-note">{{ event.time }}</p>
+            <p class="event-meta">{{ event.time }}</p>
           </div>
         </div>
         <el-empty v-if="realtimeEvents.length === 0" description="等待实时事件推送" />
@@ -466,21 +475,62 @@ onBeforeUnmount(() => {
 <style scoped>
 .monitor-layout {
   display: grid;
-  grid-template-columns: 260px minmax(0, 1fr) 300px;
-  gap: 18px;
+  grid-template-columns: 192px minmax(0, 1fr) 295px;
+  gap: 10px;
+  align-items: stretch;
+  --monitor-list-max-height: min(520px, calc(100vh - 330px));
 }
 
-.camera-list {
+.monitor-layout > .panel {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.camera-card-list {
   display: grid;
   gap: 10px;
-  margin-bottom: 16px;
+  max-height: var(--monitor-list-max-height);
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 4px;
 }
 
-.camera-list :deep(.el-radio-button__inner) {
+.monitor-layout > .panel:not(.monitor-center) .event-list {
+  flex: 1;
+  max-height: var(--monitor-list-max-height);
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.camera-select-card {
   width: 100%;
-  border-left: var(--el-border);
+  padding: 14px;
+  border: 1px solid var(--fv-border);
   border-radius: 8px;
+  background: var(--fv-panel);
+  color: var(--fv-text);
   text-align: left;
+  cursor: pointer;
+  transition: border-color 180ms ease, box-shadow 180ms ease, background 180ms ease;
+}
+
+.camera-select-card .event-title {
+  align-items: flex-start;
+}
+
+.camera-select-card:hover,
+.camera-select-card.is-active {
+  border-color: #38bdf8;
+  background: rgba(37, 99, 235, 0.12);
+  box-shadow: 0 0 0 1px rgba(56, 189, 248, 0.24), 0 10px 24px rgba(15, 23, 42, 0.12);
+}
+
+.camera-select-card:focus-visible {
+  outline: 2px solid #38bdf8;
+  outline-offset: 2px;
 }
 
 .stream-actions {

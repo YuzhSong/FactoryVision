@@ -26,6 +26,7 @@ const cameraForm = reactive({
   streamUrl: '',
   processedStreamUrl: '',
   enabled: true,
+  includeFaces: false,
 })
 
 const resetCameraForm = () => {
@@ -36,6 +37,7 @@ const resetCameraForm = () => {
     streamUrl: '',
     processedStreamUrl: '',
     enabled: true,
+    includeFaces: false,
   })
 }
 
@@ -54,6 +56,7 @@ const openEditDialog = (row) => {
     streamUrl: row.streamUrl || '',
     processedStreamUrl: row.processedStreamUrl || '',
     enabled: row.enabled !== false,
+    includeFaces: row.includeFaces === true,
   })
   dialogVisible.value = true
 }
@@ -111,6 +114,7 @@ const submitCamera = async () => {
     const payload = {
       name: cameraForm.name,
       streamUrl: cameraForm.streamUrl,
+      includeFaces: cameraForm.includeFaces,
     }
     if (cameraForm.code) {
       payload.code = cameraForm.code
@@ -171,7 +175,7 @@ onMounted(() => {
 <template>
   <div class="page-grid">
     <div class="panel table-panel">
-      <SectionHeader title="摄像头管理" description="摄像头查询和新增已接入后端接口。">
+      <SectionHeader title="摄像头管理">
         <el-button type="primary" @click="openCreateDialog">新增摄像头</el-button>
       </SectionHeader>
       <div class="filter-row">
@@ -218,7 +222,7 @@ onMounted(() => {
           </template>
         </el-table-column>
       </el-table>
-      <div class="placeholder-note">共 {{ cameraTotal }} 个摄像头</div>
+      <div class="record-count">共 {{ cameraTotal }} 个摄像头</div>
     </div>
 
     <el-dialog v-model="dialogVisible" :title="editingCameraId ? '编辑摄像头' : '新增摄像头'" width="560px">
@@ -228,6 +232,12 @@ onMounted(() => {
         <el-form-item label="位置"><el-input v-model="cameraForm.location" placeholder="安装位置" /></el-form-item>
         <el-form-item label="原始流地址" required><el-input v-model="cameraForm.streamUrl" placeholder="rtmp://... / rtsp://..." /></el-form-item>
         <el-form-item label="AI处理流地址"><el-input v-model="cameraForm.processedStreamUrl" placeholder="AI 处理后带框流地址，可为空" /></el-form-item>
+        <el-form-item label="实时人脸识别">
+          <el-radio-group v-model="cameraForm.includeFaces">
+            <el-radio-button :value="true">开启</el-radio-button>
+            <el-radio-button :value="false">关闭</el-radio-button>
+          </el-radio-group>
+        </el-form-item>
         <el-form-item v-if="editingCameraId" label="启用状态">
           <el-radio-group v-model="cameraForm.enabled">
             <el-radio-button :value="true">已启用</el-radio-button>

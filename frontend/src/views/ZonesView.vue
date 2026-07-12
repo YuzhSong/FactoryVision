@@ -153,15 +153,12 @@ const deriveOutputUrl = (camera) => {
   return `${match[1]}${match[2]}_detected`
 }
 
-const buildAiStreamPayload = (camera) => {
-  if (!camera) return null
-  return {
-    streamUrl: camera.streamUrl || '',
-    outputUrl: deriveOutputUrl(camera),
-    playUrl: camera.processedStreamUrl || camera.playUrl || '',
-    includeFaces: false,
-    reportToBackend: false,
-  }
+const buildAiStreamPayload = (camera, failedStartResponse = null) => {
+  const config = failedStartResponse?.cameraConfig
+    || (failedStartResponse?.inputUrl ? failedStartResponse : null)
+    || camera?.streamConfig
+  if (!config) return null
+  return { ...config, zones: Array.isArray(config.zones) ? config.zones : [] }
 }
 
 const ensureProcessedStream = async () => {
@@ -183,8 +180,8 @@ const ensureProcessedStream = async () => {
     if (runningStatus?.running) return runningStatus
     return response?.data || null
   } catch (error) {
-    const payload = buildAiStreamPayload(selectedCamera.value)
-    if (!payload?.streamUrl || !payload?.outputUrl || !payload?.playUrl) {
+    const payload = buildAiStreamPayload(selectedCamera.value, error?.response?.data?.data)
+    if (!payload?.cameraId || !payload?.inputUrl || !payload?.outputUrl || !payload?.playUrl) {
       throw error
     }
     let lastStatus = null
