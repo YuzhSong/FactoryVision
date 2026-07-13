@@ -123,6 +123,7 @@ class ZoneDetectorTests(unittest.TestCase):
         annotated = FrameAnnotator().draw_results(annotated, results)
         self.assertEqual(annotated.shape, frame.shape)
         self.assertGreater(int(annotated.sum()), 0)
+        self.assertTrue(np.array_equal(annotated[45, 60], np.array([255, 220, 80], dtype=np.uint8)))
 
 
 if __name__ == "__main__":

@@ -25,6 +25,12 @@ const filters = reactive({
 const alertTableRows = computed(() => alertRows.value.map(normalizeAlertRow))
 const replay = computed(() => selectedDetail.value?.replay || {})
 const eventDetail = computed(() => selectedDetail.value?.event || {})
+const mediaVersion = computed(() => {
+  const media = replay.value?.media || {}
+  return media.mediaEventId || media.eventId || eventDetail.value?.id || eventDetail.value?.eventId || Date.now()
+})
+const keyframePreviewUrl = computed(() => withMediaVersion(replay.value?.media?.keyframeUrl, mediaVersion.value))
+const clipPreviewUrl = computed(() => withMediaVersion(replay.value?.media?.clipUrl, mediaVersion.value))
 
 function normalizeAlertRow(alert) {
   return {
@@ -41,6 +47,12 @@ function formatDateTime(value) {
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return value
   return date.toLocaleString('zh-CN', { hour12: false })
+}
+
+function withMediaVersion(url, version) {
+  if (!url) return ''
+  const separator = String(url).includes('?') ? '&' : '?'
+  return `${url}${separator}v=${encodeURIComponent(version || Date.now())}`
 }
 
 function getApiErrorMessage(error, fallback) {
@@ -205,17 +217,17 @@ onMounted(() => {
           </el-descriptions>
 
           <el-divider content-position="left">媒体证据</el-divider>
-          <div v-if="replay.media?.keyframeUrl || replay.media?.clipUrl" class="media-preview">
+          <div v-if="keyframePreviewUrl || clipPreviewUrl" class="media-preview">
             <img
-              v-if="replay.media?.keyframeUrl"
+              v-if="keyframePreviewUrl"
               class="media-preview__image"
-              :src="replay.media.keyframeUrl"
+              :src="keyframePreviewUrl"
               alt="事件关键帧"
             />
             <video
-              v-if="replay.media?.clipUrl"
+              v-if="clipPreviewUrl"
               class="media-preview__video"
-              :src="replay.media.clipUrl"
+              :src="clipPreviewUrl"
               controls
               muted
               playsinline

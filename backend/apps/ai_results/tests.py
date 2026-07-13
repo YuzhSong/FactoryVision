@@ -234,6 +234,7 @@ class AIResultsReportTests(TestCase):
                             "trackId": track_id,
                             "regionId": 13,
                             "regionName": "Restricted Gate",
+                            "level": "high",
                             "confidence": 0.9,
                         }
                     ],
@@ -242,7 +243,7 @@ class AIResultsReportTests(TestCase):
             )
 
         first = report("2026-07-07T10:02:00+08:00")
-        duplicate = report("2026-07-07T10:02:10+08:00")
+        duplicate = report("2026-07-07T10:02:10+08:00", track_id="t-fragmented")
         after_cooldown = report("2026-07-07T10:02:21+08:00")
 
         self.assertEqual(first.data["data"]["acceptedResults"], 1)
@@ -269,6 +270,7 @@ class AIResultsReportTests(TestCase):
                             "regionId": 13,
                             "regionName": "Restricted Gate",
                             "durationSeconds": 30,
+                            "level": "medium",
                             "confidence": 0.9,
                         }
                     ],
@@ -286,6 +288,42 @@ class AIResultsReportTests(TestCase):
         self.assertEqual(Event.objects.filter(event_type="region_dwell").count(), 2)
         self.assertTrue(all(event.severity == "high" for event in Event.objects.filter(event_type="region_dwell")))
         self.assertTrue(all(alert.level == "high" for alert in Alert.objects.filter(event_type="region_dwell")))
+
+    def test_workstation_region_events_are_rejected_by_zone_type(self):
+        zone = Zone.objects.create(
+            camera=self.camera,
+            name="Assembly Workstation",
+            type=Zone.ZoneType.WORKSTATION,
+            points=[{"x": 0, "y": 0}, {"x": 100, "y": 0}, {"x": 100, "y": 100}],
+        )
+
+        response = self.client.post(
+            "/api/ai-results/report/",
+            {
+                "cameraId": self.camera.code,
+                "frameId": "workstation-region",
+                "timestamp": "2026-07-07T10:05:00+08:00",
+                "results": [
+                    {
+                        "type": "ZONE_WARNING",
+                        "eventType": "region_dwell",
+                        "trackId": "t-1",
+                        "regionId": zone.id,
+                        "regionName": zone.name,
+                        "regionType": "workstation",
+                        "durationSeconds": 30,
+                        "confidence": 0.9,
+                    }
+                ],
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["data"]["acceptedResults"], 0)
+        self.assertEqual(response.data["data"]["rejectedResults"], 1)
+        self.assertEqual(Event.objects.count(), 0)
+        self.assertEqual(Alert.objects.count(), 0)
 
     def test_alert_detail_returns_replay_trajectory_region_and_media_placeholder(self):
         response = self.client.post(

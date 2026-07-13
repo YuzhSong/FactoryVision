@@ -192,7 +192,7 @@ def _color_for_result(result: dict):
     if "FACE" in result_type:
         return (255, 180, 0)
     if result_type == "HELMET_DETECTION":
-        return (0, 0, 255) if result.get("helmetStatus") == "no_helmet" else (0, 255, 0)
+        return (0, 0, 255) if result.get("helmetStatus") == "no_helmet" else (255, 220, 80)
     if "WARNING" in result_type or "ALERT" in result_type:
         return (0, 0, 255)
     return (0, 255, 0)

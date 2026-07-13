@@ -1022,7 +1022,6 @@ def _region_event_key(result):
         str(result.get("regionId")),
         str(result.get("trackId")),
         str(result.get("eventType")),
-        str(result.get("enteredAt")),
     )
 
 

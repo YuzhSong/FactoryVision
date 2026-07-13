@@ -47,8 +47,8 @@ FORMAL_ACTIONABLE_EVENT_TYPES = {
 
 EVENT_INTERNAL_TYPES = {
     "helmet_violation": {"HELMET_WARNING", "helmet_violation"},
-    "region_intrusion": {"ZONE_WARNING", "region_intrusion"},
-    "region_dwell": {"ZONE_WARNING", "region_dwell"},
+    "region_intrusion": {"ZONE_WARNING", "ZONE_INTRUSION", "REGION_INTRUSION", "region_intrusion"},
+    "region_dwell": {"ZONE_WARNING", "ZONE_DWELL", "REGION_DWELL", "region_dwell"},
     "face_recognized": {"FACE_RECOGNIZED", "FACE_RESULT", "face_recognized"},
     "stranger_detected": {"STRANGER_DETECTED", "STRANGER_ALERT", "stranger_detected"},
     "fall_detected": {"FALL_DETECTED", "FALL_ALERT", "fall_detected"},
@@ -186,6 +186,16 @@ def report_ai_results(request):
             if result_type not in FORMAL_ACTIONABLE_EVENT_TYPES or not _is_actionable_result(result_type, result):
                 rejected_results += 1
                 continue
+            if not _is_actionable_region_result(camera, result_type, result):
+                rejected_results += 1
+                logger.info(
+                    "Region AI event suppressed by zone type camera_id=%s event_type=%s region_id=%s region_type=%s",
+                    validated["cameraId"],
+                    result_type,
+                    result.get("regionId") or result.get("zoneId"),
+                    result.get("regionType") or result.get("zoneType"),
+                )
+                continue
 
             track_id = _extract_track_id(result)
             if _is_duplicate_event(camera, result_type, result, validated["timestamp"], track_id):
@@ -277,7 +287,7 @@ def report_ai_results(request):
                     event=event,
                     camera=camera,
                     event_type=result_type,
-                    level=str(result_payload.get("level") or _default_level(result_type)),
+                    level=_alert_level(result_type, result_payload),
                     title=_alert_title(result_type),
                     description=event_description,
                     snapshot_path=event.snapshot_path,
@@ -813,6 +823,23 @@ def _is_actionable_result(result_type, result):
     return True
 
 
+def _is_actionable_region_result(camera, result_type, result):
+    if result_type not in {"region_intrusion", "region_dwell"}:
+        return True
+
+    region_id = result.get("regionId") or result.get("zoneId")
+    if region_id not in (None, ""):
+        zone = Zone.objects.filter(camera=camera, id=region_id).only("type").first()
+        if zone is not None:
+            return zone.type in {Zone.ZoneType.RESTRICTED, Zone.ZoneType.DANGER}
+
+    region_type = str(result.get("regionType") or result.get("zoneType") or "").lower()
+    if region_type:
+        return region_type in {Zone.ZoneType.RESTRICTED, Zone.ZoneType.DANGER}
+
+    return True
+
+
 def _is_duplicate_event(camera, result_type, result, occurred_at, track_id):
     events = Event.objects.filter(camera=camera, event_type=result_type)
     if result_type == "face_recognized":
@@ -827,10 +854,9 @@ def _is_duplicate_event(camera, result_type, result, occurred_at, track_id):
     if result_type in {"region_intrusion", "region_dwell"}:
         region_id = result.get("regionId", result.get("zoneId"))
         cooldown = EVENT_DEDUP_SECONDS.get(result_type)
-        if region_id in (None, "") or not track_id or not cooldown:
+        if region_id in (None, "") or not cooldown:
             return False
         return events.filter(
-            track_id=track_id,
             occurred_at__gte=occurred_at - timedelta(seconds=cooldown),
         ).filter(Q(payload__regionId=region_id) | Q(payload__zoneId=region_id)).exists()
 
@@ -846,6 +872,16 @@ def _is_duplicate_event(camera, result_type, result, occurred_at, track_id):
 def _normalize_event_type(result):
     internal = str(result.get("type") or "").strip()
     nested = str(result.get("eventType") or "").strip()
+    legacy_aliases = {
+        "ZONE_INTRUSION": "region_intrusion",
+        "REGION_INTRUSION": "region_intrusion",
+        "ZONE_DWELL": "region_dwell",
+        "REGION_DWELL": "region_dwell",
+    }
+    if nested in legacy_aliases:
+        return legacy_aliases[nested]
+    if internal in legacy_aliases:
+        return legacy_aliases[internal]
     if internal == "ZONE_WARNING":
         return nested if nested in {"region_intrusion", "region_dwell"} else "region_intrusion"
     aliases = {
@@ -861,7 +897,9 @@ def _normalize_event_type(result):
 
 
 def _default_level(result_type):
-    if result_type in {"FALL_DETECTED", "FALL_ALERT", "ZONE_INTRUSION", "region_dwell", "STRANGER_DETECTED", "STRANGER_ALERT"}:
+    if result_type == "region_intrusion":
+        return "medium"
+    if result_type in {"FALL_DETECTED", "FALL_ALERT", "region_dwell", "STRANGER_DETECTED", "STRANGER_ALERT"}:
         return "high"
     if result_type == "EMPLOYEE_RETURNED":
         return "low"
@@ -869,12 +907,23 @@ def _default_level(result_type):
 
 
 def _event_severity(result_type, result):
+    if result_type in {"region_intrusion", "region_dwell"}:
+        return _default_level(result_type)
     level = str(result.get("level") or "").lower()
     if level in {choice.value for choice in Event.Severity}:
         return level
     if _should_create_alert(result_type):
         return _default_level(result_type)
     return Event.Severity.INFO
+
+
+def _alert_level(result_type, result):
+    if result_type in {"region_intrusion", "region_dwell"}:
+        return _default_level(result_type)
+    level = str(result.get("level") or "").lower()
+    if level in {choice.value for choice in Event.Severity}:
+        return level
+    return _default_level(result_type)
 
 
 def _alert_title(result_type):
