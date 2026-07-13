@@ -1,10 +1,8 @@
 import logging
 import threading
+from datetime import timedelta
 
 from asgiref.sync import async_to_sync
-import logging
-import threading
-from datetime import timedelta
 from channels.layers import get_channel_layer
 from django.db import transaction
 from django.db.models import Count, Q
@@ -37,8 +35,6 @@ from .serializers import (
     HealthCheckSerializer,
 )
 
-logger = logging.getLogger(__name__)
-
 FORMAL_ACTIONABLE_EVENT_TYPES = {
     "helmet_violation",
     "region_intrusion",
@@ -66,14 +62,6 @@ EVENT_DEDUP_SECONDS = {
 
 
 # 会触发告警（并推送钉钉）的事件类型，均为 _normalize_event_type 归一化后的小写别名。
-ALERT_TRIGGER_TYPES = {
-    "helmet_violation",
-    "region_intrusion",
-    "region_dwell",
-    "stranger_detected",
-    "fall_detected",
-}
-
 ALERT_TRIGGER_TYPES = {
     "helmet_violation",
     "region_intrusion",
