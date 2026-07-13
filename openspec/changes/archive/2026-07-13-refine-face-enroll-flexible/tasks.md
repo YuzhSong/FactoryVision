@@ -1,0 +1,5 @@
+- [ ] 改 FaceEnrollSerializer: 1~3 张
+- [ ] 改 face_enroll_view: 同 faceType 替换旧记录
+- [ ] 更新 Swagger
+- [ ] 测试
+- [ ] 归档

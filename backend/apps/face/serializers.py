@@ -19,8 +19,10 @@ class FaceEnrollSerializer(serializers.Serializer):
     faces = FaceImageItemSerializer(many=True, required=True)
 
     def validate_faces(self, value):
-        if len(value) != 3:
-            raise serializers.ValidationError("必须上传 3 张图片（正脸、左脸、右脸）")
+        if len(value) < 1:
+            raise serializers.ValidationError("至少需要 1 张人脸图片")
+        if len(value) > 3:
+            raise serializers.ValidationError("最多允许 3 张人脸图片")
         seen = set()
         for item in value:
             ft = item["faceType"]
