@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import SectionHeader from '../components/SectionHeader.vue'
 import StatusTag from '../components/StatusTag.vue'
+import mpegts from 'mpegts.js'
 import { aiServiceApi, camerasApi, eventsApi } from '../api/modules'
 import { createRealtimeConnection } from '../api/realtime'
 import { normalizeStoredEvent, prependRealtimeEvent } from '../utils/realtimeEvents'
@@ -21,8 +22,8 @@ const streamAgeSamples = ref([])
 let player = null
 let realtimeSocket = null
 let sdkPromise = null
-let flvPromise = null
 let streamStatusTimer = null
+let playbackLatencyTimer = null
 
 function syncHeaderStatus() {
   if (typeof window === 'undefined') return
@@ -130,19 +131,7 @@ function loadSrsSdk() {
 }
 
 function loadMpegtsSdk() {
-  if (window.mpegts) {
-    return Promise.resolve()
-  }
-
-  if (!flvPromise) {
-    flvPromise = loadScript('https://webrtc.rainycode.cn:8443/players/js/mpegts-1.7.2.min.js')
-      .catch((error) => {
-        flvPromise = null
-        throw error
-      })
-  }
-
-  return flvPromise
+  return Promise.resolve(mpegts)
 }
 
 function wait(milliseconds) {
@@ -275,16 +264,19 @@ async function startRtcPlayback() {
 
 async function startFlvPlayback() {
   await loadMpegtsSdk()
-  if (!window.mpegts?.getFeatureList().mseLivePlayback) {
+  if (!mpegts.getFeatureList().mseLivePlayback) {
     throw new Error('当前浏览器不支持 HTTP-FLV MSE 直播播放')
   }
 
   const playUrl = detectedFlvUrl.value
-  player = window.mpegts.createPlayer({
+  player = mpegts.createPlayer({
     type: 'flv',
     url: playUrl,
     isLive: true,
     enableStashBuffer: false,
+    liveBufferLatencyChasing: true,
+    liveBufferLatencyMaxLatency: 2,
+    liveBufferLatencyMinRemain: 0.5,
   })
 
   if (videoRef.value) {
@@ -296,9 +288,11 @@ async function startFlvPlayback() {
   await player.play()
   playbackStatus.value = 'connected'
   playbackMessage.value = `正在播放 ${playUrl}`
+  startLiveLatencyChasing()
 }
 
 function stopPlayback() {
+  stopLiveLatencyChasing()
   if (player && typeof player.close === 'function') {
     player.close()
   }
@@ -309,6 +303,26 @@ function stopPlayback() {
   if (videoRef.value) {
     videoRef.value.srcObject = null
     videoRef.value.removeAttribute('src')
+  }
+}
+
+function startLiveLatencyChasing() {
+  stopLiveLatencyChasing()
+  playbackLatencyTimer = window.setInterval(() => {
+    const video = videoRef.value
+    if (!video || !video.buffered || video.buffered.length === 0) return
+    const end = video.buffered.end(video.buffered.length - 1)
+    const lag = end - video.currentTime
+    if (Number.isFinite(lag) && lag > 2) {
+      video.currentTime = Math.max(0, end - 0.35)
+    }
+  }, 1000)
+}
+
+function stopLiveLatencyChasing() {
+  if (playbackLatencyTimer) {
+    window.clearInterval(playbackLatencyTimer)
+    playbackLatencyTimer = null
   }
 }
 
@@ -395,11 +409,6 @@ watch(systemStatus, () => {
 onMounted(async () => {
   startStreamStatusPolling()
   await loadCameras()
-  if (activeCamera.value) {
-    await loadEventHistory()
-    startPlayback({ ensureStream: true })
-    connectRealtime()
-  }
 })
 
 onBeforeUnmount(() => {

@@ -3,6 +3,7 @@ import threading
 
 from asgiref.sync import async_to_sync
 import logging
+import threading
 from datetime import timedelta
 from channels.layers import get_channel_layer
 from django.db import transaction
@@ -13,7 +14,7 @@ from rest_framework.decorators import api_view
 from rest_framework import status as http_status
 from drf_spectacular.utils import OpenApiExample, OpenApiParameter, OpenApiTypes, extend_schema
 
-from apps.ai_results.services.dingtalk import DingTalkNotifier, DingTalkNotificationError
+from apps.ai_results.services.dingtalk import DingTalkNotificationError, DingTalkNotifier
 from apps.cameras.models import Camera
 from apps.cameras.serializers import CameraListSerializer
 from apps.employees.models import Employee
@@ -65,6 +66,14 @@ EVENT_DEDUP_SECONDS = {
 
 
 # 会触发告警（并推送钉钉）的事件类型，均为 _normalize_event_type 归一化后的小写别名。
+ALERT_TRIGGER_TYPES = {
+    "helmet_violation",
+    "region_intrusion",
+    "region_dwell",
+    "stranger_detected",
+    "fall_detected",
+}
+
 ALERT_TRIGGER_TYPES = {
     "helmet_violation",
     "region_intrusion",
@@ -687,9 +696,9 @@ _ALERT_LEVEL_DISPLAY = {
     "low": "低",
     "medium": "中",
     "high": "高",
+    "info": "信息",
 }
 
-# 告警类型的中文展示名（用于钉钉通知内容），键为归一化后的事件类型。
 _ALERT_TYPE_DISPLAY = {
     "helmet_violation": "未佩戴安全帽",
     "region_intrusion": "区域闯入",
@@ -700,24 +709,23 @@ _ALERT_TYPE_DISPLAY = {
 
 
 def _alert_type_display(alert: Alert) -> str:
-    """钉钉通知中显示的告警类型名，未知类型回退到已存库的标题。"""
     return _ALERT_TYPE_DISPLAY.get(alert.event_type, alert.title)
 
 
 def _is_alert_handled(alert: Alert) -> bool:
-    """Return True if the alert has been acted upon (not pending)."""
     return alert.status != Alert.Status.PENDING
 
 
 def _notify_dingtalk_alert(alert: Alert) -> None:
-    """Send initial DingTalk notification and schedule escalation.
+    """Send DingTalk notification after alert creation.
 
-    Runs after the outer transaction commits.  Failures never
-    propagate to the caller — only logged.
+    Notification failures must not break AI result reporting or database writes.
     """
     from django.conf import settings
 
-    # --- initial notification ---
+    if alert.event_type not in ALERT_TRIGGER_TYPES:
+        return
+
     try:
         DingTalkNotifier().send_alert(
             alert_title=_alert_type_display(alert),
@@ -730,43 +738,26 @@ def _notify_dingtalk_alert(alert: Alert) -> None:
             responsible_mobile=settings.DINGTALK_RESPONSIBLE_MOBILE or None,
         )
     except DingTalkNotificationError:
-        logger.exception("DingTalk initial notification failed for alert id=%s", alert.id)
+        logger.exception("DingTalk initial notification failed alert_id=%s", alert.id)
     except Exception:
-        logger.exception("Unexpected error in DingTalk initial notification for alert id=%s", alert.id)
+        logger.exception("Unexpected DingTalk initial notification error alert_id=%s", alert.id)
 
-    # --- schedule escalation ---
     escalation_seconds = settings.DINGTALK_ESCALATION_SECONDS
     if escalation_seconds < 1:
         return
 
-    logger.info(
-        "Scheduled DingTalk escalation for alert id=%s in %s seconds",
-        alert.id,
-        escalation_seconds,
-    )
-    t = threading.Timer(
-        escalation_seconds,
-        _escalate_alert,
-        args=[alert.id],
-    )
-    t.daemon = True
-    t.start()
+    timer = threading.Timer(escalation_seconds, _escalate_alert, args=[alert.id])
+    timer.daemon = True
+    timer.start()
 
 
 def _escalate_alert(alert_id: int) -> None:
-    """Check if alert is still unhandled and send escalation if so."""
     from django.conf import settings
 
-    alert = Alert.objects.filter(id=alert_id).first()
-    if alert is None:
-        logger.info("Escalation skipped: alert id=%s no longer exists", alert_id)
+    alert = Alert.objects.filter(id=alert_id).select_related("camera").first()
+    if alert is None or _is_alert_handled(alert) or alert.event_type not in ALERT_TRIGGER_TYPES:
         return
 
-    if _is_alert_handled(alert):
-        logger.info("Escalation skipped: alert id=%s already handled", alert_id)
-        return
-
-    logger.info("Sending escalation for alert id=%s", alert_id)
     try:
         DingTalkNotifier().send_alert(
             alert_title=f"[告警升级] {_alert_type_display(alert)}",
@@ -779,9 +770,8 @@ def _escalate_alert(alert_id: int) -> None:
             responsible_mobile=settings.DINGTALK_LEADER_MOBILE or None,
         )
     except DingTalkNotificationError:
-        logger.exception("DingTalk escalation failed for alert id=%s", alert_id)
+        logger.exception("DingTalk escalation failed alert_id=%s", alert_id)
     except Exception:
-        logger.exception("Unexpected error in DingTalk escalation for alert id=%s", alert_id)
-
+        logger.exception("Unexpected DingTalk escalation error alert_id=%s", alert_id)
 
 # Create your views here.

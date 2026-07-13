@@ -42,8 +42,10 @@ class _FakeModel:
     def __init__(self, names, boxes):
         self.names = names
         self._boxes = boxes
+        self.last_predict_kwargs = None
 
-    def predict(self, **_kwargs):
+    def predict(self, **kwargs):
+        self.last_predict_kwargs = kwargs
         return [_FakePrediction(self._boxes)]
 
 
@@ -90,6 +92,11 @@ class HelmetDetectorTests(unittest.TestCase):
         detections = detector.detect(frame=object(), frame_id="frame-1")
 
         self.assertEqual([item["helmetStatus"] for item in detections], ["helmet", "no_helmet"])
+        self.assertEqual(detector.last_diagnostics["helmetCount"], 1)
+        self.assertEqual(detector.last_diagnostics["noHelmetCount"], 1)
+        self.assertEqual(detector.last_diagnostics["nmsBoxCount"], 2)
+        self.assertEqual(detector.last_diagnostics["finalDrawCount"], 2)
+        self.assertEqual(detector.last_diagnostics["rawCandidateSource"], "not_exposed_by_ultralytics_predict")
 
     def test_self_trained_provider_recognizes_helmet_and_no_helmet_by_class_id(self):
         detector = _HelmetDetectorForTest(
@@ -133,6 +140,34 @@ class HelmetDetectorTests(unittest.TestCase):
 
         self.assertEqual(detections[0]["trackId"], "t-1")
         self.assertEqual(detections[0]["helmetStatus"], "helmet")
+        self.assertEqual(detector.last_diagnostics["personCount"], 2)
+        self.assertEqual(detector.last_diagnostics["matchedCount"], 1)
+        self.assertEqual(detector.last_diagnostics["unmatchedHelmetCount"], 0)
+
+    def test_predict_uses_configured_max_det_without_truncating_results(self):
+        fake_model = _FakeModel(
+            names={1: "helmet"},
+            boxes=[
+                _FakeBox(1, 0.9, [10, 10, 20, 20]),
+                _FakeBox(1, 0.8, [30, 10, 40, 20]),
+                _FakeBox(1, 0.7, [50, 10, 60, 20]),
+            ],
+        )
+        detector = _HelmetDetectorForTest(
+            fake_model,
+            provider="self_trained",
+            model_path="fake.pt",
+            max_det=300,
+            class_ids=(1, 2),
+            helmet_class_id=1,
+            no_helmet_class_id=2,
+        )
+
+        detections = detector.detect(frame=object(), frame_id="frame-many")
+
+        self.assertEqual(len(detections), 3)
+        self.assertEqual(fake_model.last_predict_kwargs["max_det"], 300)
+        self.assertEqual(detector.last_diagnostics["finalDrawCount"], 3)
 
     def test_missing_helmet_detections_leave_person_status_unknown(self):
         detector = _HelmetDetectorForTest(

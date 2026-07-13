@@ -5,6 +5,7 @@ import time
 from typing import Any
 
 from fastapi import FastAPI, File, Form, Request, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 import uvicorn
@@ -86,11 +87,14 @@ frame_processor = FrameProcessor(
         "helmetHalfPrecision": Config.HELMET_HALF_PRECISION,
         "helmetCudnnBenchmark": Config.HELMET_CUDNN_BENCHMARK,
         "helmetMatchUpperRatio": Config.HELMET_MATCH_UPPER_RATIO,
+        "helmetMaxDet": Config.HELMET_MAX_DET,
         "helmetClassIds": Config.HELMET_CLASS_IDS,
         "helmetClassId": Config.HELMET_CLASS_ID,
         "noHelmetClassId": Config.NO_HELMET_CLASS_ID,
         "zoneMinStaySeconds": Config.ZONE_MIN_STAY_SECONDS,
         "zoneStateTtlSeconds": Config.ZONE_STATE_TTL_SECONDS,
+        "zoneEnterConfirmSeconds": Config.ZONE_ENTER_CONFIRM_SECONDS,
+        "zoneExitConfirmSeconds": Config.ZONE_EXIT_CONFIRM_SECONDS,
         "helmetEventCooldownSeconds": Config.HELMET_EVENT_COOLDOWN_SECONDS,
         "trackStateTtlSeconds": Config.TRACK_STATE_TTL_SECONDS,
         "faceIdentityCacheSeconds": Config.FACE_IDENTITY_CACHE_SECONDS,
@@ -102,6 +106,12 @@ frame_processor = FrameProcessor(
         "fallMinConfidence": Config.FALL_MIN_CONFIDENCE,
         "fallPoseHorizontalAngleThreshold": Config.FALL_POSE_HORIZONTAL_ANGLE_THRESHOLD,
         "fallPoseMinKeypointConfidence": Config.FALL_POSE_MIN_KEYPOINT_CONFIDENCE,
+        "fallBboxEdgeMarginRatio": Config.FALL_BBOX_EDGE_MARGIN_RATIO,
+        "fallMinCenterDropRatio": Config.FALL_MIN_CENTER_DROP_RATIO,
+        "fallMinHeightDropRatio": Config.FALL_MIN_HEIGHT_DROP_RATIO,
+        "fallMaxTransitionSeconds": Config.FALL_MAX_TRANSITION_SECONDS,
+        "fallRecoverFrames": Config.FALL_RECOVER_FRAMES,
+        "fallStateTtlSeconds": Config.FALL_STATE_TTL_SECONDS,
         "employeeAbsenceTimeoutSeconds": Config.EMPLOYEE_ABSENCE_TIMEOUT_SECONDS,
         "employeePresenceMinSimilarity": Config.EMPLOYEE_PRESENCE_MIN_SIMILARITY,
         "strangerConfirmFrames": Config.STRANGER_CONFIRM_FRAMES,
@@ -151,6 +161,17 @@ def create_app() -> FastAPI:
         title="Smart Factory AI Service",
         description="Video-frame analysis, person detection, face recognition, and behavior reporting service.",
         version="0.2.0",
+    )
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=[
+            "http://127.0.0.1:5173",
+            "http://localhost:5173",
+            "https://webrtc.rainycode.cn",
+            "https://webrtc.rainycode.cn:8443",
+        ],
+        allow_methods=["*"],
+        allow_headers=["*"],
     )
 
     @app.on_event("startup")
