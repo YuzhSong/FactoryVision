@@ -1,7 +1,8 @@
-from asgiref.sync import async_to_sync
 import logging
 import threading
 from datetime import timedelta
+
+from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
 from django.db import transaction
 from django.db.models import Count, Q
@@ -22,6 +23,9 @@ from apps.zones.serializers import ZoneListSerializer
 from common.response import api_response
 
 from .models import Alert
+
+logger = logging.getLogger(__name__)
+
 from .serializers import (
     AIResultPlaceholderSerializer,
     AIResultReportSerializer,
@@ -30,8 +34,6 @@ from .serializers import (
     DashboardSummarySerializer,
     HealthCheckSerializer,
 )
-
-logger = logging.getLogger(__name__)
 
 FORMAL_ACTIONABLE_EVENT_TYPES = {
     "helmet_violation",
@@ -59,20 +61,7 @@ EVENT_DEDUP_SECONDS = {
 }
 
 
-ALERT_EVENT_TYPES = {
-    "HELMET_WARNING",
-    "STRANGER_DETECTED",
-    "STRANGER_ALERT",
-    "EMPLOYEE_ABSENT",
-    "EMPLOYEE_RETURNED",
-    "FALL_DETECTED",
-    "FALL_ALERT",
-    "ZONE_INTRUSION",
-    "ZONE_WARNING",
-    "RUNNING_ALERT",
-    "NO_HELMET",
-}
-
+# 会触发告警（并推送钉钉）的事件类型，均为 _normalize_event_type 归一化后的小写别名。
 ALERT_TRIGGER_TYPES = {
     "helmet_violation",
     "region_intrusion",
@@ -578,12 +567,7 @@ def _extract_snapshot_path(result, event_media):
 
 
 def _should_create_alert(result_type):
-    return (
-        result_type in ALERT_EVENT_TYPES
-        or result_type in {"region_intrusion", "region_dwell", "helmet_violation", "stranger_detected", "fall_detected"}
-        or result_type.endswith("_WARNING")
-        or result_type.endswith("_ALERT")
-    )
+    return result_type in ALERT_TRIGGER_TYPES
 
 
 def _is_actionable_result(result_type, result):
