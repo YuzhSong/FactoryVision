@@ -25,15 +25,33 @@ def _parse_size(value: str, default: tuple[int, int]):
         return default
 
 
+def _parse_csv(value: str, default: list[str]):
+    items = [item.strip() for item in value.split(",") if item.strip()]
+    return items or default
+
+
 class Config:
     SERVICE_NAME = "smart-factory-ai-service"
     HOST = os.getenv("AI_SERVICE_HOST", "0.0.0.0")
     PORT = int(os.getenv("AI_SERVICE_PORT", "9000"))
+    CORS_ORIGINS = _parse_csv(
+        os.getenv(
+            "AI_SERVICE_CORS_ORIGINS",
+            "http://127.0.0.1:5173,http://localhost:5173,https://webrtc.rainycode.cn,https://webrtc.rainycode.cn:8443",
+        ),
+        [
+            "http://127.0.0.1:5173",
+            "http://localhost:5173",
+            "https://webrtc.rainycode.cn",
+            "https://webrtc.rainycode.cn:8443",
+        ],
+    )
     # Reloading starts a parent/child process pair and makes local stop/restart unreliable.
     DEBUG = os.getenv("AI_SERVICE_DEBUG", "False").lower() == "true"
     BACKEND_API_BASE_URL = os.getenv("BACKEND_API_BASE_URL", "http://127.0.0.1:8000/api")
     BACKEND_API_TOKEN = os.getenv("BACKEND_API_TOKEN", "")
     BACKEND_TIMEOUT_SECONDS = float(os.getenv("BACKEND_TIMEOUT_SECONDS", "5"))
+    BACKEND_TLS_VERIFY = os.getenv("BACKEND_TLS_VERIFY", "True").lower() not in {"0", "false", "no", "off"}
     BACKEND_CAMERA_LIST_PATH = os.getenv("BACKEND_CAMERA_LIST_PATH", "/cameras/list/")
     BACKEND_EMPLOYEE_LIST_PATH = os.getenv("BACKEND_EMPLOYEE_LIST_PATH", "/employees/list/")
     # Face vectors are fetched through a dedicated AI-to-backend endpoint, never a browser JWT.

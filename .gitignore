@@ -28,6 +28,7 @@ Thumbs.db
 .codex-runlogs/
 deploy/.env.prod
 deploy/backups/
+ai-service/.env.local
 ai-service/data/event_media/
 ai-service/models/helmet/*.pt
 yolov8n.pt

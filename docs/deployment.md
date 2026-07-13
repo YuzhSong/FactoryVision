@@ -82,7 +82,9 @@ BACKEND_API_BASE_URL=https://webrtc.rainycode.cn/api
 STREAM_INPUT_URL=rtmp://81.70.90.222:1935/live/1
 STREAM_OUTPUT_URL=rtmp://81.70.90.222:1935/live/1_detected
 STREAM_PLAY_URL=https://webrtc.rainycode.cn:8443/live/1_detected.flv
-AI_SERVICE_API_TOKEN=<same token as cloud backend>
+BACKEND_API_TOKEN=<same token as cloud backend AI_SERVICE_API_TOKEN>
+# Only use this when connecting by IP while the certificate is issued to the domain.
+BACKEND_TLS_VERIFY=False
 ```
 
 Current frontend fallback calls `/ai-service` only when direct AIService fallback is used. In cloud production this path is intentionally not proxied by default; the preferred flow is local AIService actively pulling config and reporting events to the cloud backend.

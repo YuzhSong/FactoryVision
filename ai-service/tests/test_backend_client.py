@@ -28,9 +28,9 @@ class _FakeSession:
         self.calls = []
         self.headers = {}
 
-    def get(self, url, params=None, timeout=None):
+    def get(self, url, params=None, timeout=None, verify=True):
         """Return fake page selected by params.page."""
-        self.calls.append({"url": url, "params": params, "timeout": timeout})
+        self.calls.append({"url": url, "params": params, "timeout": timeout, "verify": verify})
         page = params.get("page", 1) if params else 1
         return _FakeResponse(self.pages[page - 1])
 
@@ -54,6 +54,16 @@ class BackendClientTests(unittest.TestCase):
         self.assertEqual(len(client.session.calls), 2)
         self.assertEqual(client.session.calls[0]["params"]["status"], "active")
         self.assertEqual(client.session.calls[1]["params"]["page"], 2)
+        self.assertTrue(client.session.calls[0]["verify"])
+
+    def test_tls_verify_can_be_disabled(self):
+        """Verify backend client can connect through IP endpoints with mismatched TLS names."""
+        client = BackendClient("https://backend/api", tls_verify=False)
+        client.session = _FakeSession([{"code": 200, "data": {"items": []}}])
+
+        client.list_zones(camera_id=1)
+
+        self.assertFalse(client.session.calls[0]["verify"])
 
 
 if __name__ == "__main__":

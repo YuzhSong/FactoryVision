@@ -28,6 +28,7 @@ backend_client = BackendClient(
     base_url=Config.BACKEND_API_BASE_URL,
     timeout_seconds=Config.BACKEND_TIMEOUT_SECONDS,
     token=Config.BACKEND_API_TOKEN,
+    tls_verify=Config.BACKEND_TLS_VERIFY,
     camera_list_path=Config.BACKEND_CAMERA_LIST_PATH,
     employee_list_path=Config.BACKEND_EMPLOYEE_LIST_PATH,
     face_library_path=Config.BACKEND_FACE_LIBRARY_PATH,
@@ -164,12 +165,7 @@ def create_app() -> FastAPI:
     )
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=[
-            "http://127.0.0.1:5173",
-            "http://localhost:5173",
-            "https://webrtc.rainycode.cn",
-            "https://webrtc.rainycode.cn:8443",
-        ],
+        allow_origins=Config.CORS_ORIGINS,
         allow_methods=["*"],
         allow_headers=["*"],
     )

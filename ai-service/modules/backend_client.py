@@ -1,4 +1,7 @@
 import requests
+from urllib3.exceptions import InsecureRequestWarning
+
+requests.packages.urllib3.disable_warnings(category=InsecureRequestWarning)
 
 
 class BackendClient:
@@ -9,6 +12,7 @@ class BackendClient:
         base_url: str,
         timeout_seconds: float = 5,
         token: str = "",
+        tls_verify: bool = True,
         camera_list_path: str = "/cameras/list/",
         employee_list_path: str = "/employees/list/",
         face_library_path: str = "",
@@ -19,6 +23,7 @@ class BackendClient:
         """Initialize backend client with base URL, timeout, token, and API paths."""
         self.base_url = base_url.rstrip("/")
         self.timeout_seconds = timeout_seconds
+        self.tls_verify = tls_verify
         self.camera_list_path = camera_list_path
         self.employee_list_path = employee_list_path
         self.face_library_path = face_library_path
@@ -88,6 +93,7 @@ class BackendClient:
             self._build_url(self.ai_report_path),
             json=payload,
             timeout=self.timeout_seconds,
+            verify=self.tls_verify,
         )
         response.raise_for_status()
         return response.json()
@@ -102,6 +108,7 @@ class BackendClient:
             self._build_url(path),
             params=params,
             timeout=self.timeout_seconds,
+            verify=self.tls_verify,
         )
         response.raise_for_status()
         return response.json()
