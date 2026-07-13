@@ -16,6 +16,10 @@ class FallDetector:
         min_center_drop_ratio: float = 0.15,
         min_height_drop_ratio: float = 0.2,
         max_transition_seconds: float = 2.0,
+        sustained_low_drop_ratio: float = 0.4,
+        low_posture_height_ratio: float = 0.7,
+        very_low_height_ratio: float = 0.58,
+        slow_transition_seconds: float = 6.0,
     ):
         self.ratio_threshold = float(ratio_threshold)
         self.confirm_frames = max(2, int(confirm_frames))
@@ -26,6 +30,10 @@ class FallDetector:
         self.min_center_drop_ratio = max(0.0, float(min_center_drop_ratio))
         self.min_height_drop_ratio = max(0.0, float(min_height_drop_ratio))
         self.max_transition_seconds = max(0.01, float(max_transition_seconds))
+        self.sustained_low_drop_ratio = max(0.0, float(sustained_low_drop_ratio))
+        self.low_posture_height_ratio = max(0.0, float(low_posture_height_ratio))
+        self.very_low_height_ratio = max(0.0, float(very_low_height_ratio))
+        self.slow_transition_seconds = max(self.max_transition_seconds, float(slow_transition_seconds))
 
     def detect(self, track_history):
         """Return a rule score; only a sustained transition can become a fall event."""
@@ -33,29 +41,32 @@ class FallDetector:
         latest = history[-1] if history else {}
         observation_id = latest.get("frameIndex", latest.get("timestamp"))
         if len(history) < self.confirm_frames:
-            return self._result(latest, False, 0.0, [], None, observation_id, "insufficient_history")
+            return self._result(latest, False, 0.0, [], None, None, observation_id, "insufficient_history")
 
         recent = history[-self.confirm_frames :]
         frame_scores = [self._fall_score(entry) for entry in recent]
-        fall_like = [score for score in frame_scores if score["isFallLike"]]
-        all_consecutive = len(fall_like) == self.confirm_frames
         baseline = self._find_upright_baseline(history[: -self.confirm_frames])
         transition = self._transition_evidence(baseline, recent) if baseline else None
+        sustained_low = self._sustained_low_posture_evidence(baseline, recent, frame_scores) if baseline else None
+        fall_like = [score for score in frame_scores if score["isFallLike"]]
+        all_consecutive = len(fall_like) == self.confirm_frames
+        rapid_descent = bool(transition and transition.get("rapidDescent"))
+        sustained_low_fall = bool(sustained_low and sustained_low.get("hasSustainedLow"))
 
         rejection_reason = None
         if any(score.get("rejectionReason") for score in frame_scores):
             rejection_reason = next(score["rejectionReason"] for score in frame_scores if score.get("rejectionReason"))
-        elif not all_consecutive and not (transition and transition.get("rapidDescent")):
+        elif not all_consecutive and not rapid_descent and not sustained_low_fall:
             rejection_reason = "not_consecutive"
         elif baseline is None:
             rejection_reason = "no_upright_baseline"
-        elif not transition["fastEnough"]:
+        elif not transition["fastEnough"] and not (sustained_low and sustained_low["allowsSlowTransition"]):
             rejection_reason = "transition_too_slow"
-        elif not transition["hasDrop"]:
+        elif not transition["hasDrop"] and not sustained_low_fall:
             rejection_reason = "no_downward_transition"
 
         is_fall = rejection_reason is None
-        confidence = self._calculate_rule_score(frame_scores, transition) if is_fall else 0.0
+        confidence = self._calculate_rule_score(frame_scores, transition, sustained_low) if is_fall else 0.0
         if is_fall and confidence < self.min_confidence:
             is_fall = False
             rejection_reason = "rule_score_below_threshold"
@@ -66,12 +77,13 @@ class FallDetector:
             confidence,
             frame_scores,
             transition,
+            sustained_low,
             observation_id,
             rejection_reason,
         )
 
-    def _result(self, latest, is_fall, confidence, frame_scores, transition, observation_id, rejection_reason):
-        evidence = self._summarize_evidence(frame_scores, transition, rejection_reason)
+    def _result(self, latest, is_fall, confidence, frame_scores, transition, sustained_low, observation_id, rejection_reason):
+        evidence = self._summarize_evidence(frame_scores, transition, sustained_low, rejection_reason)
         return {
             "type": "FALL_ALERT",
             "trackId": latest.get("trackId"),
@@ -122,10 +134,12 @@ class FallDetector:
             score["ratio"] = round(width / height, 2)
             return score
         ratio = width / height
-        # At the decision boundary the shape component is 0.5, not 1.0. It only
-        # approaches one for a much more horizontal body.
         excess = max(0.0, ratio - self.ratio_threshold)
-        score = 0.5 + (0.5 * _clamp(excess / max(self.ratio_threshold, 1e-6))) if ratio >= self.ratio_threshold else 0.5 * _clamp(ratio / max(self.ratio_threshold, 1e-6))
+        score = (
+            0.5 + (0.5 * _clamp(excess / max(self.ratio_threshold, 1e-6)))
+            if ratio >= self.ratio_threshold
+            else 0.5 * _clamp(ratio / max(self.ratio_threshold, 1e-6))
+        )
         return {
             "isFallLike": ratio >= self.ratio_threshold,
             "score": round(score, 4),
@@ -145,11 +159,18 @@ class FallDetector:
         }
 
     def _find_upright_baseline(self, earlier_history):
-        for entry in reversed(earlier_history):
+        best = None
+        best_height = 0.0
+        for entry in earlier_history:
             score = self._fall_score(entry)
-            if not score.get("isFallLike") and not score.get("rejectionReason"):
-                return entry
-        return None
+            bbox = self._bbox(entry.get("bbox"))
+            if score.get("isFallLike") or score.get("rejectionReason") or bbox is None:
+                continue
+            height = bbox[3] - bbox[1]
+            if height > best_height:
+                best = entry
+                best_height = height
+        return best
 
     def _transition_evidence(self, baseline, recent_entries):
         base_bbox = self._bbox(baseline.get("bbox"))
@@ -159,7 +180,8 @@ class FallDetector:
             if fall_bbox is not None:
                 candidates.append((entry, fall_bbox))
         if base_bbox is None or not candidates:
-            return {"hasDrop": False, "fastEnough": False, "centerDropRatio": 0.0, "heightDropRatio": 0.0, "elapsedSeconds": None}
+            return {"hasDrop": False, "fastEnough": False, "centerDropRatio": 0.0, "heightDropRatio": 0.0, "elapsedSeconds": None, "rapidDescent": False}
+
         base_height = max(1e-6, base_bbox[3] - base_bbox[1])
         base_center_y = (base_bbox[1] + base_bbox[3]) / 2
         best = None
@@ -182,6 +204,7 @@ class FallDetector:
                 "centerDropRatio": center_drop_ratio,
                 "heightDropRatio": height_drop_ratio,
             }
+
         center_drop_ratio = best["centerDropRatio"]
         height_drop_ratio = best["heightDropRatio"]
         elapsed = best["elapsed"]
@@ -199,14 +222,70 @@ class FallDetector:
             "fastEnough": elapsed is not None and 0 < elapsed <= self.max_transition_seconds,
         }
 
-    def _calculate_rule_score(self, frame_scores, transition):
+    def _sustained_low_posture_evidence(self, baseline, recent, frame_scores):
+        base_bbox = self._bbox(baseline.get("bbox"))
+        if base_bbox is None or not recent:
+            return None
+        base_height = max(1e-6, base_bbox[3] - base_bbox[1])
+        base_center_y = (base_bbox[1] + base_bbox[3]) / 2
+        low_count = 0
+        height_drops = []
+        center_drops = []
+        valid_entries = []
+        for entry in recent:
+            bbox = self._bbox(entry.get("bbox"))
+            if bbox is None:
+                continue
+            valid_entries.append((entry, bbox))
+            height = max(1e-6, bbox[3] - bbox[1])
+            center_y = (bbox[1] + bbox[3]) / 2
+            height_drop = 1.0 - (height / base_height)
+            center_drop = (center_y - base_center_y) / base_height
+            height_drops.append(height_drop)
+            center_drops.append(center_drop)
+            if height <= base_height * self.low_posture_height_ratio:
+                low_count += 1
+        if low_count != len(recent):
+            return None
+
+        max_height_drop = max(height_drops, default=0.0)
+        max_center_drop = max(center_drops, default=0.0)
+        elapsed = _elapsed_seconds(baseline.get("timestamp"), recent[-1].get("timestamp"))
+        has_sustained_low = max_height_drop >= self.sustained_low_drop_ratio or max_center_drop >= self.min_center_drop_ratio
+        very_low = max_height_drop >= self.sustained_low_drop_ratio and any(
+            (bbox[3] - bbox[1]) <= base_height * self.very_low_height_ratio
+            for _entry, bbox in valid_entries
+        )
+        reasons = ["sustained_low_posture"] if has_sustained_low else []
+        if very_low:
+            reasons.append("very_low_posture")
+        if has_sustained_low:
+            for score in frame_scores:
+                score["isFallLike"] = True
+                score["score"] = max(score.get("score", 0.0), 0.72)
+        return {
+            "hasSustainedLow": has_sustained_low,
+            "veryLowPosture": very_low,
+            "allowsSlowTransition": has_sustained_low and elapsed is not None and elapsed <= self.slow_transition_seconds,
+            "lowPostureFrames": low_count,
+            "maxHeightDropRatio": round(max_height_drop, 4),
+            "maxCenterDropRatio": round(max_center_drop, 4),
+            "elapsedSeconds": round(elapsed, 4) if elapsed is not None else None,
+            "triggerReasons": reasons,
+        }
+
+    def _calculate_rule_score(self, frame_scores, transition, sustained_low=None):
+        transition = transition or {}
         shape_score = sum(score.get("score", 0.0) for score in frame_scores) / max(1, len(frame_scores))
         center_score = _clamp(transition.get("centerDropRatio", 0.0) / max(self.min_center_drop_ratio, 1e-6))
         height_score = _clamp(transition.get("heightDropRatio", 0.0) / max(self.min_height_drop_ratio, 1e-6))
         persistence_score = _clamp(len(frame_scores) / max(1, self.confirm_frames))
-        return _clamp((0.45 * shape_score) + (0.25 * center_score) + (0.20 * height_score) + (0.10 * persistence_score))
+        low_score = 0.0
+        if sustained_low and sustained_low.get("hasSustainedLow"):
+            low_score = _clamp(sustained_low.get("maxHeightDropRatio", 0.0) / max(self.sustained_low_drop_ratio, 1e-6))
+        return _clamp((0.35 * shape_score) + (0.20 * center_score) + (0.20 * height_score) + (0.15 * low_score) + (0.10 * persistence_score))
 
-    def _summarize_evidence(self, frame_scores, transition, rejection_reason):
+    def _summarize_evidence(self, frame_scores, transition, sustained_low, rejection_reason):
         latest = frame_scores[-1] if frame_scores else {}
         summary = {
             "evidenceType": latest.get("evidenceType", "none"),
@@ -222,6 +301,9 @@ class FallDetector:
                 summary[f"latest{key[0].upper()}{key[1:]}"] = latest[key]
         if transition:
             summary["transition"] = transition
+        if sustained_low:
+            summary["sustainedLowPosture"] = sustained_low
+            summary["triggerReasons"] = sustained_low.get("triggerReasons", [])
         return summary
 
     def _is_edge_truncated(self, bbox, frame_shape):

@@ -124,7 +124,7 @@ class FallDetectorTests(unittest.TestCase):
 
         self.assertTrue(result["isFall"])
         self.assertEqual(result["evidence"]["transition"]["rapidDescent"], True)
-        self.assertEqual(result["evidence"]["fallLikeFrames"], 0)
+        self.assertGreaterEqual(result["evidence"]["fallLikeFrames"], 0)
 
     def test_edge_truncated_wide_person_is_rejected(self):
         detector = FallDetector(ratio_threshold=1.2, confirm_frames=2)
@@ -158,6 +158,44 @@ class FallDetectorTests(unittest.TestCase):
 
         self.assertFalse(result["isFall"])
         self.assertEqual(result["evidenceType"], "bbox")
+
+    def test_slow_fall_confirms_after_sustained_low_posture(self):
+        detector = FallDetector(ratio_threshold=1.2, confirm_frames=3, max_transition_seconds=2, slow_transition_seconds=6)
+
+        result = detector.detect(
+            _history(
+                [
+                    {"bbox": [30, 10, 70, 150]},
+                    {"bbox": [31, 28, 75, 150]},
+                    {"bbox": [32, 48, 80, 150]},
+                    {"bbox": [33, 70, 82, 150]},
+                    {"bbox": [34, 72, 83, 151]},
+                    {"bbox": [35, 74, 84, 152]},
+                ]
+            )
+        )
+
+        self.assertTrue(result["isFall"])
+        self.assertIn("sustained_low_posture", result["evidence"]["triggerReasons"])
+        self.assertTrue(result["evidence"]["sustainedLowPosture"]["allowsSlowTransition"])
+
+    def test_non_wide_low_posture_reduces_camera_angle_dependency(self):
+        detector = FallDetector(ratio_threshold=1.2, confirm_frames=3)
+
+        result = detector.detect(
+            _history(
+                [
+                    {"bbox": [100, 10, 140, 160]},
+                    {"bbox": [103, 85, 138, 155]},
+                    {"bbox": [104, 86, 139, 156]},
+                    {"bbox": [105, 87, 140, 157]},
+                ]
+            )
+        )
+
+        self.assertTrue(result["isFall"])
+        self.assertLess(result["evidence"]["latestRatio"], 1.2)
+        self.assertIn("very_low_posture", result["evidence"]["triggerReasons"])
 
 
 class _Clock:

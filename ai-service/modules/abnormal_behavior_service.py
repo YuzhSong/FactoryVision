@@ -27,6 +27,10 @@ class AbnormalBehaviorService:
             min_center_drop_ratio=config.get("fallMinCenterDropRatio", 0.15),
             min_height_drop_ratio=config.get("fallMinHeightDropRatio", 0.2),
             max_transition_seconds=config.get("fallMaxTransitionSeconds", 2.0),
+            sustained_low_drop_ratio=config.get("fallSustainedLowDropRatio", 0.4),
+            low_posture_height_ratio=config.get("fallLowPostureHeightRatio", 0.7),
+            very_low_height_ratio=config.get("fallVeryLowHeightRatio", 0.58),
+            slow_transition_seconds=config.get("fallSlowTransitionSeconds", 6.0),
         )
         self.running_detector = RunningDetector(
             speed_threshold=config.get("runningSpeedThreshold", 30.0),
