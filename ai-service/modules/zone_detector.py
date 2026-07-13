@@ -109,7 +109,7 @@ class ZoneDetector:
                     state["intrusionEmitted"] = True
                     state["state"] = "REPORTED"
                     emitted.append("region_intrusion")
-                if duration >= self._min_stay_seconds(zone) and not state["dwellEmitted"]:
+                if self._is_restricted(zone) and duration >= self._min_stay_seconds(zone) and not state["dwellEmitted"]:
                     events.append(self._event("region_dwell", camera_id, track_id, zone, state, duration, confidence, event_point))
                     state["dwellEmitted"] = True
                     state["state"] = "REPORTED"
@@ -162,7 +162,7 @@ class ZoneDetector:
             "timestamp": state["lastSeenAt"],
             "confidence": round(float(confidence or 0), 4),
             "footPoint": {"x": round(foot_point[0], 2), "y": round(foot_point[1], 2)},
-            "level": "high" if event_type == "region_intrusion" else "medium",
+            "level": "high" if event_type == "region_dwell" else "medium",
         }
 
     def _state_key(self, camera_id, region_id, track_id):

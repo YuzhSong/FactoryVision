@@ -94,11 +94,11 @@ class Config:
     HELMET_MAX_DET = int(os.getenv("HELMET_MAX_DET", "300"))
     HELMET_CLASS_IDS = tuple(
         int(value.strip())
-        for value in os.getenv("HELMET_CLASS_IDS", "1,2").split(",")
+        for value in os.getenv("HELMET_CLASS_IDS", "3,8").split(",")
         if value.strip()
     )
-    HELMET_CLASS_ID = int(os.getenv("HELMET_CLASS_ID", "1"))
-    NO_HELMET_CLASS_ID = int(os.getenv("NO_HELMET_CLASS_ID", "2"))
+    HELMET_CLASS_ID = int(os.getenv("HELMET_CLASS_ID", "3"))
+    NO_HELMET_CLASS_ID = int(os.getenv("NO_HELMET_CLASS_ID", "8"))
 
     FACE_MODEL_NAME = os.getenv("FACE_MODEL_NAME", "buffalo_l")
     FACE_DETECTION_SIZE = _parse_size(os.getenv("FACE_DETECTION_SIZE", "640,640"), (640, 640))

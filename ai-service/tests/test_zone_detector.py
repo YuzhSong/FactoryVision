@@ -37,15 +37,24 @@ class ZoneDetectorTests(unittest.TestCase):
         self.assertEqual(len(boundary_detector.detect_events(1, [_person(x=0, y=50)], "2026-07-11T10:00:02+08:00")), 1)
 
     def test_dwell_event_is_emitted_once_per_continuous_stay(self):
-        detector = ZoneDetector([_zone(type="general")], min_stay_seconds=10, enter_confirm_seconds=0)
-        self.assertEqual(detector.detect_events(1, [_person()], "2026-07-11T10:00:00+08:00"), [])
+        detector = ZoneDetector([_zone(type="danger")], min_stay_seconds=10, enter_confirm_seconds=0)
+        intrusion = detector.detect_events(1, [_person()], "2026-07-11T10:00:00+08:00")
+        self.assertEqual([item["eventType"] for item in intrusion], ["region_intrusion"])
         dwell = detector.detect_events(1, [_person()], "2026-07-11T10:00:10+08:00")
         self.assertEqual(dwell[0]["eventType"], "region_dwell")
+        self.assertEqual(dwell[0]["level"], "high")
         self.assertEqual(dwell[0]["durationSeconds"], 10.0)
         self.assertEqual(detector.detect_events(1, [_person()], "2026-07-11T10:00:11+08:00"), [])
 
+    def test_workstation_and_general_zones_do_not_emit_alerts(self):
+        for zone_type in ("workstation", "general"):
+            with self.subTest(zone_type=zone_type):
+                detector = ZoneDetector([_zone(type=zone_type)], min_stay_seconds=5, enter_confirm_seconds=0)
+                self.assertEqual(detector.detect_events(1, [_person()], "2026-07-11T10:00:00+08:00"), [])
+                self.assertEqual(detector.detect_events(1, [_person()], "2026-07-11T10:00:06+08:00"), [])
+
     def test_leave_ttl_and_reentry_reset_the_state(self):
-        detector = ZoneDetector([_zone(type="general")], min_stay_seconds=5, state_ttl_seconds=3, enter_confirm_seconds=0)
+        detector = ZoneDetector([_zone(type="danger")], min_stay_seconds=5, state_ttl_seconds=3, enter_confirm_seconds=0)
         detector.detect_events(1, [_person()], "2026-07-11T10:00:00+08:00")
         detector.detect_events(1, [_person(x=150, y=50)], "2026-07-11T10:00:01+08:00")
         self.assertEqual(detector.state_count(), 1)
@@ -57,7 +66,7 @@ class ZoneDetectorTests(unittest.TestCase):
         self.assertEqual(dwell[0]["eventType"], "region_dwell")
 
     def test_camera_region_and_track_states_are_isolated(self):
-        detector = ZoneDetector([_zone(type="general")], min_stay_seconds=5, enter_confirm_seconds=0)
+        detector = ZoneDetector([_zone(type="danger")], min_stay_seconds=5, enter_confirm_seconds=0)
         detector.detect_events(1, [_person("t-1")], "2026-07-11T10:00:00+08:00")
         detector.detect_events(2, [_person("t-1")], "2026-07-11T10:00:01+08:00")
         detector.detect_events(1, [_person("t-2")], "2026-07-11T10:00:01+08:00")
@@ -95,6 +104,7 @@ class ZoneDetectorTests(unittest.TestCase):
         detector.detect_events(1, [_person()], "2026-07-11T10:00:02+08:00")
         second = detector.detect_events(1, [_person()], "2026-07-11T10:00:02.300000+08:00")
         self.assertEqual([item["eventType"] for item in second], ["region_intrusion"])
+        self.assertEqual(second[0]["level"], "medium")
 
     def test_disabled_region_does_not_create_or_retain_state(self):
         detector = ZoneDetector([_zone(enabled=False)])

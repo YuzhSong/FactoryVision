@@ -142,6 +142,7 @@ class ProcessedStreamService:
             pre_event_seconds=event_media_pre_seconds,
             post_event_seconds=event_media_post_seconds,
             cooldown_seconds=event_media_cooldown_seconds,
+            ffmpeg_path=ffmpeg_path,
         )
         self._status = StreamTaskStatus(
             input_url=default_input_url,

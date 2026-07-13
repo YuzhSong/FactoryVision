@@ -219,6 +219,74 @@ class AIResultsReportTests(TestCase):
         self.assertEqual(pushed_payload["regionId"], 13)
         self.assertEqual(pushed_payload["description"], "区域：一号车间入口禁区")
 
+    def test_region_intrusion_defaults_to_medium_and_is_time_deduplicated(self):
+        def report(timestamp, track_id="t-49"):
+            return self.client.post(
+                "/api/ai-results/report/",
+                {
+                    "cameraId": self.camera.code,
+                    "frameId": f"region-{timestamp}",
+                    "timestamp": timestamp,
+                    "results": [
+                        {
+                            "type": "ZONE_WARNING",
+                            "eventType": "region_intrusion",
+                            "trackId": track_id,
+                            "regionId": 13,
+                            "regionName": "Restricted Gate",
+                            "confidence": 0.9,
+                        }
+                    ],
+                },
+                format="json",
+            )
+
+        first = report("2026-07-07T10:02:00+08:00")
+        duplicate = report("2026-07-07T10:02:10+08:00")
+        after_cooldown = report("2026-07-07T10:02:21+08:00")
+
+        self.assertEqual(first.data["data"]["acceptedResults"], 1)
+        self.assertEqual(duplicate.data["data"]["acceptedResults"], 0)
+        self.assertEqual(duplicate.data["data"]["rejectedResults"], 1)
+        self.assertEqual(after_cooldown.data["data"]["acceptedResults"], 1)
+        self.assertEqual(Event.objects.filter(event_type="region_intrusion").count(), 2)
+        self.assertTrue(all(event.severity == "medium" for event in Event.objects.filter(event_type="region_intrusion")))
+        self.assertTrue(all(alert.level == "medium" for alert in Alert.objects.filter(event_type="region_intrusion")))
+
+    def test_region_dwell_defaults_to_high_and_uses_longer_cooldown(self):
+        def report(timestamp):
+            return self.client.post(
+                "/api/ai-results/report/",
+                {
+                    "cameraId": self.camera.code,
+                    "frameId": f"dwell-{timestamp}",
+                    "timestamp": timestamp,
+                    "results": [
+                        {
+                            "type": "ZONE_WARNING",
+                            "eventType": "region_dwell",
+                            "trackId": "t-49",
+                            "regionId": 13,
+                            "regionName": "Restricted Gate",
+                            "durationSeconds": 30,
+                            "confidence": 0.9,
+                        }
+                    ],
+                },
+                format="json",
+            )
+
+        first = report("2026-07-07T10:03:00+08:00")
+        duplicate = report("2026-07-07T10:03:59+08:00")
+        after_cooldown = report("2026-07-07T10:04:01+08:00")
+
+        self.assertEqual(first.data["data"]["acceptedResults"], 1)
+        self.assertEqual(duplicate.data["data"]["acceptedResults"], 0)
+        self.assertEqual(after_cooldown.data["data"]["acceptedResults"], 1)
+        self.assertEqual(Event.objects.filter(event_type="region_dwell").count(), 2)
+        self.assertTrue(all(event.severity == "high" for event in Event.objects.filter(event_type="region_dwell")))
+        self.assertTrue(all(alert.level == "high" for alert in Alert.objects.filter(event_type="region_dwell")))
+
     def test_alert_detail_returns_replay_trajectory_region_and_media_placeholder(self):
         response = self.client.post(
             "/api/ai-results/report/",

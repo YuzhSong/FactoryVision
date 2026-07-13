@@ -6,6 +6,8 @@ import logging
 from pathlib import Path
 import queue
 import re
+import shutil
+import subprocess
 import threading
 
 
@@ -34,6 +36,7 @@ class EventMediaRecorder:
         cooldown_seconds: float = 10.0,
         image_extension: str = "jpg",
         finalize_queue_size: int = 2,
+        ffmpeg_path: str = "ffmpeg",
         media_ready_callback=None,
     ):
         self.output_dir = Path(output_dir)
@@ -43,6 +46,7 @@ class EventMediaRecorder:
         self.post_event_frames = max(0, int(round(float(post_event_seconds or 0) * self.fps)))
         self.cooldown_seconds = max(0.0, float(cooldown_seconds or 0))
         self.image_extension = image_extension.lstrip(".") or "jpg"
+        self.ffmpeg_path = ffmpeg_path or "ffmpeg"
         self.frame_buffer = deque(maxlen=self.pre_event_frames)
         self.active_clips = []
         self.last_event_seconds_by_key = {}
@@ -209,7 +213,12 @@ class EventMediaRecorder:
                 self._finalize_queue.task_done()
 
     def _finalize_clip(self, clip):
-        clip_result = _write_video_clip(clip["clip_path"], [sample.frame for sample in clip["frames"]], self.fps)
+        clip_result = _write_video_clip(
+            clip["clip_path"],
+            [sample.frame for sample in clip["frames"]],
+            self.fps,
+            ffmpeg_path=self.ffmpeg_path,
+        )
         media = clip["media"]
         media["status"] = "ready" if clip_result.get("ok") else "frames_saved"
         media["clipFrameCount"] = len(clip["frames"])
@@ -268,9 +277,13 @@ def _write_image(path, frame):
         raise RuntimeError(f"Unable to write event keyframe: {path}")
 
 
-def _write_video_clip(path, frames, fps):
+def _write_video_clip(path, frames, fps, ffmpeg_path="ffmpeg"):
     if not frames:
         return {"ok": False}
+
+    ffmpeg_result = _write_h264_clip(path, frames, fps, ffmpeg_path=ffmpeg_path)
+    if ffmpeg_result.get("ok"):
+        return ffmpeg_result
 
     cv2 = _cv2()
     first = frames[0]
@@ -288,7 +301,89 @@ def _write_video_clip(path, frames, fps):
     sequence_dir.mkdir(parents=True, exist_ok=True)
     for index, frame in enumerate(frames):
         cv2.imwrite(str(sequence_dir / f"frame_{index:04d}.jpg"), frame)
-    return {"ok": False, "frameSequenceDir": str(sequence_dir)}
+    result = {"ok": False, "frameSequenceDir": str(sequence_dir)}
+    if ffmpeg_result.get("error"):
+        result["error"] = ffmpeg_result["error"]
+    return result
+
+
+def _write_h264_clip(path, frames, fps, ffmpeg_path="ffmpeg"):
+    resolved_ffmpeg = shutil.which(str(ffmpeg_path or "ffmpeg")) or str(ffmpeg_path or "ffmpeg")
+    if not shutil.which(resolved_ffmpeg) and not Path(resolved_ffmpeg).exists():
+        return {"ok": False, "error": f"ffmpeg executable not found: {ffmpeg_path}"}
+
+    first = frames[0]
+    height, width = first.shape[:2]
+    if width <= 0 or height <= 0:
+        return {"ok": False, "error": "invalid frame shape"}
+
+    even_width = width if width % 2 == 0 else width - 1
+    even_height = height if height % 2 == 0 else height - 1
+    if even_width <= 0 or even_height <= 0:
+        return {"ok": False, "error": "invalid even frame shape"}
+
+    command = [
+        resolved_ffmpeg,
+        "-y",
+        "-f",
+        "rawvideo",
+        "-vcodec",
+        "rawvideo",
+        "-pix_fmt",
+        "bgr24",
+        "-s",
+        f"{even_width}x{even_height}",
+        "-r",
+        str(max(1.0, float(fps or 10.0))),
+        "-i",
+        "-",
+        "-an",
+        "-vcodec",
+        "libx264",
+        "-preset",
+        "veryfast",
+        "-crf",
+        "28",
+        "-pix_fmt",
+        "yuv420p",
+        "-movflags",
+        "+faststart",
+        str(path),
+    ]
+
+    process = None
+    try:
+        process = subprocess.Popen(
+            command,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+        )
+        for frame in frames:
+            prepared = _prepare_frame_for_ffmpeg(frame, even_width, even_height)
+            process.stdin.write(prepared.tobytes())
+        process.stdin.close()
+        process.stdin = None
+        _, stderr = process.communicate(timeout=30)
+        if process.returncode == 0 and path.exists():
+            return {"ok": True, "codec": "h264"}
+        message = stderr.decode("utf-8", errors="replace").strip() if stderr else ""
+        return {"ok": False, "error": message or f"ffmpeg exited with {process.returncode}"}
+    except Exception as exc:
+        if process is not None:
+            try:
+                process.kill()
+            except Exception:
+                pass
+        return {"ok": False, "error": str(exc)}
+
+
+def _prepare_frame_for_ffmpeg(frame, width, height):
+    cv2 = _cv2()
+    source_height, source_width = frame.shape[:2]
+    if source_width != width or source_height != height:
+        return cv2.resize(frame, (width, height))
+    return frame
 
 
 def _write_manifest(path, media, event_result):

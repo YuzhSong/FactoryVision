@@ -38,8 +38,8 @@ ALERT_TYPE_DISPLAY = {
 # 各类型的默认级别（与 views._default_level 的效果一致，仅用于展示）。
 ALERT_TYPE_LEVEL = {
     "helmet_violation": "中",
-    "region_intrusion": "高",
-    "region_dwell": "中",
+    "region_intrusion": "中",
+    "region_dwell": "高",
     "stranger_detected": "高",
     "fall_detected": "高",
 }

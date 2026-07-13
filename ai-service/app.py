@@ -311,6 +311,7 @@ def create_app() -> FastAPI:
                 image_base_url=payload.get("imageBaseUrl", Config.FACE_IMAGE_BASE_URL),
                 image_dir=payload.get("imageDir"),
             )
+            _invalidate_face_identity_cache()
         except Exception as exc:
             return _error_response(exc)
         return {"code": 200, "message": "success", "data": result}
@@ -327,6 +328,7 @@ def create_app() -> FastAPI:
                     payload.get("employeeNos") or payload.get("employee_nos") or payload.get("employeeNo")
                 ),
             )
+            _invalidate_face_identity_cache()
         except Exception as exc:
             return _error_response(exc)
         return {"code": 200, "message": "success", "data": result}
@@ -575,19 +577,28 @@ def _reload_face_library(payload):
             bootstrap = backend_client.get_bootstrap()
             data = bootstrap.get("data", bootstrap) if isinstance(bootstrap, dict) else {}
             records = data.get("employees") if isinstance(data, dict) else []
-        return face_service.load_face_library(
+        result = face_service.load_face_library(
             employee_items=records,
             image_base_url=payload.get("imageBaseUrl", Config.FACE_IMAGE_BASE_URL),
             image_dir=payload.get("imageDir", Config.FACE_IMAGE_DIR),
         )
+        _invalidate_face_identity_cache()
+        return result
 
-    return face_service.load_face_library(
+    result = face_service.load_face_library(
         records=payload.get("records"),
         employee_items=payload.get("employees"),
         library_path=payload.get("libraryPath", Config.FACE_LIBRARY_PATH),
         image_dir=payload.get("imageDir", Config.FACE_IMAGE_DIR),
         image_base_url=payload.get("imageBaseUrl", Config.FACE_IMAGE_BASE_URL),
     )
+    _invalidate_face_identity_cache()
+    return result
+
+
+def _invalidate_face_identity_cache():
+    if hasattr(frame_processor, "invalidate_face_identity_cache"):
+        frame_processor.invalidate_face_identity_cache()
 
 
 def _reload_runtime_cache(payload):
@@ -648,6 +659,7 @@ def _apply_bootstrap_payload(payload):
             image_base_url=data.get("imageBaseUrl", Config.FACE_IMAGE_BASE_URL),
             image_dir=data.get("imageDir", Config.FACE_IMAGE_DIR),
         )
+        _invalidate_face_identity_cache()
 
     return {
         "runtimeCache": cache_status,

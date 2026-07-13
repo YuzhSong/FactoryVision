@@ -219,6 +219,13 @@ class FrameProcessor:
         if hasattr(self.person_detector, "reset_tracks"):
             self.person_detector.reset_tracks()
 
+    def invalidate_face_identity_cache(self):
+        """Drop short-lived identity state after the face library changes."""
+        self.identity_cache.invalidate_library()
+        self.employee_presence_detector.reset()
+        self.employee_recognition_detector.reset()
+        self.stranger_detector.reset()
+
     def _update_track_histories(
         self,
         person_results,

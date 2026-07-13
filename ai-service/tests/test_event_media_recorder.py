@@ -1,5 +1,7 @@
 import json
 from pathlib import Path
+import shutil
+import subprocess
 import tempfile
 import unittest
 
@@ -63,6 +65,26 @@ class EventMediaRecorderTests(unittest.TestCase):
                 "frameSequenceDir" in manifest_media and Path(manifest_media["frameSequenceDir"]).exists()
             )
             self.assertTrue(clip_exists or sequence_exists)
+            if clip_exists and shutil.which("ffprobe"):
+                probe = subprocess.run(
+                    [
+                        "ffprobe",
+                        "-v",
+                        "error",
+                        "-select_streams",
+                        "v:0",
+                        "-show_entries",
+                        "stream=codec_name,pix_fmt",
+                        "-of",
+                        "default=nw=1:nk=1",
+                        manifest_media["clipPath"],
+                    ],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertIn("h264", probe.stdout.splitlines())
+                self.assertIn("yuv420p", probe.stdout.splitlines())
 
     def test_cooldown_suppresses_repeated_event_media(self):
         with tempfile.TemporaryDirectory() as tmpdir:

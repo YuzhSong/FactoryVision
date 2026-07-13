@@ -56,6 +56,8 @@ EVENT_INTERNAL_TYPES = {
 
 EVENT_DEDUP_SECONDS = {
     "helmet_violation": 20,
+    "region_intrusion": 20,
+    "region_dwell": 60,
     "face_recognized": 60,
     "stranger_detected": 30,
     "fall_detected": 30,
@@ -824,14 +826,13 @@ def _is_duplicate_event(camera, result_type, result, occurred_at, track_id):
 
     if result_type in {"region_intrusion", "region_dwell"}:
         region_id = result.get("regionId", result.get("zoneId"))
-        entered_at = result.get("enteredAt")
-        if region_id not in (None, "") and entered_at:
-            return events.filter(
-                track_id=track_id,
-                payload__regionId=region_id,
-                payload__enteredAt=entered_at,
-            ).exists()
-        return False
+        cooldown = EVENT_DEDUP_SECONDS.get(result_type)
+        if region_id in (None, "") or not track_id or not cooldown:
+            return False
+        return events.filter(
+            track_id=track_id,
+            occurred_at__gte=occurred_at - timedelta(seconds=cooldown),
+        ).filter(Q(payload__regionId=region_id) | Q(payload__zoneId=region_id)).exists()
 
     cooldown = EVENT_DEDUP_SECONDS.get(result_type)
     if not cooldown or not track_id:
@@ -860,7 +861,7 @@ def _normalize_event_type(result):
 
 
 def _default_level(result_type):
-    if result_type in {"FALL_DETECTED", "FALL_ALERT", "ZONE_INTRUSION", "region_intrusion", "STRANGER_DETECTED", "STRANGER_ALERT"}:
+    if result_type in {"FALL_DETECTED", "FALL_ALERT", "ZONE_INTRUSION", "region_dwell", "STRANGER_DETECTED", "STRANGER_ALERT"}:
         return "high"
     if result_type == "EMPLOYEE_RETURNED":
         return "low"
@@ -977,7 +978,7 @@ def _notify_dingtalk_alert(alert: Alert) -> None:
         logger.exception("Unexpected DingTalk initial notification error alert_id=%s", alert.id)
 
     escalation_seconds = settings.DINGTALK_ESCALATION_SECONDS
-    if escalation_seconds < 1:
+    if escalation_seconds < 1 or alert.level != "high":
         return
 
     timer = threading.Timer(escalation_seconds, _escalate_alert, args=[alert.id])
