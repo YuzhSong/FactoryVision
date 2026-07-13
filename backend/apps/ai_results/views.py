@@ -174,6 +174,7 @@ def report_ai_results(request):
 
     event_ids = []
     alert_ids = []
+    accepted_events = []
     rejected_results = 0
     _pushed_face_keys = set()
 
@@ -195,28 +196,37 @@ def report_ai_results(request):
                 )
                 continue
 
+            result_payload = _attach_initial_media_metadata(result, validated.get("eventMedia", []))
             event = Event.objects.create(
                 camera=camera,
                 camera_identifier=str(validated["cameraId"]),
                 frame_id=validated.get("frameId", ""),
                 event_type=result_type,
                 source=Event.Source.AI_SERVICE,
-                severity=_event_severity(result_type, result),
+                severity=_event_severity(result_type, result_payload),
                 status=Event.Status.NEW,
                 occurred_at=validated["timestamp"],
                 track_id=track_id,
-                bbox=_extract_bbox(result),
-                confidence=_extract_confidence(result),
-                snapshot_path=_extract_snapshot_path(result, validated.get("eventMedia", [])),
-                payload=result,
+                bbox=_extract_bbox(result_payload),
+                confidence=_extract_confidence(result_payload),
+                snapshot_path=_extract_snapshot_path(result_payload, validated.get("eventMedia", [])),
+                payload=result_payload,
             )
             event_ids.append(event.id)
-            event_description = _alert_description(result)
+            accepted_events.append(
+                {
+                    "eventId": event.id,
+                    "mediaEventId": result_payload.get("mediaEventId") or (result_payload.get("media") or {}).get("eventId"),
+                    "trackId": event.track_id,
+                    "eventType": event.event_type,
+                }
+            )
+            event_description = _alert_description(result_payload)
 
             should_push = _should_create_alert(result_type) or result_type == "face_recognized"
-            if result_type == "face_recognized" and result.get("employeeId"):
+            if result_type == "face_recognized" and result_payload.get("employeeId"):
                 # 同一员工同一 trackId 只推一次
-                key = (event.track_id, str(result["employeeId"]))
+                key = (event.track_id, str(result_payload["employeeId"]))
                 if key not in _pushed_face_keys:
                     _pushed_face_keys.add(key)
                     should_push = True
@@ -240,12 +250,12 @@ def report_ai_results(request):
                                     "trackId": event.track_id,
                                     "bbox": event.bbox,
                                     "confidence": event.confidence,
-                                    "name": result.get("name") or result.get("employeeName"),
-                                    "employeeName": result.get("employeeName") or result.get("name"),
-                                    "employeeId": result.get("employeeId"),
-                                    "zoneName": result.get("zoneName") or result.get("regionName"),
-                                    "regionName": result.get("regionName") or result.get("zoneName"),
-                                    "regionId": result.get("regionId") or result.get("zoneId"),
+                                    "name": result_payload.get("name") or result_payload.get("employeeName"),
+                                    "employeeName": result_payload.get("employeeName") or result_payload.get("name"),
+                                    "employeeId": result_payload.get("employeeId"),
+                                    "zoneName": result_payload.get("zoneName") or result_payload.get("regionName"),
+                                    "regionName": result_payload.get("regionName") or result_payload.get("zoneName"),
+                                    "regionId": result_payload.get("regionId") or result_payload.get("zoneId"),
                                     "description": event_description,
                                     "occurredAt": str(event.occurred_at),
                                 },
@@ -265,7 +275,7 @@ def report_ai_results(request):
                     event=event,
                     camera=camera,
                     event_type=result_type,
-                    level=str(result.get("level") or _default_level(result_type)),
+                    level=str(result_payload.get("level") or _default_level(result_type)),
                     title=_alert_title(result_type),
                     description=event_description,
                     snapshot_path=event.snapshot_path,
@@ -280,6 +290,7 @@ def report_ai_results(request):
         data={
             "eventIds": event_ids,
             "alertIds": alert_ids,
+            "acceptedEvents": accepted_events,
             "acceptedResults": len(event_ids),
             "rejectedResults": rejected_results,
             "cameraId": validated["cameraId"],
@@ -576,6 +587,47 @@ def _extract_bbox(result):
 def _extract_track_id(result):
     value = result.get("trackId") or result.get("track_id") or result.get("id")
     return "" if value is None else str(value)
+
+
+def _attach_initial_media_metadata(result, event_media):
+    payload = dict(result)
+    media = _matching_event_media(payload, event_media)
+    if not media:
+        return payload
+    payload["mediaEventId"] = media.get("eventId")
+    payload["media"] = {
+        "eventId": media.get("eventId"),
+        "status": media.get("status"),
+        "keyframePath": media.get("keyframePath"),
+        "clipPath": media.get("clipPath"),
+        "manifestPath": media.get("manifestPath"),
+        "preEventFrames": media.get("preEventFrames"),
+        "postEventFrames": media.get("postEventFrames"),
+    }
+    for key in ("keyframePath", "clipPath", "manifestPath"):
+        if media.get(key):
+            payload.setdefault(key, media[key])
+    return payload
+
+
+def _matching_event_media(result, event_media):
+    if not isinstance(event_media, list):
+        return None
+    media_event_id = result.get("mediaEventId")
+    if media_event_id:
+        for media in event_media:
+            if str(media.get("eventId")) == str(media_event_id):
+                return media
+    if len(event_media) == 1:
+        return event_media[0]
+    track_id = result.get("trackId")
+    result_type = result.get("type")
+    for media in event_media:
+        if track_id and str(media.get("trackId")) == str(track_id):
+            return media
+        if result_type and media.get("eventType") == result_type:
+            return media
+    return None
 
 
 def _extract_snapshot_path(result, event_media):

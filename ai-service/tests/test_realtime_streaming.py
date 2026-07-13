@@ -108,9 +108,14 @@ class _FakeEventMediaRecorder:
 class _FakeBackendClient:
     def __init__(self):
         self.report = None
+        self.media_uploads = []
 
     def report_ai_results(self, payload):
         self.report = payload
+        return {"code": 200}
+
+    def upload_event_media(self, event_id, media):
+        self.media_uploads.append({"eventId": event_id, "media": media})
         return {"code": 200}
 
 
@@ -309,6 +314,32 @@ class RealtimeStreamingTests(unittest.TestCase):
             service.start({})
         with self.assertRaisesRegex(ValueError, "reportRealtimeToBackend"):
             service.start({"reportRealtimeToBackend": True})
+
+    def test_processed_stream_uploads_ready_event_media_after_report_mapping(self):
+        backend = _FakeBackendClient()
+        service = ProcessedStreamService(
+            frame_processor=None,
+            backend_client=backend,
+            annotator=_FakeAnnotator(),
+            event_media_recorder=_FakeEventMediaRecorder(),
+        )
+        media = {
+            "eventId": "local-media-1",
+            "status": "ready",
+            "keyframePath": __file__,
+            "manifestPath": __file__,
+        }
+
+        service._on_event_media_ready(media)
+        service._register_reported_event_media(
+            {"results": [{"mediaEventId": "local-media-1"}]},
+            {"data": {"acceptedEvents": [{"eventId": 7, "mediaEventId": "local-media-1"}]}},
+        )
+        service._event_media_upload_queue.join()
+
+        self.assertEqual(len(backend.media_uploads), 1)
+        self.assertEqual(backend.media_uploads[0]["eventId"], 7)
+        self.assertEqual(backend.media_uploads[0]["media"]["eventId"], "local-media-1")
 
     def test_track_history_keeps_lightweight_recent_points(self):
         processor = FrameProcessor(person_detector=_FakeDetector(), history_limit=5)

@@ -18,6 +18,7 @@ class BackendClient:
         face_library_path: str = "",
         zone_list_path: str = "/zones/list/",
         ai_report_path: str = "/ai-results/report/",
+        event_media_upload_path_template: str = "/events/{event_id}/media/",
         bootstrap_path: str = "/ai/bootstrap/",
     ):
         """Initialize backend client with base URL, timeout, token, and API paths."""
@@ -29,6 +30,7 @@ class BackendClient:
         self.face_library_path = face_library_path
         self.zone_list_path = zone_list_path
         self.ai_report_path = ai_report_path
+        self.event_media_upload_path_template = event_media_upload_path_template
         self.bootstrap_path = bootstrap_path
         self.session = requests.Session()
 
@@ -97,6 +99,45 @@ class BackendClient:
         )
         response.raise_for_status()
         return response.json()
+
+    def upload_event_media(self, event_id, media: dict):
+        """Upload keyframe, clip, and manifest files for one accepted backend event."""
+        files = {}
+        handles = []
+        try:
+            for field_name, path_key, content_type in (
+                ("keyframe", "keyframePath", "image/jpeg"),
+                ("clip", "clipPath", "video/mp4"),
+                ("manifest", "manifestPath", "application/json"),
+            ):
+                path = media.get(path_key)
+                if not path:
+                    continue
+                try:
+                    handle = open(path, "rb")
+                except OSError:
+                    continue
+                handles.append(handle)
+                files[field_name] = (path.split("/")[-1].split("\\")[-1], handle, content_type)
+
+            if not files:
+                return {"code": 204, "data": {"skipped": True, "reason": "no local media files"}}
+
+            response = self.session.post(
+                self._build_url(self.event_media_upload_path_template.format(event_id=event_id)),
+                data={
+                    "mediaEventId": media.get("eventId") or media.get("mediaEventId") or "",
+                    "status": media.get("status") or "",
+                },
+                files=files,
+                timeout=self.timeout_seconds,
+                verify=self.tls_verify,
+            )
+            response.raise_for_status()
+            return response.json()
+        finally:
+            for handle in handles:
+                handle.close()
 
     def get_bootstrap(self):
         """Fetch backend bootstrap data for AI runtime cache warmup."""

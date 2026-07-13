@@ -231,6 +231,7 @@ class AIResultsReportTests(TestCase):
                         "type": "ZONE_WARNING",
                         "eventType": "region_intrusion",
                         "trackId": "t-49",
+                        "mediaEventId": "local-media-1",
                         "regionId": 13,
                         "regionName": "Restricted Gate",
                         "regionPoints": [{"x": 10, "y": 10}, {"x": 90, "y": 10}, {"x": 90, "y": 90}],
@@ -254,6 +255,9 @@ class AIResultsReportTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         alert_id = response.data["data"]["alertIds"][0]
+        accepted_event = response.data["data"]["acceptedEvents"][0]
+        self.assertEqual(accepted_event["eventType"], "region_intrusion")
+        self.assertEqual(accepted_event["mediaEventId"], "local-media-1")
 
         detail_response = self.client.get(f"/api/alerts/{alert_id}/detail/")
 

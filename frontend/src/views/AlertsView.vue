@@ -341,6 +341,22 @@ onMounted(() => {
           </section>
 
           <el-divider content-position="left">媒体证据</el-divider>
+          <div v-if="replay.media?.keyframeUrl || replay.media?.clipUrl" class="media-preview">
+            <img
+              v-if="replay.media?.keyframeUrl"
+              class="media-preview__image"
+              :src="replay.media.keyframeUrl"
+              alt="事件关键帧"
+            />
+            <video
+              v-if="replay.media?.clipUrl"
+              class="media-preview__video"
+              :src="replay.media.clipUrl"
+              controls
+              muted
+              playsinline
+            />
+          </div>
           <el-descriptions :column="1" border>
             <el-descriptions-item label="关键帧">
               {{ replay.media?.keyframeUrl || replay.media?.keyframePath || '暂无' }}
@@ -474,5 +490,20 @@ onMounted(() => {
   color: #dbeafe;
   font-size: 12px;
   line-height: 1.6;
+}
+
+.media-preview {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.media-preview__image,
+.media-preview__video {
+  width: 100%;
+  max-height: 280px;
+  object-fit: contain;
+  border-radius: 12px;
+  background: #0f172a;
 }
 </style>

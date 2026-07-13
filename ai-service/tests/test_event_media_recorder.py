@@ -48,6 +48,7 @@ class EventMediaRecorderTests(unittest.TestCase):
             )
             recorder.record_frame(_frame(40), frame_id="frame-4", timestamp="2026-07-08T03:00:03+08:00")
             recorder.record_frame(_frame(50), frame_id="frame-5", timestamp="2026-07-08T03:00:04+08:00")
+            recorder.flush()
 
             self.assertEqual(len(media), 1)
             self.assertTrue(Path(media[0]["keyframePath"]).exists())
@@ -92,6 +93,7 @@ class EventMediaRecorderTests(unittest.TestCase):
                 timestamp="2026-07-08T03:00:11+08:00",
                 report=_report("STRANGER_ALERT"),
             )
+            recorder.flush()
 
             self.assertEqual(len(first), 1)
             manifest = json.loads(Path(first[0]["manifestPath"]).read_text(encoding="utf-8"))

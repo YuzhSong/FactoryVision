@@ -3,7 +3,10 @@ from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
 from channels.testing import WebsocketCommunicator
 from django.utils import timezone
+from django.test import override_settings
+from django.core.files.uploadedfile import SimpleUploadedFile
 from rest_framework.test import APIClient
+from tempfile import TemporaryDirectory
 
 from apps.cameras.models import Camera
 
@@ -28,6 +31,40 @@ class EventListTests(TestCase):
         self.assertEqual(response.data["data"]["total"], 1)
         self.assertEqual(response.data["data"]["items"][0]["id"], event.id)
         self.assertEqual(response.data["data"]["items"][0]["cameraIdentifier"], camera.code)
+
+    def test_upload_event_media_updates_payload_with_urls(self):
+        with TemporaryDirectory() as media_root:
+            camera = Camera.objects.create(name="Workshop A", code="CAM-A")
+            event = Event.objects.create(
+                camera=camera,
+                camera_identifier=camera.code,
+                event_type="region_intrusion",
+                occurred_at=timezone.now(),
+                payload={"media": {"status": "recording"}},
+            )
+
+            with override_settings(MEDIA_ROOT=media_root, MEDIA_URL="/media/"):
+                response = APIClient().post(
+                    f"/api/events/{event.id}/media/",
+                    {
+                        "mediaEventId": "local-media-1",
+                        "status": "ready",
+                        "keyframe": SimpleUploadedFile("keyframe.jpg", b"fake-image", content_type="image/jpeg"),
+                        "clip": SimpleUploadedFile("clip.mp4", b"fake-video", content_type="video/mp4"),
+                        "manifest": SimpleUploadedFile("manifest.json", b"{}", content_type="application/json"),
+                    },
+                    format="multipart",
+                )
+
+            self.assertEqual(response.status_code, 200)
+            media = response.data["data"]
+            self.assertEqual(media["mediaEventId"], "local-media-1")
+            self.assertIn("/media/events/", media["keyframeUrl"])
+            self.assertIn("/media/events/", media["clipUrl"])
+            event.refresh_from_db()
+            self.assertEqual(event.payload["media"]["status"], "ready")
+            self.assertEqual(event.payload["media"]["keyframePath"], f"events/{event.id}/keyframe.jpg")
+            self.assertEqual(event.snapshot_path, f"events/{event.id}/keyframe.jpg")
 
 
 class RealtimeEventConsumerTests(TestCase):

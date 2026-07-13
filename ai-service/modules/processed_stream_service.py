@@ -156,10 +156,16 @@ class ProcessedStreamService:
         self._lock = threading.Lock()
         self._frame_condition = threading.Condition()
         self._event_report_queue = queue.Queue(maxsize=max(1, int(event_report_queue_size or 1)))
+        self._event_media_upload_queue = queue.Queue(maxsize=2)
         self.zone_refresh_interval_seconds = max(1.0, float(zone_refresh_interval_seconds or 1))
         self._event_report_stop = threading.Event()
         self._event_report_lock = threading.Lock()
         self._report_thread = None
+        self._media_upload_thread = None
+        self._media_upload_stop = threading.Event()
+        self._event_media_lock = threading.Lock()
+        self._event_media_by_id = {}
+        self._media_backend_event_ids = {}
         self._queued_region_event_keys = set()
         self._latest_frame: LatestFrameSnapshot | None = None
         self._latest_sequence = 0
@@ -175,6 +181,8 @@ class ProcessedStreamService:
         self._frame_age_samples = deque(maxlen=120)
         self._schedule_frames = {name: deque(maxlen=20) for name in ("person", "helmet", "face")}
         self._last_face_due_frame = -1
+        if self.event_media_recorder is not None and hasattr(self.event_media_recorder, "set_media_ready_callback"):
+            self.event_media_recorder.set_media_ready_callback(self._on_event_media_ready)
 
     def start(self, payload: dict | None = None):
         """Start background stream processing, or return existing task status."""
@@ -195,6 +203,7 @@ class ProcessedStreamService:
 
             self._stop_event.clear()
             self._event_report_stop.clear()
+            self._media_upload_stop.clear()
             self._cached_person_detections = []
             self._cached_helmet_detections = []
             self._person_cache_frame = None
@@ -205,6 +214,9 @@ class ProcessedStreamService:
             for frames in self._schedule_frames.values():
                 frames.clear()
             self._last_face_due_frame = -1
+            with self._event_media_lock:
+                self._event_media_by_id = {}
+                self._media_backend_event_ids = {}
             with self._frame_condition:
                 self._latest_frame = None
                 self._latest_sequence = 0
@@ -592,6 +604,7 @@ class ProcessedStreamService:
                 with self._lock:
                     self._status.last_report_attempted_at = _now()
                 response = self.backend_client.report_ai_results(report)
+                self._register_reported_event_media(report, response)
                 with self._lock:
                     self._status.reported_events += len(report.get("results") or [])
                     self._status.last_report_succeeded_at = _now()
@@ -608,11 +621,105 @@ class ProcessedStreamService:
                     self._queued_region_event_keys.difference_update(event_keys)
                 self._event_report_queue.task_done()
 
+    def _register_reported_event_media(self, report, response):
+        data = response.get("data", response) if isinstance(response, dict) else {}
+        accepted_events = data.get("acceptedEvents") if isinstance(data, dict) else None
+        if not isinstance(accepted_events, list):
+            accepted_events = []
+        if not accepted_events:
+            event_ids = data.get("eventIds", []) if isinstance(data, dict) else []
+            results = report.get("results") or []
+            accepted_events = [
+                {
+                    "eventId": event_id,
+                    "mediaEventId": result.get("mediaEventId") or (result.get("media") or {}).get("eventId"),
+                }
+                for event_id, result in zip(event_ids, results)
+            ]
+
+        for item in accepted_events:
+            backend_event_id = item.get("eventId") if isinstance(item, dict) else None
+            media_event_id = item.get("mediaEventId") if isinstance(item, dict) else None
+            if not backend_event_id or not media_event_id:
+                continue
+            with self._event_media_lock:
+                self._media_backend_event_ids[str(media_event_id)] = backend_event_id
+                media = self._event_media_by_id.get(str(media_event_id))
+            if media and _media_is_uploadable(media):
+                self._enqueue_event_media_upload(backend_event_id, media)
+
+    def _remember_event_media(self, media):
+        media_event_id = media.get("eventId") or media.get("mediaEventId")
+        if not media_event_id:
+            return
+        with self._event_media_lock:
+            self._event_media_by_id[str(media_event_id)] = dict(media)
+
+    def _on_event_media_ready(self, media):
+        self._remember_event_media(media)
+        media_event_id = media.get("eventId") or media.get("mediaEventId")
+        if not media_event_id:
+            return
+        with self._event_media_lock:
+            backend_event_id = self._media_backend_event_ids.get(str(media_event_id))
+        if backend_event_id:
+            self._enqueue_event_media_upload(backend_event_id, media)
+
+    def _enqueue_event_media_upload(self, backend_event_id, media):
+        if self.backend_client is None or not _media_is_uploadable(media):
+            return False
+        try:
+            self._event_media_upload_queue.put_nowait((backend_event_id, dict(media)))
+        except queue.Full:
+            logger.warning("Event media upload queue full; dropped media event_id=%s", media.get("eventId"))
+            return False
+        self._start_media_upload_worker()
+        return True
+
+    def _start_media_upload_worker(self):
+        with self._event_report_lock:
+            if self._media_upload_thread is not None and self._media_upload_thread.is_alive():
+                return
+            self._media_upload_thread = threading.Thread(
+                target=self._media_upload_loop,
+                name="event-media-uploader",
+                daemon=True,
+            )
+            self._media_upload_thread.start()
+
+    def _media_upload_loop(self):
+        while not self._media_upload_stop.is_set() or not self._event_media_upload_queue.empty():
+            try:
+                backend_event_id, media = self._event_media_upload_queue.get(timeout=0.5)
+            except queue.Empty:
+                continue
+            try:
+                response = self.backend_client.upload_event_media(backend_event_id, media)
+                logger.info(
+                    "event media upload succeeded backend_event_id=%s media_event_id=%s response=%s",
+                    backend_event_id,
+                    media.get("eventId"),
+                    response.get("code") if isinstance(response, dict) else response,
+                )
+            except Exception as exc:
+                logger.exception(
+                    "event media upload failed backend_event_id=%s media_event_id=%s: %s",
+                    backend_event_id,
+                    media.get("eventId"),
+                    exc,
+                )
+            finally:
+                self._event_media_upload_queue.task_done()
+
     def _shutdown_report_worker(self):
         self._event_report_stop.set()
         report_thread = self._report_thread
         if report_thread is not None and report_thread.is_alive():
             report_thread.join(timeout=5)
+        self._media_upload_stop.set()
+        media_thread = self._media_upload_thread
+        if media_thread is not None and media_thread.is_alive():
+            media_thread.join(timeout=5)
 
     def _publish_latest_frame(self, packet):
         with self._frame_condition:
@@ -662,6 +769,8 @@ class ProcessedStreamService:
             report=report,
         )
         if event_media:
+            for media in event_media:
+                self._remember_event_media(media)
             with self._lock:
                 self._status.event_media_count += len(event_media)
                 self._status.last_event_media = event_media[-1]
@@ -914,6 +1023,14 @@ def _region_event_key(result):
         str(result.get("eventType")),
         str(result.get("enteredAt")),
     )
+
+
+def _media_is_uploadable(media):
+    if not isinstance(media, dict):
+        return False
+    if media.get("status") not in {"ready", "frames_saved", "finalize_skipped", "finalize_failed"}:
+        return False
+    return any(media.get(key) for key in ("keyframePath", "clipPath", "manifestPath"))
 
 
 def _timing_summary(samples):

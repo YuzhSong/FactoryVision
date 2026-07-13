@@ -2,8 +2,14 @@ from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
+import logging
 from pathlib import Path
+import queue
 import re
+import threading
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -27,6 +33,8 @@ class EventMediaRecorder:
         post_event_seconds: float = 3.0,
         cooldown_seconds: float = 10.0,
         image_extension: str = "jpg",
+        finalize_queue_size: int = 2,
+        media_ready_callback=None,
     ):
         self.output_dir = Path(output_dir)
         self.enabled = bool(enabled)
@@ -38,6 +46,10 @@ class EventMediaRecorder:
         self.frame_buffer = deque(maxlen=self.pre_event_frames)
         self.active_clips = []
         self.last_event_seconds_by_key = {}
+        self.media_ready_callback = media_ready_callback
+        self._finalize_queue = queue.Queue(maxsize=max(1, int(finalize_queue_size or 1)))
+        self._finalize_thread = None
+        self._finalize_lock = threading.Lock()
 
     def record_frame(self, frame, frame_id=None, timestamp=None, report=None):
         """Record one processed frame and return event media metadata created on this frame."""
@@ -62,6 +74,10 @@ class EventMediaRecorder:
         clips = self.active_clips
         self.active_clips = []
         self._finalize_completed_clips(clips)
+        self._finalize_queue.join()
+
+    def set_media_ready_callback(self, callback):
+        self.media_ready_callback = callback
 
     def _create_media_for_report_events(self, current, report):
         event_results = [result for result in report.get("results", []) if _is_event_result(result)]
@@ -104,10 +120,12 @@ class EventMediaRecorder:
             "keyframePath": str(keyframe_path),
             "clipPath": str(clip_path),
             "manifestPath": str(manifest_path),
-            "status": "recording" if self.post_event_frames > 0 else "ready",
+            "status": "recording",
             "preEventFrames": len(frames) - 1,
             "postEventFrames": self.post_event_frames,
         }
+        if result is not None:
+            result["mediaEventId"] = event_id
         _write_manifest(manifest_path, media, result)
 
         clip = {
@@ -140,7 +158,55 @@ class EventMediaRecorder:
 
     def _finalize_completed_clips(self, clips):
         for clip in clips:
-            self._finalize_clip(clip)
+            self._queue_finalize_clip(clip)
+
+    def _queue_finalize_clip(self, clip):
+        try:
+            self._finalize_queue.put_nowait(clip)
+            self._start_finalize_worker()
+        except queue.Full:
+            media = clip["media"]
+            media["status"] = "finalize_skipped"
+            media["error"] = "event media finalize queue full"
+            _write_manifest(clip["manifest_path"], media, clip["event_result"])
+            logger.warning("Event media finalize queue full; skipped clip event_id=%s", media.get("eventId"))
+            self._emit_media_ready(media)
+
+    def _start_finalize_worker(self):
+        with self._finalize_lock:
+            if self._finalize_thread is not None and self._finalize_thread.is_alive():
+                return
+            self._finalize_thread = threading.Thread(
+                target=self._finalize_loop,
+                name="event-media-finalizer",
+                daemon=True,
+            )
+            self._finalize_thread.start()
+
+    def _finalize_loop(self):
+        while True:
+            try:
+                clip = self._finalize_queue.get(timeout=1)
+            except queue.Empty:
+                with self._finalize_lock:
+                    if self._finalize_queue.empty():
+                        self._finalize_thread = None
+                        return
+                    continue
+            try:
+                self._finalize_clip(clip)
+            except Exception as exc:
+                media = clip.get("media", {})
+                media["status"] = "finalize_failed"
+                media["error"] = str(exc)
+                try:
+                    _write_manifest(clip["manifest_path"], media, clip["event_result"])
+                except Exception:
+                    logger.exception("Failed to write failed event media manifest")
+                logger.exception("Event media finalization failed event_id=%s", media.get("eventId"))
+                self._emit_media_ready(media)
+            finally:
+                self._finalize_queue.task_done()
 
     def _finalize_clip(self, clip):
         clip_result = _write_video_clip(clip["clip_path"], [sample.frame for sample in clip["frames"]], self.fps)
@@ -150,6 +216,15 @@ class EventMediaRecorder:
         if "frameSequenceDir" in clip_result:
             media["frameSequenceDir"] = clip_result["frameSequenceDir"]
         _write_manifest(clip["manifest_path"], media, clip["event_result"])
+        self._emit_media_ready(media)
+
+    def _emit_media_ready(self, media):
+        if self.media_ready_callback is None:
+            return
+        try:
+            self.media_ready_callback(dict(media))
+        except Exception:
+            logger.exception("Event media ready callback failed event_id=%s", media.get("eventId"))
 
     def _is_in_cooldown(self, event_key, event_seconds):
         if self.cooldown_seconds <= 0:
