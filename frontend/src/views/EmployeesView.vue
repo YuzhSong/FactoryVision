@@ -8,13 +8,18 @@ import { employeesApi, faceApi } from '../api/modules'
 const dialogVisible = ref(false)
 const editDialogVisible = ref(false)
 const faceDialogVisible = ref(false)
+const faceListDialogVisible = ref(false)
 const saving = ref(false)
 const enrolling = ref(false)
+const faceListLoading = ref(false)
 const loading = ref(false)
 const switchingEmployeeId = ref(null)
+const deletingFaceId = ref(null)
 const employeeRows = ref([])
 const employeeTotal = ref(0)
 const currentEmployee = ref(null)
+const faceListEmployee = ref(null)
+const employeeFaceRows = ref([])
 const fileInputRefs = ref({})
 const activeCameraKey = ref('')
 const activeVideoRef = ref(null)
@@ -32,6 +37,12 @@ const faceImages = reactive({
   left: '',
   right: '',
 })
+
+const faceTypeLabels = {
+  front: '正脸',
+  left: '左脸',
+  right: '右脸',
+}
 
 const filters = reactive({
   keyword: '',
@@ -91,6 +102,18 @@ const departmentOptions = computed(() => {
   const values = employeeRows.value.map((item) => item.department).filter(Boolean)
   return [...new Set(['生产部', '设备部', '仓储部', ...values])]
 })
+
+const faceListCards = computed(() => faceShotTypes.map((type) => {
+  const faces = employeeFaceRows.value
+    .filter((face) => face.faceType === type.key)
+    .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0))
+
+  return {
+    ...type,
+    face: faces[0] || null,
+    count: faces.length,
+  }
+}))
 
 const loadEmployees = async () => {
   loading.value = true
@@ -157,6 +180,61 @@ const openFaceDialog = (employee) => {
   stopCamera()
   resetFaceImages()
   faceDialogVisible.value = true
+}
+
+const normalizeFaceRows = (rows = []) => rows.map((face) => ({
+  id: face.id,
+  faceType: face.faceType,
+  label: faceTypeLabels[face.faceType] || face.faceType || '人脸',
+  imageUrl: face.imageUrl || face.imagePath || '',
+  createdAt: face.createdAt || '',
+}))
+
+const loadEmployeeFaces = async () => {
+  if (!faceListEmployee.value?.id) return
+
+  faceListLoading.value = true
+  try {
+    const response = await employeesApi.faces(faceListEmployee.value.id)
+    employeeFaceRows.value = normalizeFaceRows(response?.data || [])
+  } catch (error) {
+    employeeFaceRows.value = []
+    ElMessage.error(getApiErrorMessage(error, '人脸列表加载失败'))
+  } finally {
+    faceListLoading.value = false
+  }
+}
+
+const openFaceListDialog = async (employee) => {
+  faceListEmployee.value = employee
+  employeeFaceRows.value = []
+  faceListDialogVisible.value = true
+  await loadEmployeeFaces()
+}
+
+const deleteFace = async (face) => {
+  if (!face?.id) return
+
+  try {
+    await ElMessageBox.confirm(`确认删除${face.label || '该'}照片？`, '删除人脸照片', {
+      type: 'warning',
+      confirmButtonText: '删除',
+      cancelButtonText: '取消',
+    })
+  } catch (error) {
+    return
+  }
+
+  deletingFaceId.value = face.id
+  try {
+    await faceApi.remove(face.id)
+    ElMessage.success('人脸照片已删除')
+    await loadEmployeeFaces()
+  } catch (error) {
+    ElMessage.error(getApiErrorMessage(error, '人脸照片删除失败'))
+  } finally {
+    deletingFaceId.value = null
+  }
 }
 
 const closeFaceDialog = () => {
@@ -402,7 +480,10 @@ onMounted(() => {
         <el-table-column label="状态" width="100"><template #default="{ row }"><StatusTag :value="row.status" /></template></el-table-column>
         <el-table-column label="人脸录入" min-width="150">
           <template #default="{ row }">
-            <el-button link type="primary" @click="openFaceDialog(row)">开始录入</el-button>
+            <div class="face-table-actions">
+              <el-button link type="primary" @click="openFaceDialog(row)">开始录入</el-button>
+              <el-button link type="primary" @click="openFaceListDialog(row)">查看人脸</el-button>
+            </div>
           </template>
         </el-table-column>
         <el-table-column label="操作" width="210">
@@ -567,6 +648,63 @@ onMounted(() => {
         >
           提交录入
         </el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog
+      v-model="faceListDialogVisible"
+      title="已录入人脸"
+      width="860px"
+      class="face-list-dialog"
+    >
+      <div class="face-enroll">
+        <div class="face-enroll__target">
+          <span>当前员工</span>
+          <strong>{{ faceListEmployee?.employeeNo || '-' }} {{ faceListEmployee?.name || '' }}</strong>
+          <el-tag size="small" type="info">展示最新录入照片</el-tag>
+        </div>
+
+        <div v-loading="faceListLoading" class="face-shot-grid face-list-grid">
+          <div v-for="item in faceListCards" :key="item.key" class="face-shot-card face-list-card">
+            <div class="face-shot-card__head">
+              <strong>{{ item.label }}</strong>
+              <span v-if="item.face">{{ item.count > 1 ? `共 ${item.count} 张` : '已录入' }}</span>
+              <span v-else>未录入</span>
+            </div>
+
+            <div class="face-shot-window face-list-window">
+              <el-image
+                v-if="item.face?.imageUrl"
+                :src="item.face.imageUrl"
+                :preview-src-list="[item.face.imageUrl]"
+                fit="cover"
+                preview-teleported
+              />
+              <span v-else class="face-shot-empty">
+                <b>+</b>
+                <small>{{ item.label }}照片未录入</small>
+              </span>
+              <i v-if="item.face?.imageUrl" class="face-shot-guide"></i>
+            </div>
+
+            <div class="face-shot-actions">
+              <el-button
+                type="danger"
+                plain
+                size="small"
+                :disabled="!item.face"
+                :loading="deletingFaceId === item.face?.id"
+                @click="deleteFace(item.face)"
+              >
+                删除
+              </el-button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <template #footer>
+        <el-button @click="faceListDialogVisible = false">关闭</el-button>
+        <el-button :loading="faceListLoading" @click="loadEmployeeFaces">刷新</el-button>
       </template>
     </el-dialog>
   </div>

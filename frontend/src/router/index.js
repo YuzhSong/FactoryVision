@@ -2,12 +2,12 @@ import { createRouter, createWebHistory } from 'vue-router'
 
 import MainLayout from '../layouts/MainLayout.vue'
 import AlertsView from '../views/AlertsView.vue'
-import AttendanceView from '../views/AttendanceView.vue'
 import CamerasView from '../views/CamerasView.vue'
 import DashboardView from '../views/DashboardView.vue'
 import EmployeesView from '../views/EmployeesView.vue'
 import LoginView from '../views/LoginView.vue'
 import MonitorView from '../views/MonitorView.vue'
+import ReportsView from '../views/ReportsView.vue'
 import ZonesView from '../views/ZonesView.vue'
 
 const routes = [
@@ -28,7 +28,7 @@ const routes = [
       { path: 'employees', name: 'employees', component: EmployeesView, meta: { title: '员工管理' } },
       { path: 'cameras', name: 'cameras', component: CamerasView, meta: { title: '摄像头管理' } },
       { path: 'zones', name: 'zones', component: ZonesView, meta: { title: '区域配置' } },
-      { path: 'attendance', name: 'attendance', component: AttendanceView, meta: { title: '考勤统计' } },
+      { path: 'reports', name: 'reports', component: ReportsView, meta: { title: 'AI监控日报' } },
     ],
   },
 ]

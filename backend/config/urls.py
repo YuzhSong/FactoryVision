@@ -23,4 +23,5 @@ urlpatterns = [
     path("api/ai-results/", include("apps.ai_results.urls")),
     path("api/alerts/", include("apps.ai_results.alert_urls")),
     path("api/face/", include("apps.face.urls")),
+    path("api/reports/", include("apps.reports.urls")),
 ] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

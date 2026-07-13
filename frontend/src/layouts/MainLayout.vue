@@ -5,7 +5,7 @@ import { ElMessage } from 'element-plus'
 import {
   Bell,
   DataAnalysis,
-  Histogram,
+  Document,
   Location,
   Moon,
   Monitor,
@@ -27,7 +27,7 @@ const menuItems = [
   { path: '/employees', label: '员工管理', icon: User },
   { path: '/cameras', label: '摄像头管理', icon: VideoCamera },
   { path: '/zones', label: '区域配置', icon: Location },
-  { path: '/attendance', label: '考勤统计', icon: Histogram },
+  { path: '/reports', label: 'AI监控日报', icon: Document },
 ]
 
 const activeMenu = computed(() => route.path)

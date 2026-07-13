@@ -8,3 +8,5 @@ requests>=2.32,<2.33
 channels>=4.2,<5.0
 daphne>=4.1,<5.0
 psycopg[binary]>=3.2,<3.3
+APScheduler>=3.10,<4.0
+python-docx>=1.1,<2.0

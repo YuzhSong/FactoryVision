@@ -28,6 +28,7 @@ INSTALLED_APPS = [
     "apps.attendance",
     "apps.ai_results",
     "apps.face",
+    "apps.reports.apps.ReportsConfig",
 ]
 
 MIDDLEWARE = [
