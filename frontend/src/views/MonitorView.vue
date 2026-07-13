@@ -23,6 +23,7 @@ let player = null
 let realtimeSocket = null
 let sdkPromise = null
 let streamStatusTimer = null
+let playbackLatencyTimer = null
 
 function syncHeaderStatus() {
   if (typeof window === 'undefined') return
@@ -273,6 +274,9 @@ async function startFlvPlayback() {
     url: playUrl,
     isLive: true,
     enableStashBuffer: false,
+    liveBufferLatencyChasing: true,
+    liveBufferLatencyMaxLatency: 2,
+    liveBufferLatencyMinRemain: 0.5,
   })
 
   if (videoRef.value) {
@@ -284,9 +288,11 @@ async function startFlvPlayback() {
   await player.play()
   playbackStatus.value = 'connected'
   playbackMessage.value = `正在播放 ${playUrl}`
+  startLiveLatencyChasing()
 }
 
 function stopPlayback() {
+  stopLiveLatencyChasing()
   if (player && typeof player.close === 'function') {
     player.close()
   }
@@ -297,6 +303,26 @@ function stopPlayback() {
   if (videoRef.value) {
     videoRef.value.srcObject = null
     videoRef.value.removeAttribute('src')
+  }
+}
+
+function startLiveLatencyChasing() {
+  stopLiveLatencyChasing()
+  playbackLatencyTimer = window.setInterval(() => {
+    const video = videoRef.value
+    if (!video || !video.buffered || video.buffered.length === 0) return
+    const end = video.buffered.end(video.buffered.length - 1)
+    const lag = end - video.currentTime
+    if (Number.isFinite(lag) && lag > 2) {
+      video.currentTime = Math.max(0, end - 0.35)
+    }
+  }, 1000)
+}
+
+function stopLiveLatencyChasing() {
+  if (playbackLatencyTimer) {
+    window.clearInterval(playbackLatencyTimer)
+    playbackLatencyTimer = null
   }
 }
 

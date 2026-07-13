@@ -1,6 +1,12 @@
 const defaultWsBaseUrl = () => {
-  const apiBase = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000/api'
-  return apiBase.replace(/^http/, 'ws').replace(/\/api\/?$/, '')
+  const apiBase = import.meta.env.VITE_API_BASE_URL || '/api'
+  if (/^https?:\/\//i.test(apiBase)) {
+    return apiBase.replace(/^http/i, 'ws').replace(/\/api\/?$/, '')
+  }
+  if (typeof window !== 'undefined') {
+    return `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}`
+  }
+  return 'ws://127.0.0.1:8000'
 }
 
 export function createRealtimeConnection(cameraId, token, handlers = {}) {

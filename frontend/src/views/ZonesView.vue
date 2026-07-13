@@ -24,6 +24,7 @@ const videoLayout = reactive({ left: 0, top: 0, width: 0, height: 0 })
 let player = null
 let sdkPromise = null
 let resizeObserver = null
+let playbackLatencyTimer = null
 
 const zoneForm = reactive({
   name: '',
@@ -189,12 +190,33 @@ const ensureProcessedStream = async () => {
 }
 
 const stopPlayback = () => {
+  stopLiveLatencyChasing()
   player?.close?.()
   player?.destroy?.()
   player = null
   if (videoRef.value) {
     videoRef.value.srcObject = null
     videoRef.value.removeAttribute('src')
+  }
+}
+
+const startLiveLatencyChasing = () => {
+  stopLiveLatencyChasing()
+  playbackLatencyTimer = window.setInterval(() => {
+    const video = videoRef.value
+    if (!video || !video.buffered || video.buffered.length === 0) return
+    const end = video.buffered.end(video.buffered.length - 1)
+    const lag = end - video.currentTime
+    if (Number.isFinite(lag) && lag > 2) {
+      video.currentTime = Math.max(0, end - 0.35)
+    }
+  }, 1000)
+}
+
+const stopLiveLatencyChasing = () => {
+  if (playbackLatencyTimer) {
+    window.clearInterval(playbackLatencyTimer)
+    playbackLatencyTimer = null
   }
 }
 
@@ -215,12 +237,21 @@ const startPlayback = async (options = {}) => {
     }
     await loadMpegtsSdk()
     if (!mpegts.getFeatureList().mseLivePlayback) throw new Error('当前浏览器不支持 HTTP-FLV 直播播放')
-    player = mpegts.createPlayer({ type: 'flv', url: playUrl, isLive: true, enableStashBuffer: false })
+    player = mpegts.createPlayer({
+      type: 'flv',
+      url: playUrl,
+      isLive: true,
+      enableStashBuffer: false,
+      liveBufferLatencyChasing: true,
+      liveBufferLatencyMaxLatency: 2,
+      liveBufferLatencyMinRemain: 0.5,
+    })
     player.attachMediaElement(videoRef.value)
     player.load()
     await withTimeout(player.play(), 8000, '处理后视频流连接超时，请检查 SRS 或 processedStreamUrl')
     playbackStatus.value = 'connected'
     playbackMessage.value = `正在播放 ${playUrl}`
+    startLiveLatencyChasing()
   } catch (error) {
     playbackStatus.value = 'error'
     playbackMessage.value = error.message
