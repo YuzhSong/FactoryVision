@@ -268,7 +268,18 @@ def face_enroll_view(request):
 
                 # Extract and validate before writing either the image or database record.
                 try:
-                    feature_vector = _call_ai_extract(image_b64)
+                    if item.get("featureVector"):
+                        feature_vector = _validate_feature_payload(
+                            {
+                                "faceCount": 1,
+                                "featureVector": item.get("featureVector"),
+                                "dimension": item.get("dimension", FACE_FEATURE_DIMENSION),
+                                "enrollmentAccepted": True,
+                            },
+                            liveness_required=False,
+                        )
+                    else:
+                        feature_vector = _call_ai_extract(image_b64)
                 except RuntimeError:
                     raise  # AI 服务挂了，抛到外层
                 except ValueError as e:

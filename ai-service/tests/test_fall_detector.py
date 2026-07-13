@@ -103,6 +103,29 @@ class FallDetectorTests(unittest.TestCase):
         )
         self.assertFalse(result["isFall"])
 
+    def test_fast_downward_transition_can_trigger_without_horizontal_body(self):
+        detector = FallDetector(
+            ratio_threshold=1.2,
+            confirm_frames=3,
+            min_center_drop_ratio=0.15,
+            min_height_drop_ratio=0.2,
+            max_transition_seconds=4.0,
+        )
+        result = detector.detect(
+            _history(
+                [
+                    {"bbox": [20, 10, 60, 110]},
+                    {"bbox": [20, 45, 60, 105]},
+                    {"bbox": [20, 48, 60, 108]},
+                    {"bbox": [20, 50, 60, 110]},
+                ]
+            )
+        )
+
+        self.assertTrue(result["isFall"])
+        self.assertEqual(result["evidence"]["transition"]["rapidDescent"], True)
+        self.assertEqual(result["evidence"]["fallLikeFrames"], 0)
+
     def test_edge_truncated_wide_person_is_rejected(self):
         detector = FallDetector(ratio_threshold=1.2, confirm_frames=2)
         result = detector.detect(

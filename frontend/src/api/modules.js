@@ -172,4 +172,10 @@ export const aiServiceApi = {
   streamStatus() {
     return aiServiceHttp.get('/streams/status')
   },
+  extractFace(data) {
+    return aiServiceHttp.post('/faces/extract', data)
+  },
+  reloadCache(data = { source: 'backend' }) {
+    return aiServiceHttp.post('/cache/reload', data)
+  },
 }

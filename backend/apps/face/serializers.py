@@ -10,6 +10,12 @@ class FaceImageItemSerializer(serializers.Serializer):
 
     imageBase64 = serializers.CharField(required=True)
     faceType = serializers.CharField(required=True)
+    featureVector = serializers.ListField(
+        child=serializers.FloatField(),
+        required=False,
+        allow_empty=False,
+    )
+    dimension = serializers.IntegerField(required=False)
 
 
 class FaceEnrollSerializer(serializers.Serializer):

@@ -21,6 +21,9 @@ class EmployeeRecognitionDetectorTests(unittest.TestCase):
         first = detector.detect([_face()], camera_id=1, timestamp="2026-07-12T10:00:00+08:00")
         repeated = detector.detect([_face()], camera_id=1, timestamp="2026-07-12T10:00:40+08:00")
         self.assertEqual([item["eventType"] for item in first], ["face_recognized"])
+        self.assertEqual(first[0]["name"], "Employee 4")
+        self.assertEqual(first[0]["confidence"], 0.8)
+        self.assertEqual(first[0]["description"], "Employee 4 置信度 80.0%")
         self.assertEqual(repeated, [])
 
     def test_fragmented_track_uses_camera_employee_cooldown(self):

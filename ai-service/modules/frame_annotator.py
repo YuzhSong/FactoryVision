@@ -1,3 +1,7 @@
+from functools import lru_cache
+from pathlib import Path
+
+
 class FrameAnnotator:
     """Draw AI detection results onto OpenCV frames."""
 
@@ -131,10 +135,10 @@ def _label_for_result(result: dict):
     helmet_status = result.get("helmetStatus")
     if result_type == "HELMET_DETECTION":
         return _helmet_label(helmet_status, result.get("helmetConfidence"))
+    if result_type == "FACE_RESULT":
+        return _face_label(result)
 
     confidence = result.get("confidence")
-    if confidence is None and result_type == "FACE_RESULT":
-        confidence = result.get("similarity")
     track_id = result.get("trackId")
     employee_id = result.get("employeeId")
     employee_no = result.get("employeeNo")
@@ -154,6 +158,32 @@ def _label_for_result(result: dict):
     if result_type == "PERSON_DETECTION":
         parts.append(_helmet_label(helmet_status))
     return " ".join(parts)
+
+
+def _face_label(result: dict):
+    """Show only employee name and recognition confidence for face boxes."""
+    display_name = result.get("name") or result.get("employeeName")
+    if not display_name:
+        display_name = "Unknown"
+
+    confidence = result.get("confidence")
+    if confidence is None:
+        confidence = result.get("similarity")
+
+    formatted_confidence = _format_confidence(confidence)
+    if formatted_confidence:
+        return f"{display_name} {formatted_confidence}"
+    return str(display_name)
+
+
+def _format_confidence(value):
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return ""
+    if numeric <= 1.0:
+        return f"{numeric * 100:.1f}%"
+    return f"{numeric:.1f}%"
 
 
 def _color_for_result(result: dict):
@@ -182,6 +212,10 @@ def _helmet_label(status, confidence=None):
 
 def _draw_label(cv2, frame, label: str, x: int, y: int, color, scale: float = 0.28):
     """Draw readable label background and text."""
+    if _has_non_ascii(label):
+        if _draw_unicode_label(frame, label, x, y, color, scale):
+            return
+
     font = cv2.FONT_HERSHEY_SIMPLEX
     thickness = 1
     (text_width, text_height), baseline = cv2.getTextSize(label, font, scale, thickness)
@@ -190,3 +224,60 @@ def _draw_label(cv2, frame, label: str, x: int, y: int, color, scale: float = 0.
     right = x + text_width + 8
     cv2.rectangle(frame, (x, top), (right, bottom), color, -1)
     cv2.putText(frame, label, (x + 4, bottom - baseline - 3), font, scale, (0, 0, 0), thickness, cv2.LINE_AA)
+
+
+def _has_non_ascii(value: str) -> bool:
+    return any(ord(char) > 127 for char in value or "")
+
+
+def _draw_unicode_label(frame, label: str, x: int, y: int, color, scale: float = 0.28) -> bool:
+    """Draw non-ASCII labels with Pillow so Chinese employee names render correctly."""
+    try:
+        import numpy as np
+        from PIL import Image, ImageDraw, ImageFont
+    except ImportError:
+        return False
+
+    font_size = max(12, int(round(36 * float(scale))))
+    font = _load_unicode_font(font_size)
+    if font is None:
+        return False
+
+    image = Image.fromarray(frame[:, :, ::-1])
+    draw = ImageDraw.Draw(image)
+    left, top, right, bottom = draw.textbbox((0, 0), label, font=font)
+    text_width = right - left
+    text_height = bottom - top
+    padding_x = 4
+    padding_y = 3
+    bg_top = max(0, int(y) - text_height - padding_y * 2)
+    bg_bottom = bg_top + text_height + padding_y * 2
+    bg_right = int(x) + text_width + padding_x * 2
+    rgb_color = (int(color[2]), int(color[1]), int(color[0]))
+    draw.rectangle((int(x), bg_top, bg_right, bg_bottom), fill=rgb_color)
+    draw.text((int(x) + padding_x, bg_top + padding_y - top), label, fill=(0, 0, 0), font=font)
+    frame[:, :, :] = np.asarray(image)[:, :, ::-1]
+    return True
+
+
+@lru_cache(maxsize=16)
+def _load_unicode_font(font_size: int):
+    try:
+        from PIL import ImageFont
+    except ImportError:
+        return None
+
+    candidates = [
+        Path("C:/Windows/Fonts/msyh.ttc"),
+        Path("C:/Windows/Fonts/simhei.ttf"),
+        Path("/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc"),
+        Path("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"),
+        Path("/System/Library/Fonts/PingFang.ttc"),
+    ]
+    for font_path in candidates:
+        if font_path.exists():
+            try:
+                return ImageFont.truetype(str(font_path), font_size)
+            except OSError:
+                continue
+    return None
