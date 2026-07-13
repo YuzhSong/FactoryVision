@@ -5,7 +5,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "dev-secret-key")
 DEBUG = os.getenv("DJANGO_DEBUG", "True").lower() == "true"
-ALLOWED_HOSTS = os.getenv("DJANGO_ALLOWED_HOSTS", "127.0.0.1,localhost").split(",")
+ALLOWED_HOSTS = [host.strip() for host in os.getenv("DJANGO_ALLOWED_HOSTS", "127.0.0.1,localhost").split(",") if host.strip()]
 
 INSTALLED_APPS = [
     "daphne",
@@ -101,11 +101,25 @@ TIME_ZONE = os.getenv("TIME_ZONE", "Asia/Shanghai")
 USE_I18N = True
 USE_TZ = True
 
-STATIC_URL = "static/"
+STATIC_URL = os.getenv("DJANGO_STATIC_URL", "/static/")
+MEDIA_URL = os.getenv("DJANGO_MEDIA_URL", "/media/")
+MEDIA_ROOT = BASE_DIR / "media"
 STATIC_ROOT = BASE_DIR / "staticfiles"
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
-CORS_ALLOW_ALL_ORIGINS = True
+CORS_ALLOW_ALL_ORIGINS = os.getenv("DJANGO_CORS_ALLOW_ALL_ORIGINS", "True").lower() == "true"
+CORS_ALLOWED_ORIGINS = [
+    origin.strip()
+    for origin in os.getenv("DJANGO_CORS_ALLOWED_ORIGINS", "").split(",")
+    if origin.strip()
+]
+CSRF_TRUSTED_ORIGINS = [
+    origin.strip()
+    for origin in os.getenv("DJANGO_CSRF_TRUSTED_ORIGINS", "").split(",")
+    if origin.strip()
+]
+SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+USE_X_FORWARDED_HOST = True
 
 REST_FRAMEWORK = {
     "EXCEPTION_HANDLER": "common.response.custom_exception_handler",
@@ -117,6 +131,20 @@ REST_FRAMEWORK = {
         "rest_framework_simplejwt.authentication.JWTAuthentication",
     ],
 }
+
+# Shared only between the local AI service and backend. Do not commit its value.
+AI_SERVICE_API_TOKEN = os.getenv("AI_SERVICE_API_TOKEN", "")
+
+# DingTalk robot notification. Keep real webhook and secret in server env only.
+DINGTALK_ENABLED = os.getenv("DINGTALK_ENABLED", "False").lower() == "true"
+DINGTALK_WEBHOOK = os.getenv("DINGTALK_WEBHOOK", "")
+DINGTALK_SECRET = os.getenv("DINGTALK_SECRET", "")
+DINGTALK_TIMEOUT_SECONDS = int(os.getenv("DINGTALK_TIMEOUT_SECONDS", "10"))
+DINGTALK_RESPONSIBLE_NAME = os.getenv("DINGTALK_RESPONSIBLE_NAME", "")
+DINGTALK_RESPONSIBLE_MOBILE = os.getenv("DINGTALK_RESPONSIBLE_MOBILE", "")
+DINGTALK_LEADER_NAME = os.getenv("DINGTALK_LEADER_NAME", "")
+DINGTALK_LEADER_MOBILE = os.getenv("DINGTALK_LEADER_MOBILE", "")
+DINGTALK_ESCALATION_SECONDS = int(os.getenv("DINGTALK_ESCALATION_SECONDS", "60"))
 
 SPECTACULAR_SETTINGS = {
     "TITLE": "Smart Factory Vision API",

@@ -14,6 +14,7 @@ class Camera(models.Model):
     location = models.CharField(max_length=255, blank=True, default="")
     status = models.CharField(max_length=32, choices=Status.choices, default=Status.OFFLINE)
     enabled = models.BooleanField(default=True)
+    include_faces = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

@@ -1,4 +1,7 @@
 from asgiref.sync import async_to_sync
+import logging
+import threading
+from datetime import timedelta
 from channels.layers import get_channel_layer
 from django.db import transaction
 from django.db.models import Count, Q
@@ -8,6 +11,7 @@ from rest_framework.decorators import api_view
 from rest_framework import status as http_status
 from drf_spectacular.utils import OpenApiExample, OpenApiParameter, OpenApiTypes, extend_schema
 
+from apps.ai_results.services.dingtalk import DingTalkNotificationError, DingTalkNotifier
 from apps.cameras.models import Camera
 from apps.cameras.serializers import CameraListSerializer
 from apps.employees.models import Employee
@@ -27,6 +31,33 @@ from .serializers import (
     HealthCheckSerializer,
 )
 
+logger = logging.getLogger(__name__)
+
+FORMAL_ACTIONABLE_EVENT_TYPES = {
+    "helmet_violation",
+    "region_intrusion",
+    "region_dwell",
+    "face_recognized",
+    "stranger_detected",
+    "fall_detected",
+}
+
+EVENT_INTERNAL_TYPES = {
+    "helmet_violation": {"HELMET_WARNING", "helmet_violation"},
+    "region_intrusion": {"ZONE_WARNING", "region_intrusion"},
+    "region_dwell": {"ZONE_WARNING", "region_dwell"},
+    "face_recognized": {"FACE_RECOGNIZED", "FACE_RESULT", "face_recognized"},
+    "stranger_detected": {"STRANGER_DETECTED", "STRANGER_ALERT", "stranger_detected"},
+    "fall_detected": {"FALL_DETECTED", "FALL_ALERT", "fall_detected"},
+}
+
+EVENT_DEDUP_SECONDS = {
+    "helmet_violation": 20,
+    "face_recognized": 60,
+    "stranger_detected": 30,
+    "fall_detected": 30,
+}
+
 
 ALERT_EVENT_TYPES = {
     "HELMET_WARNING",
@@ -40,6 +71,14 @@ ALERT_EVENT_TYPES = {
     "ZONE_WARNING",
     "RUNNING_ALERT",
     "NO_HELMET",
+}
+
+ALERT_TRIGGER_TYPES = {
+    "helmet_violation",
+    "region_intrusion",
+    "region_dwell",
+    "stranger_detected",
+    "fall_detected",
 }
 
 DEFAULT_THRESHOLDS = {
@@ -150,9 +189,20 @@ def report_ai_results(request):
 
     with transaction.atomic():
         for result in validated["results"]:
-            result_type = str(result.get("type") or "").strip()
-            if not result_type:
+            result_type = _normalize_event_type(result)
+            if result_type not in FORMAL_ACTIONABLE_EVENT_TYPES or not _is_actionable_result(result_type, result):
                 rejected_results += 1
+                continue
+
+            track_id = _extract_track_id(result)
+            if _is_duplicate_event(camera, result_type, result, validated["timestamp"], track_id):
+                rejected_results += 1
+                logger.info(
+                    "Duplicate AI event suppressed camera_id=%s event_type=%s track_id=%s",
+                    validated["cameraId"],
+                    result_type,
+                    track_id,
+                )
                 continue
 
             event = Event.objects.create(
@@ -164,7 +214,7 @@ def report_ai_results(request):
                 severity=_event_severity(result_type, result),
                 status=Event.Status.NEW,
                 occurred_at=validated["timestamp"],
-                track_id=_extract_track_id(result),
+                track_id=track_id,
                 bbox=_extract_bbox(result),
                 confidence=_extract_confidence(result),
                 snapshot_path=_extract_snapshot_path(result, validated.get("eventMedia", [])),
@@ -172,8 +222,8 @@ def report_ai_results(request):
             )
             event_ids.append(event.id)
 
-            should_push = _should_create_alert(result_type)
-            if result_type == "FACE_RESULT" and result.get("matched") and result.get("employeeId"):
+            should_push = _should_create_alert(result_type) or result_type == "face_recognized"
+            if result_type == "face_recognized" and result.get("employeeId"):
                 # 同一员工同一 trackId 只推一次
                 key = (event.track_id, str(result["employeeId"]))
                 if key not in _pushed_face_keys:
@@ -205,7 +255,12 @@ def report_ai_results(request):
                         },
                     )
                 except Exception:
-                    pass  # WebSocket 推送失败不影响核心流程
+                    logger.exception(
+                        "WebSocket event broadcast failed group=realtime_%s event_id=%s event_type=%s",
+                        validated["cameraId"],
+                        event.id,
+                        event.event_type,
+                    )
 
             if _should_create_alert(result_type):
                 alert = Alert.objects.create(
@@ -219,6 +274,7 @@ def report_ai_results(request):
                     occurred_at=event.occurred_at,
                 )
                 alert_ids.append(alert.id)
+                transaction.on_commit(lambda a=alert: _notify_dingtalk_alert(a))
 
     return api_response(
         code=200,
@@ -498,7 +554,7 @@ def _extract_confidence(result):
 
 
 def _extract_bbox(result):
-    bbox = result.get("bbox") or result.get("box") or {}
+    bbox = result.get("bbox") or result.get("faceBox") or result.get("box") or {}
     return bbox if isinstance(bbox, dict) else {}
 
 
@@ -524,11 +580,77 @@ def _extract_snapshot_path(result, event_media):
 
 
 def _should_create_alert(result_type):
-    return result_type in ALERT_EVENT_TYPES or result_type.endswith("_WARNING") or result_type.endswith("_ALERT")
+    return (
+        result_type in ALERT_EVENT_TYPES
+        or result_type in {"region_intrusion", "region_dwell", "helmet_violation", "stranger_detected", "fall_detected"}
+        or result_type.endswith("_WARNING")
+        or result_type.endswith("_ALERT")
+    )
+
+
+def _is_actionable_result(result_type, result):
+    internal_type = str(result.get("type") or result.get("eventType") or "").strip()
+    if internal_type not in EVENT_INTERNAL_TYPES.get(result_type, set()):
+        return False
+    if result_type == "face_recognized":
+        return bool(result.get("employeeId")) and (
+            result.get("type") == "FACE_RECOGNIZED" or result.get("matched") is True
+        )
+    if result_type == "stranger_detected":
+        return result.get("matched") is not True
+    return True
+
+
+def _is_duplicate_event(camera, result_type, result, occurred_at, track_id):
+    events = Event.objects.filter(camera=camera, event_type=result_type)
+    if result_type == "face_recognized":
+        employee_id = result.get("employeeId")
+        if employee_id in (None, ""):
+            return False
+        return events.filter(
+            occurred_at__gte=occurred_at - timedelta(seconds=EVENT_DEDUP_SECONDS[result_type]),
+            payload__employeeId=employee_id,
+        ).exists()
+
+    if result_type in {"region_intrusion", "region_dwell"}:
+        region_id = result.get("regionId", result.get("zoneId"))
+        entered_at = result.get("enteredAt")
+        if region_id not in (None, "") and entered_at:
+            return events.filter(
+                track_id=track_id,
+                payload__regionId=region_id,
+                payload__enteredAt=entered_at,
+            ).exists()
+        return False
+
+    cooldown = EVENT_DEDUP_SECONDS.get(result_type)
+    if not cooldown or not track_id:
+        return False
+    return events.filter(
+        track_id=track_id,
+        occurred_at__gte=occurred_at - timedelta(seconds=cooldown),
+    ).exists()
+
+
+def _normalize_event_type(result):
+    internal = str(result.get("type") or "").strip()
+    nested = str(result.get("eventType") or "").strip()
+    if internal == "ZONE_WARNING":
+        return nested if nested in {"region_intrusion", "region_dwell"} else "region_intrusion"
+    aliases = {
+        "HELMET_WARNING": "helmet_violation",
+        "FACE_RESULT": "face_recognized",
+        "FACE_RECOGNIZED": "face_recognized",
+        "STRANGER_DETECTED": "stranger_detected",
+        "STRANGER_ALERT": "stranger_detected",
+        "FALL_DETECTED": "fall_detected",
+        "FALL_ALERT": "fall_detected",
+    }
+    return aliases.get(nested) or aliases.get(internal) or nested or internal
 
 
 def _default_level(result_type):
-    if result_type in {"FALL_DETECTED", "FALL_ALERT", "ZONE_INTRUSION", "STRANGER_DETECTED", "STRANGER_ALERT"}:
+    if result_type in {"FALL_DETECTED", "FALL_ALERT", "ZONE_INTRUSION", "region_intrusion", "STRANGER_DETECTED", "STRANGER_ALERT"}:
         return "high"
     if result_type == "EMPLOYEE_RETURNED":
         return "low"
@@ -574,5 +696,88 @@ def _serialize_employee_for_bootstrap(employee):
         for feature in employee.face_features.all()
     ]
     return data
+
+
+_ALERT_LEVEL_DISPLAY = {
+    "low": "低",
+    "medium": "中",
+    "high": "高",
+    "info": "信息",
+}
+
+_ALERT_TYPE_DISPLAY = {
+    "helmet_violation": "未佩戴安全帽",
+    "region_intrusion": "区域闯入",
+    "region_dwell": "区域滞留",
+    "stranger_detected": "陌生人闯入",
+    "fall_detected": "人员跌倒",
+}
+
+
+def _alert_type_display(alert: Alert) -> str:
+    return _ALERT_TYPE_DISPLAY.get(alert.event_type, alert.title)
+
+
+def _is_alert_handled(alert: Alert) -> bool:
+    return alert.status != Alert.Status.PENDING
+
+
+def _notify_dingtalk_alert(alert: Alert) -> None:
+    """Send DingTalk notification after alert creation.
+
+    Notification failures must not break AI result reporting or database writes.
+    """
+    from django.conf import settings
+
+    if alert.event_type not in ALERT_TRIGGER_TYPES:
+        return
+
+    try:
+        DingTalkNotifier().send_alert(
+            alert_title=_alert_type_display(alert),
+            level=_ALERT_LEVEL_DISPLAY.get(alert.level, alert.level),
+            content=alert.description or alert.title,
+            occurred_at=alert.occurred_at.isoformat() if alert.occurred_at else None,
+            camera_name=alert.camera.name if alert.camera else None,
+            location=alert.camera.location if alert.camera else None,
+            responsible_name=settings.DINGTALK_RESPONSIBLE_NAME or None,
+            responsible_mobile=settings.DINGTALK_RESPONSIBLE_MOBILE or None,
+        )
+    except DingTalkNotificationError:
+        logger.exception("DingTalk initial notification failed alert_id=%s", alert.id)
+    except Exception:
+        logger.exception("Unexpected DingTalk initial notification error alert_id=%s", alert.id)
+
+    escalation_seconds = settings.DINGTALK_ESCALATION_SECONDS
+    if escalation_seconds < 1:
+        return
+
+    timer = threading.Timer(escalation_seconds, _escalate_alert, args=[alert.id])
+    timer.daemon = True
+    timer.start()
+
+
+def _escalate_alert(alert_id: int) -> None:
+    from django.conf import settings
+
+    alert = Alert.objects.filter(id=alert_id).select_related("camera").first()
+    if alert is None or _is_alert_handled(alert) or alert.event_type not in ALERT_TRIGGER_TYPES:
+        return
+
+    try:
+        DingTalkNotifier().send_alert(
+            alert_title=f"[告警升级] {_alert_type_display(alert)}",
+            level=_ALERT_LEVEL_DISPLAY.get(alert.level, alert.level),
+            content=alert.description or alert.title,
+            occurred_at=alert.occurred_at.isoformat() if alert.occurred_at else None,
+            camera_name=alert.camera.name if alert.camera else None,
+            location=alert.camera.location if alert.camera else None,
+            responsible_name=settings.DINGTALK_LEADER_NAME or None,
+            responsible_mobile=settings.DINGTALK_LEADER_MOBILE or None,
+        )
+    except DingTalkNotificationError:
+        logger.exception("DingTalk escalation failed alert_id=%s", alert_id)
+    except Exception:
+        logger.exception("Unexpected DingTalk escalation error alert_id=%s", alert_id)
 
 # Create your views here.

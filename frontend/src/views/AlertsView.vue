@@ -15,7 +15,7 @@ const filters = reactive({
   keyword: '',
   severity: '',
   status: '',
-  dateRange: [],
+  alertDate: '',
   page: 1,
   pageSize: 20,
 })
@@ -47,16 +47,27 @@ function getApiErrorMessage(error, fallback) {
   return response.message || fallback
 }
 
+function getSelectedDayRange(value) {
+  if (!value) return {}
+  const start = new Date(`${value}T00:00:00`)
+  const end = new Date(`${value}T23:59:59.999`)
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return {}
+  return {
+    startTime: start.toISOString(),
+    endTime: end.toISOString(),
+  }
+}
+
 async function loadAlerts() {
   loading.value = true
   try {
-    const [startTime, endTime] = filters.dateRange || []
+    const timeRange = getSelectedDayRange(filters.alertDate)
     const response = await alertsApi.list({
       keyword: filters.keyword || undefined,
       severity: filters.severity || undefined,
       status: filters.status || undefined,
-      startTime: startTime ? new Date(startTime).toISOString() : undefined,
-      endTime: endTime ? new Date(endTime).toISOString() : undefined,
+      startTime: timeRange.startTime,
+      endTime: timeRange.endTime,
       page: filters.page,
       pageSize: filters.pageSize,
     })
@@ -127,17 +138,23 @@ onMounted(() => {
           <el-option label="处理中" value="processing" />
           <el-option label="已关闭" value="closed" />
         </el-select>
-        <el-date-picker v-model="filters.dateRange" type="daterange" start-placeholder="开始日期" end-placeholder="结束日期" />
+        <el-date-picker v-model="filters.alertDate" type="date" value-format="YYYY-MM-DD" placeholder="选择日期" clearable />
         <el-button type="primary" @click="queryAlerts">查询</el-button>
       </div>
-      <el-table v-loading="loading" :data="alertTableRows" stripe>
-        <el-table-column prop="title" label="告警标题" min-width="160" />
-        <el-table-column prop="camera" label="摄像头" min-width="140" />
-        <el-table-column prop="type" label="类型" min-width="150" />
+      <el-table v-loading="loading" :data="alertTableRows" stripe class="stable-alert-table" table-layout="fixed">
+        <el-table-column prop="title" label="告警标题" width="260" show-overflow-tooltip>
+          <template #default="{ row }"><span class="table-cell-ellipsis">{{ row.title }}</span></template>
+        </el-table-column>
+        <el-table-column prop="camera" label="摄像头" width="160" show-overflow-tooltip>
+          <template #default="{ row }"><span class="table-cell-ellipsis">{{ row.camera }}</span></template>
+        </el-table-column>
+        <el-table-column prop="type" label="类型" width="150" show-overflow-tooltip>
+          <template #default="{ row }"><span class="table-cell-ellipsis">{{ row.type }}</span></template>
+        </el-table-column>
         <el-table-column label="等级" width="100"><template #default="{ row }"><StatusTag :value="row.level" /></template></el-table-column>
         <el-table-column label="状态" width="110"><template #default="{ row }"><StatusTag :value="row.status" /></template></el-table-column>
-        <el-table-column prop="time" label="时间" min-width="170" />
-        <el-table-column label="操作" width="120" fixed="right">
+        <el-table-column prop="time" label="时间" width="180" />
+        <el-table-column label="操作" width="120">
           <template #default="{ row }"><el-button link type="primary" @click="openDetail(row)">查看</el-button></template>
         </el-table-column>
       </el-table>
@@ -184,5 +201,24 @@ onMounted(() => {
   display: flex;
   gap: 10px;
   margin-top: 16px;
+}
+
+.stable-alert-table {
+  width: 100%;
+}
+
+.stable-alert-table :deep(.el-table__inner-wrapper),
+.stable-alert-table :deep(.el-table__header-wrapper),
+.stable-alert-table :deep(.el-table__body-wrapper) {
+  width: 100%;
+  max-width: 100%;
+}
+
+.table-cell-ellipsis {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 </style>

@@ -1,4 +1,7 @@
 from datetime import datetime, timezone
+import logging
+import threading
+import time
 from typing import Any
 
 from fastapi import FastAPI, File, Form, Request, UploadFile
@@ -11,11 +14,14 @@ from modules.backend_client import BackendClient
 from modules.dependencies import check_dependencies
 from modules.face_recognition_service import FaceRecognitionService
 from modules.frame_processor import FrameProcessor
+from modules.frame_annotator import FrameAnnotator
 from modules.person_detector import PersonDetector
 from modules.processed_stream_service import ProcessedStreamService, normalize_camera_frame
 from modules.runtime_cache import RuntimeCache
 from modules.stream_reader import StreamReader
 
+
+logger = logging.getLogger("uvicorn.error")
 
 backend_client = BackendClient(
     base_url=Config.BACKEND_API_BASE_URL,
@@ -27,7 +33,6 @@ backend_client = BackendClient(
     zone_list_path=Config.BACKEND_ZONE_LIST_PATH,
     ai_report_path=Config.BACKEND_AI_REPORT_PATH,
     bootstrap_path=Config.BACKEND_BOOTSTRAP_PATH,
-    realtime_frame_results_path=Config.BACKEND_REALTIME_FRAME_RESULTS_PATH,
 )
 
 person_detector = PersonDetector(
@@ -52,6 +57,12 @@ face_service = FaceRecognitionService(
     enrollment_min_quality_score=Config.FACE_ENROLLMENT_MIN_QUALITY_SCORE,
     enrollment_min_face_size=Config.FACE_ENROLLMENT_MIN_FACE_SIZE,
     enrollment_max_pose_yaw=Config.FACE_ENROLLMENT_MAX_POSE_YAW,
+    liveness_enabled=Config.LIVENESS_ENABLED,
+    liveness_required=Config.LIVENESS_REQUIRED,
+    liveness_provider=Config.LIVENESS_PROVIDER,
+    liveness_threshold=Config.LIVENESS_THRESHOLD,
+    liveness_model_path=Config.LIVENESS_MODEL_PATH,
+    liveness_min_face_size=Config.LIVENESS_MIN_FACE_SIZE,
     det_size=Config.FACE_DETECTION_SIZE,
     provider=Config.FACE_PROVIDER,
     library_path=Config.FACE_LIBRARY_PATH,
@@ -78,6 +89,14 @@ frame_processor = FrameProcessor(
         "helmetClassIds": Config.HELMET_CLASS_IDS,
         "helmetClassId": Config.HELMET_CLASS_ID,
         "noHelmetClassId": Config.NO_HELMET_CLASS_ID,
+        "zoneMinStaySeconds": Config.ZONE_MIN_STAY_SECONDS,
+        "zoneStateTtlSeconds": Config.ZONE_STATE_TTL_SECONDS,
+        "helmetEventCooldownSeconds": Config.HELMET_EVENT_COOLDOWN_SECONDS,
+        "trackStateTtlSeconds": Config.TRACK_STATE_TTL_SECONDS,
+        "faceIdentityCacheSeconds": Config.FACE_IDENTITY_CACHE_SECONDS,
+        "faceUnknownCacheSeconds": Config.FACE_UNKNOWN_CACHE_SECONDS,
+        "faceTrackTtlSeconds": Config.FACE_TRACK_TTL_SECONDS,
+        "faceRecognizedCooldownSeconds": Config.FACE_RECOGNIZED_COOLDOWN_SECONDS,
         "fallRatioThreshold": Config.FALL_RATIO_THRESHOLD,
         "fallConfirmFrames": Config.FALL_CONFIRM_FRAMES,
         "fallMinConfidence": Config.FALL_MIN_CONFIDENCE,
@@ -100,12 +119,21 @@ processed_stream_service = ProcessedStreamService(
     default_play_url=Config.STREAM_PLAY_URL,
     default_mode=Config.STREAM_PROCESS_MODE,
     default_report_to_backend=Config.STREAM_REPORT_TO_BACKEND,
-    default_report_realtime_to_backend=Config.STREAM_REPORT_REALTIME_TO_BACKEND,
     reconnect_attempts=Config.STREAM_RECONNECT_ATTEMPTS,
     reconnect_delay_seconds=Config.STREAM_RECONNECT_DELAY_SECONDS,
     output_fps=Config.STREAM_OUTPUT_FPS,
     ffmpeg_path=Config.STREAM_FFMPEG_PATH,
     detect_interval=Config.FRAME_DETECT_INTERVAL,
+    person_detect_interval=Config.PERSON_DETECT_INTERVAL,
+    helmet_detect_interval=Config.HELMET_DETECT_INTERVAL,
+    helmet_detect_offset=Config.HELMET_DETECT_OFFSET,
+    face_detect_interval=Config.FACE_DETECT_INTERVAL,
+    face_detect_offset=Config.FACE_DETECT_OFFSET,
+    detection_cache_max_age_frames=Config.DETECTION_CACHE_MAX_AGE_FRAMES,
+    annotator=FrameAnnotator(
+        line_width=Config.ANNOTATION_LINE_WIDTH,
+        label_scale=Config.ANNOTATION_LABEL_SCALE,
+    ),
     input_width=Config.INPUT_WIDTH,
     input_height=Config.INPUT_HEIGHT,
     event_media_enabled=Config.EVENT_MEDIA_ENABLED,
@@ -132,6 +160,8 @@ def create_app() -> FastAPI:
                 _bootstrap_from_backend()
             except Exception as exc:
                 runtime_cache.set_error(exc)
+        if Config.MODEL_WARMUP_ON_STARTUP:
+            _start_model_warmup()
 
     @app.get("/health", tags=["system"])
     def health_check():
@@ -155,6 +185,16 @@ def create_app() -> FastAPI:
     async def start_processed_stream(request: Request):
         try:
             payload = await _payload(request)
+            if _to_bool(payload.get("reportRealtimeToBackend")):
+                raise ValueError("`reportRealtimeToBackend` is no longer supported; use `reportToBackend`.")
+            camera_id = payload.get("cameraId")
+            if camera_id and not isinstance(payload.get("zones"), list):
+                payload["zones"] = _resolve_zones({**payload, "loadZonesFromBackend": True}, camera_id) or []
+            if _to_bool(payload.get("includeFaces", Config.STREAM_INCLUDE_FACES_DEFAULT)):
+                try:
+                    _maybe_load_faces_for_stream(payload, True)
+                except Exception as exc:
+                    logger.warning("Face library load failed before stream start; continuing without faces: %s", exc)
             status = processed_stream_service.start(payload)
         except Exception as exc:
             return _error_response(exc)
@@ -357,13 +397,14 @@ def create_app() -> FastAPI:
         reader = None
         try:
             payload = await _payload(request)
+            if _to_bool(payload.get("reportRealtimeToBackend", False)):
+                raise ValueError("`reportRealtimeToBackend` is no longer supported; use `reportToBackend`.")
             stream_url, camera_id = _resolve_stream_source(payload)
             max_frames = _bounded_frame_count(payload.get("maxFrames", 1))
             sample_interval = int(payload.get("sampleInterval", Config.STREAM_SAMPLE_INTERVAL) or 1)
             include_faces = _to_bool(payload.get("includeFaces", True))
             face_library_result = _maybe_load_faces_for_stream(payload, include_faces)
             report_to_backend = _to_bool(payload.get("reportToBackend", False))
-            report_realtime_to_backend = _to_bool(payload.get("reportRealtimeToBackend", False))
             zones = _resolve_zones(payload, camera_id)
 
             reader = StreamReader(
@@ -373,7 +414,6 @@ def create_app() -> FastAPI:
 
             reports = []
             report_responses = []
-            realtime_report_responses = []
             for packet in reader.iter_frames(max_frames=max_frames, sample_interval=sample_interval):
                 packet.frame = normalize_camera_frame(packet.frame)
                 report = frame_processor.process_frame(
@@ -388,11 +428,9 @@ def create_app() -> FastAPI:
                 )
                 reports.append(report)
                 if report_to_backend:
-                    report_responses.append(backend_client.report_ai_results(report))
-                if report_realtime_to_backend:
-                    realtime_report_responses.append(
-                        backend_client.report_realtime_frame_results(_with_playback_url(report, payload))
-                    )
+                    reportable = processed_stream_service._reportable_event_report(report)
+                    if reportable["results"]:
+                        report_responses.append(backend_client.report_ai_results(reportable))
         except Exception as exc:
             return _error_response(exc)
         finally:
@@ -409,7 +447,6 @@ def create_app() -> FastAPI:
                 "faceLibrary": face_library_result,
                 "reports": reports,
                 "reportResponses": report_responses,
-                "realtimeReportResponses": realtime_report_responses,
             },
         }
 
@@ -425,6 +462,18 @@ class FaceExtractDetail(BaseModel):
     faceBox: dict[str, float] | None = None
     modelName: str = "buffalo_l"
     provider: str = "CPUExecutionProvider"
+    livenessAvailable: bool = False
+    livenessPassed: bool | None = None
+    livenessScore: float | None = None
+    livenessThreshold: float | None = None
+    livenessProvider: str | None = None
+    livenessWarning: str | None = None
+    qualityHeuristicPassed: bool | None = None
+    qualityHeuristicScore: float | None = None
+    employeeId: int | str | None = None
+    employeeNo: str | None = None
+    name: str | None = None
+    image: str | None = None
 
 
 class FaceExtractResponse(BaseModel):
@@ -530,6 +579,37 @@ def _reload_runtime_cache(payload):
 def _bootstrap_from_backend():
     payload = backend_client.get_bootstrap()
     return _apply_bootstrap_payload(payload)
+
+
+def _start_model_warmup():
+    """Warm heavy model runtimes after startup without blocking health checks."""
+    thread = threading.Thread(target=_warmup_models, name="ai-model-warmup", daemon=True)
+    thread.start()
+
+
+def _warmup_models():
+    started_at = time.perf_counter()
+    try:
+        import numpy as np
+
+        height = max(64, int(Config.INPUT_HEIGHT or 360))
+        width = max(64, int(Config.INPUT_WIDTH or 640))
+        frame = np.zeros((height, width, 3), dtype=np.uint8)
+
+        person_detector.detect(frame, frame_id="warmup-person")
+        if hasattr(person_detector, "reset_tracks"):
+            person_detector.reset_tracks()
+
+        helmet_detector = frame_processor.abnormal_service.helmet_detector
+        helmet_detector.detect(frame, person_detections=[], frame_id="warmup-helmet")
+
+        if Config.MODEL_WARMUP_INCLUDE_FACE:
+            face_service.recognize(frame, person_detections=[], frame_id="warmup-face")
+
+        elapsed_ms = (time.perf_counter() - started_at) * 1000
+        logger.info("AI model warmup finished in %.2f ms", elapsed_ms)
+    except Exception as exc:
+        logger.warning("AI model warmup skipped or failed: %s", exc)
 
 
 def _apply_bootstrap_payload(payload):
@@ -710,9 +790,10 @@ def _as_list(value):
 
 
 def _error_response(exc: Exception):
+    status_code = 400 if isinstance(exc, ValueError) else 500
     return JSONResponse(
-        status_code=500,
-        content={"code": 500, "message": str(exc), "data": None},
+        status_code=status_code,
+        content={"code": status_code, "message": str(exc), "data": None},
     )
 
 

@@ -8,26 +8,16 @@
 Defines the expected behavior, constraints, and acceptance scenarios for Camera Management in the Factory Vision system.
 
 ---
-
 ## Requirements
-
 ### Requirement: Camera list and search
 
-The backend SHALL provide a camera list endpoint with keyword search, status filtering, and pagination. AI Service SHALL receive full results when omitting pagination parameters.
+After creating, editing, toggling, or deleting a camera, the backend SHALL notify AI Service to reload its camera cache via `POST /cache/cameras/reload`.
 
-#### Scenario: List all cameras
+#### Scenario: Mutations notify AI cache
 
-- **GIVEN** camera records exist in the database
-- **WHEN** `GET /api/cameras/list/` is called without pagination parameters
-- **THEN** the backend SHALL return all cameras with fields: `id`, `name`, `code`, `streamUrl`, `processedStreamUrl`, `location`, `status`, `enabled`
-- **AND** AI Service SHALL use this endpoint to discover camera stream URLs
-
-#### Scenario: Search and filter cameras
-
-- **GIVEN** the user is on the camera management page
-- **WHEN** `GET /api/cameras/list/?keyword=车间&status=online&page=1&pageSize=20` is called
-- **THEN** the backend SHALL return paginated results filtered by keyword (matches name, code, or location) and status
-- **AND** status filter accepts `online`, `offline`, `disabled`
+- **GIVEN** the user modifies a camera (create/edit/toggle/delete)
+- **WHEN** the operation succeeds
+- **THEN** the backend SHALL call `POST /cache/cameras/reload` to refresh AI Service cache
 
 ### Requirement: Camera creation
 
@@ -81,6 +71,17 @@ The backend SHALL provide a status toggle endpoint for switching camera online/o
 - **THEN** the backend SHALL update the camera status and return `{id, status}`
 
 ---
+
+### Requirement: Delete camera
+
+The system SHALL allow administrators to delete a camera, cascading to zones.
+
+#### Scenario: Delete existing camera
+
+- **GIVEN** camera id=1 exists with zones
+- **WHEN** `DELETE /api/cameras/1/delete/` is called
+- **THEN** camera and associated zones SHALL be deleted
+- **AND** the backend SHALL notify AI Service via `POST /cache/cameras/reload`
 
 ## Camera Data Model
 

@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 from urllib.parse import urljoin
 
+from .liveness_detector import LivenessDetector
 
 SUPPORTED_IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
 
@@ -33,6 +34,13 @@ class FaceRecognitionService:
         enrollment_min_quality_score: float = 0.5,
         enrollment_min_face_size: int = 40,
         enrollment_max_pose_yaw: float = 75.0,
+        liveness_enabled: bool = True,
+        liveness_required: bool = False,
+        liveness_provider: str = "rgb_heuristic",
+        liveness_threshold: float = 0.70,
+        liveness_model_path: str | Path | None = None,
+        liveness_min_face_size: int = 48,
+        liveness_detector: LivenessDetector | None = None,
         det_size: tuple[int, int] = (640, 640),
         provider: str = "auto",
         library_path: str | Path | None = None,
@@ -49,6 +57,14 @@ class FaceRecognitionService:
         self.enrollment_min_quality_score = float(enrollment_min_quality_score or 0)
         self.enrollment_min_face_size = max(0, int(enrollment_min_face_size or 0))
         self.enrollment_max_pose_yaw = float(enrollment_max_pose_yaw or 0)
+        self.liveness_required = bool(liveness_required)
+        self.liveness_detector = liveness_detector or LivenessDetector(
+            enabled=liveness_enabled,
+            provider=liveness_provider,
+            threshold=liveness_threshold,
+            model_path=liveness_model_path,
+            min_face_size=liveness_min_face_size,
+        )
         self.det_size = det_size
         self.provider = provider
         self.library_path = Path(library_path) if library_path else None
@@ -125,6 +141,8 @@ class FaceRecognitionService:
                     "name": match.name,
                     "matched": True,
                     "similarity": round(float(similarity), 4),
+                    "bestSimilarity": round(float(decision["bestSimilarity"]), 4),
+                    "secondBestSimilarity": round(float(decision["secondBestSimilarity"]), 4),
                     "threshold": round(float(decision["threshold"]), 4),
                     "scoreMargin": round(float(decision["scoreMargin"]), 4),
                     "sampleCount": decision["sampleCount"],
@@ -138,6 +156,8 @@ class FaceRecognitionService:
                     "matched": False,
                     "label": "unknown",
                     "similarity": round(float(similarity), 4),
+                    "bestSimilarity": round(float(decision["bestSimilarity"]), 4),
+                    "secondBestSimilarity": round(float(decision["secondBestSimilarity"]), 4),
                     "threshold": round(float(decision["threshold"]), 4),
                     "scoreMargin": round(float(decision["scoreMargin"]), 4),
                     "rejectReason": decision["rejectReason"],
@@ -176,6 +196,9 @@ class FaceRecognitionService:
 
         face = faces[0]
         self._validate_enrollment_face(face)
+        liveness = self._check_liveness(frame, face)
+        if self.liveness_required and not (liveness.available and liveness.provider == "onnx" and liveness.passed is True):
+            raise ValueError(f"Face liveness check failed: {liveness.warning or liveness.provider}.")
         feature = self._face_embedding(face)
         return {
             "faceCount": len(faces),
@@ -183,6 +206,14 @@ class FaceRecognitionService:
             "dimension": int(len(feature)),
             "qualityScore": _face_quality_score(face),
             "enrollmentAccepted": True,
+            "livenessAvailable": liveness.available,
+            "livenessPassed": liveness.passed,
+            "livenessScore": liveness.score,
+            "livenessThreshold": liveness.threshold,
+            "livenessProvider": liveness.provider,
+            "livenessWarning": liveness.warning,
+            "qualityHeuristicPassed": liveness.quality_heuristic_passed,
+            "qualityHeuristicScore": liveness.quality_heuristic_score,
             "faceBox": _format_bbox(face.bbox),
             "modelName": self.model_name,
             "provider": self.providers[0] if self.providers else None,
@@ -255,6 +286,8 @@ class FaceRecognitionService:
             "enrollmentMinQualityScore": self.enrollment_min_quality_score,
             "enrollmentMinFaceSize": self.enrollment_min_face_size,
             "enrollmentMaxPoseYaw": self.enrollment_max_pose_yaw,
+            "liveness": self.liveness_detector.status(),
+            "livenessRequired": self.liveness_required,
             "errors": self.load_errors,
         }
 
@@ -436,6 +469,10 @@ class FaceRecognitionService:
             feature = getattr(face, "embedding", None)
         return _normalize_vector(feature)
 
+    def _check_liveness(self, frame, face):
+        """Evaluate the detected face crop once before enrollment feature extraction."""
+        return self.liveness_detector.predict(_crop_bbox(frame, face.bbox))
+
     def _match(self, feature):
         """Find the most similar loaded FaceRecord for one feature."""
         if not self.face_records:
@@ -463,6 +500,8 @@ class FaceRecognitionService:
                 score_margin=0.0,
                 sample_count=0,
                 reject_reason="empty_face_library",
+                best_similarity=0.0,
+                second_best_similarity=0.0,
             )
 
         best = scored_people[0]
@@ -482,6 +521,8 @@ class FaceRecognitionService:
             score_margin=max(0.0, score_margin),
             sample_count=best["sampleCount"],
             reject_reason=reject_reason,
+            best_similarity=max(0.0, best["score"]),
+            second_best_similarity=max(0.0, second_score),
         )
 
     def _score_people(self, feature):
@@ -711,13 +752,25 @@ def _normalize_vector(feature):
         feature = json.loads(feature)
 
     vector = np.asarray(feature, dtype="float32")
+    if vector.ndim != 1 or vector.size != 512:
+        raise ValueError(f"Face feature vector must contain exactly 512 values, got {vector.size}.")
+    if not np.isfinite(vector).all():
+        raise ValueError("Face feature vector contains NaN or infinity.")
     norm = float(np.linalg.norm(vector))
     if norm <= 0:
         raise ValueError("Face feature vector norm is zero.")
     return vector / norm
 
 
-def _match_decision(accepted, threshold, score_margin, sample_count, reject_reason):
+def _match_decision(
+    accepted,
+    threshold,
+    score_margin,
+    sample_count,
+    reject_reason,
+    best_similarity=0.0,
+    second_best_similarity=0.0,
+):
     """Return a serializable face match decision."""
     return {
         "accepted": bool(accepted),
@@ -725,6 +778,8 @@ def _match_decision(accepted, threshold, score_margin, sample_count, reject_reas
         "scoreMargin": float(score_margin),
         "sampleCount": int(sample_count),
         "rejectReason": reject_reason,
+        "bestSimilarity": float(best_similarity),
+        "secondBestSimilarity": float(second_best_similarity),
     }
 
 
@@ -833,6 +888,21 @@ def _bbox_area(bbox):
     """Calculate bbox area from xyxy coordinates."""
     x1, y1, x2, y2 = _bbox_tuple(bbox)
     return max(0.0, x2 - x1) * max(0.0, y2 - y1)
+
+
+def _crop_bbox(frame, bbox):
+    """Crop a face bbox safely so liveness receives only valid image pixels."""
+    if frame is None or not hasattr(frame, "shape"):
+        return None
+    height, width = frame.shape[:2]
+    x1, y1, x2, y2 = _bbox_tuple(bbox)
+    left = max(0, min(width, int(round(x1))))
+    top = max(0, min(height, int(round(y1))))
+    right = max(0, min(width, int(round(x2))))
+    bottom = max(0, min(height, int(round(y2))))
+    if right <= left or bottom <= top:
+        return None
+    return frame[top:bottom, left:right].copy()
 
 
 def _detection_bbox(detection):

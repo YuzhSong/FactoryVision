@@ -16,6 +16,7 @@ class CameraCreateSerializer(serializers.Serializer):
     streamUrl = serializers.CharField(required=True, max_length=512)
     processedStreamUrl = serializers.CharField(required=False, max_length=512, default="")
     location = serializers.CharField(required=False, max_length=255, default="")
+    includeFaces = serializers.BooleanField(required=False, default=False)
 
 
 class CameraUpdateSerializer(serializers.Serializer):
@@ -27,6 +28,7 @@ class CameraUpdateSerializer(serializers.Serializer):
     processedStreamUrl = serializers.CharField(required=False, max_length=512)
     location = serializers.CharField(required=False, max_length=255)
     enabled = serializers.BooleanField(required=False)
+    includeFaces = serializers.BooleanField(required=False)
 
 
 class CameraToggleSerializer(serializers.Serializer):
@@ -39,6 +41,13 @@ class CameraListSerializer(serializers.ModelSerializer):
     cameraId = serializers.CharField(source="code")
     streamUrl = serializers.CharField(source="stream_url")
     processedStreamUrl = serializers.CharField(source="processed_stream_url")
+    includeFaces = serializers.BooleanField(source="include_faces")
+    streamConfig = serializers.SerializerMethodField()
+
+    def get_streamConfig(self, camera):
+        from .stream_config import resolve_stream_start_config
+
+        return resolve_stream_start_config(camera)
 
     class Meta:
         model = Camera
@@ -52,5 +61,7 @@ class CameraListSerializer(serializers.ModelSerializer):
             "location",
             "status",
             "enabled",
+            "includeFaces",
+            "streamConfig",
         )
         read_only_fields = fields

@@ -1,8 +1,9 @@
 <script setup>
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import SectionHeader from '../components/SectionHeader.vue'
-import { camerasApi, zonesApi } from '../api/modules'
+import mpegts from 'mpegts.js'
+import { aiServiceApi, camerasApi, zonesApi } from '../api/modules'
 
 const cameraId = ref('')
 const cameras = ref([])
@@ -11,14 +12,22 @@ const camerasLoading = ref(false)
 const zonesLoading = ref(false)
 const savingZone = ref(false)
 const editorRef = ref(null)
+const videoRef = ref(null)
 const draftPoints = ref([])
 const draggingPointIndex = ref(null)
-const selectedZoneId = ref(null)
+const editingZoneId = ref(null)
+const playbackStatus = ref('idle')
+const playbackMessage = ref('等待处理后视频流')
+const switchingZoneId = ref(null)
+const videoLayout = reactive({ left: 0, top: 0, width: 0, height: 0 })
+
+let player = null
+let sdkPromise = null
+let resizeObserver = null
 
 const zoneForm = reactive({
   name: '',
   type: 'danger',
-  enabled: true,
   description: '',
 })
 
@@ -37,31 +46,195 @@ const zoneRows = computed(() => zones.value.map((zone) => ({
 })))
 
 const selectedCamera = computed(() => cameras.value.find((camera) => camera.id === cameraId.value) || null)
+const detectedPlayUrl = computed(() => selectedCamera.value?.processedStreamUrl || selectedCamera.value?.playUrl || '')
+const detectedFlvUrl = computed(() => {
+  const url = detectedPlayUrl.value
+  if (!url || !url.startsWith('webrtc://')) return url
+  return url.replace('webrtc://', 'https://').replace(/\/([^/?]+)(\?.*)?$/, '/$1.flv')
+})
 
 const polygonPoints = computed(() => draftPoints.value
   .map((point) => `${point.x * 100},${point.y * 100}`)
   .join(' '))
 
 const canPreviewPolygon = computed(() => draftPoints.value.length >= 3)
-const selectedZone = computed(() => zoneRows.value.find((zone) => zone.id === selectedZoneId.value) || null)
-const selectedZonePoints = computed(() => {
-  const points = selectedZone.value?.points
-  return Array.isArray(points) ? points : []
-})
-const selectedZonePolygonPoints = computed(() => selectedZonePoints.value
-  .map((point) => `${point.x * 100},${point.y * 100}`)
-  .join(' '))
-const canPreviewSelectedZone = computed(() => selectedZonePoints.value.length >= 3 && draftPoints.value.length === 0)
+const savedPolygons = computed(() => zones.value
+  .filter((zone) => Array.isArray(zone.points) && zone.points.length >= 3)
+  .map((zone) => ({
+    ...zone,
+    svgPoints: zone.points.map((point) => `${Number(point.x) > 1 ? Number(point.x) : Number(point.x) * 100},${Number(point.y) > 1 ? Number(point.y) : Number(point.y) * 100}`).join(' '),
+  })))
 
 const clamp = (value) => Math.min(Math.max(value, 0), 1)
+const withTimeout = (promise, milliseconds, message) => new Promise((resolve, reject) => {
+  const timeout = window.setTimeout(() => reject(new Error(message)), milliseconds)
+  Promise.resolve(promise).then(
+    (value) => { window.clearTimeout(timeout); resolve(value) },
+    (error) => { window.clearTimeout(timeout); reject(error) },
+  )
+})
+const overlayStyle = computed(() => ({
+  left: `${videoLayout.left}px`,
+  top: `${videoLayout.top}px`,
+  width: `${videoLayout.width}px`,
+  height: `${videoLayout.height}px`,
+}))
+
+const updateVideoLayout = () => {
+  const container = editorRef.value
+  const video = videoRef.value
+  if (!container || !video) return
+  const containerWidth = container.clientWidth
+  const containerHeight = container.clientHeight
+  const videoWidth = video.videoWidth || 16
+  const videoHeight = video.videoHeight || 9
+  const scale = Math.min(containerWidth / videoWidth, containerHeight / videoHeight)
+  videoLayout.width = videoWidth * scale
+  videoLayout.height = videoHeight * scale
+  videoLayout.left = (containerWidth - videoLayout.width) / 2
+  videoLayout.top = (containerHeight - videoLayout.height) / 2
+}
+
+const loadScript = (src) => new Promise((resolve, reject) => {
+  const existing = document.querySelector(`script[src="${src}"]`)
+  if (existing) {
+    if (existing.dataset.loaded === 'true') return resolve()
+    existing.addEventListener('load', resolve, { once: true })
+    existing.addEventListener('error', () => reject(new Error(`播放器脚本加载失败: ${src}`)), { once: true })
+    return
+  }
+  const script = document.createElement('script')
+  script.src = src
+  script.async = true
+  script.onload = () => {
+    script.dataset.loaded = 'true'
+    resolve()
+  }
+  script.onerror = () => reject(new Error(`播放器脚本加载失败: ${src}`))
+  document.head.appendChild(script)
+})
+
+const loadMpegtsSdk = () => {
+  return Promise.resolve(mpegts)
+}
+
+const loadSrsSdk = () => {
+  if (window.SrsRtcPlayerAsync) return Promise.resolve()
+  if (!sdkPromise) {
+    sdkPromise = loadScript('https://webrtc.rainycode.cn:8443/players/js/adapter-7.4.0.min.js')
+      .then(() => loadScript('https://webrtc.rainycode.cn:8443/players/js/srs.sdk.js'))
+      .catch((error) => {
+        sdkPromise = null
+        throw error
+      })
+  }
+  return sdkPromise
+}
+
+const wait = (milliseconds) => new Promise((resolve) => window.setTimeout(resolve, milliseconds))
+
+const deriveOutputUrl = (camera) => {
+  const processedUrl = `${camera?.processedStreamUrl || ''}`.trim()
+  if (processedUrl.startsWith('rtmp://') || processedUrl.startsWith('rtmps://')) {
+    return processedUrl
+  }
+  const sourceUrl = `${camera?.streamUrl || ''}`.trim()
+  const match = sourceUrl.match(/^(rtmps?:\/\/[^/]+\/[^/]+\/)([^/?#]+)$/)
+  if (!match) return ''
+  return `${match[1]}${match[2]}_detected`
+}
+
+const buildAiStreamPayload = (camera, failedStartResponse = null) => {
+  const config = failedStartResponse?.cameraConfig
+    || (failedStartResponse?.inputUrl ? failedStartResponse : null)
+    || camera?.streamConfig
+  if (!config) return null
+  return { ...config, zones: Array.isArray(config.zones) ? config.zones : [] }
+}
+
+const ensureProcessedStream = async () => {
+  if (!cameraId.value) return null
+  playbackMessage.value = '正在启动 AI 处理流'
+  const waitForRunning = async () => {
+    let latestStatus = null
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      await wait(1500)
+      const statusResponse = await aiServiceApi.streamStatus()
+      latestStatus = statusResponse?.data?.data || statusResponse?.data || null
+      if (latestStatus?.running) return latestStatus
+    }
+    return latestStatus
+  }
+  try {
+    const response = await camerasApi.startStream(cameraId.value)
+    const runningStatus = await waitForRunning()
+    if (runningStatus?.running) return runningStatus
+    return response?.data || null
+  } catch (error) {
+    const payload = buildAiStreamPayload(selectedCamera.value, error?.response?.data?.data)
+    if (!payload?.cameraId || !payload?.inputUrl || !payload?.outputUrl || !payload?.playUrl) {
+      throw error
+    }
+    let lastStatus = null
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      await aiServiceApi.startStream(payload)
+      lastStatus = await waitForRunning()
+      if (lastStatus?.running) return lastStatus
+    }
+    if (lastStatus?.last_error) {
+      throw new Error(String(lastStatus.last_error).split('\n')[0])
+    }
+    throw error
+  }
+}
+
+const stopPlayback = () => {
+  player?.close?.()
+  player?.destroy?.()
+  player = null
+  if (videoRef.value) {
+    videoRef.value.srcObject = null
+    videoRef.value.removeAttribute('src')
+  }
+}
+
+const startPlayback = async (options = {}) => {
+  const { ensureStream = false } = options
+  stopPlayback()
+  const playUrl = detectedFlvUrl.value
+  if (!playUrl) {
+    playbackStatus.value = 'idle'
+    playbackMessage.value = '当前摄像头未配置处理后播放地址'
+    return
+  }
+  playbackStatus.value = 'connecting'
+  playbackMessage.value = ensureStream ? '正在启动并连接处理后视频流' : '正在连接处理后视频流'
+  try {
+    if (ensureStream) {
+      await ensureProcessedStream()
+    }
+    await loadMpegtsSdk()
+    if (!mpegts.getFeatureList().mseLivePlayback) throw new Error('当前浏览器不支持 HTTP-FLV 直播播放')
+    player = mpegts.createPlayer({ type: 'flv', url: playUrl, isLive: true, enableStashBuffer: false })
+    player.attachMediaElement(videoRef.value)
+    player.load()
+    await withTimeout(player.play(), 8000, '处理后视频流连接超时，请检查 SRS 或 processedStreamUrl')
+    playbackStatus.value = 'connected'
+    playbackMessage.value = `正在播放 ${playUrl}`
+  } catch (error) {
+    playbackStatus.value = 'error'
+    playbackMessage.value = error.message
+    stopPlayback()
+  }
+}
 
 const pointFromEvent = (event) => {
   const rect = editorRef.value?.getBoundingClientRect()
-  if (!rect) return null
+  if (!rect || !videoLayout.width || !videoLayout.height) return null
 
   return {
-    x: clamp((event.clientX - rect.left) / rect.width),
-    y: clamp((event.clientY - rect.top) / rect.height),
+    x: clamp((event.clientX - rect.left - videoLayout.left) / videoLayout.width),
+    y: clamp((event.clientY - rect.top - videoLayout.top) / videoLayout.height),
   }
 }
 
@@ -73,7 +246,6 @@ const addDraftPoint = (event) => {
 
   const point = pointFromEvent(event)
   if (!point) return
-  selectedZoneId.value = null
   draftPoints.value.push(point)
 }
 
@@ -106,22 +278,15 @@ const clearDraftPoints = () => {
   draftPoints.value = []
 }
 
-const selectZone = (zone) => {
-  selectedZoneId.value = zone.id
-  clearDraftPoints()
-}
-
 const resetZoneForm = () => {
   Object.assign(zoneForm, {
     name: '',
     type: 'danger',
-    enabled: true,
     description: '',
   })
 }
 
 const useExamplePolygon = () => {
-  selectedZoneId.value = null
   draftPoints.value = [
     { x: 0.56, y: 0.45 },
     { x: 0.82, y: 0.43 },
@@ -163,7 +328,7 @@ const saveZone = async () => {
 
   savingZone.value = true
   try {
-    await zonesApi.save({
+    const payload = {
       cameraId: cameraId.value,
       name: zoneForm.name,
       type: zoneForm.type,
@@ -171,19 +336,67 @@ const saveZone = async () => {
         x: Number(point.x.toFixed(4)),
         y: Number(point.y.toFixed(4)),
       })),
-      enabled: zoneForm.enabled,
+      enabled: editingZoneId.value
+        ? zones.value.find((zone) => zone.id === editingZoneId.value)?.enabled !== false
+        : true,
       description: zoneForm.description,
-    })
+    }
+    if (editingZoneId.value) await zonesApi.update(editingZoneId.value, payload)
+    else await zonesApi.save(payload)
     ElMessage.success('警戒区域已创建')
     clearDraftPoints()
-    selectedZoneId.value = null
     resetZoneForm()
+    editingZoneId.value = null
     await loadZones()
   } catch (error) {
     ElMessage.error(getApiErrorMessage(error, '区域创建失败'))
   } finally {
     savingZone.value = false
   }
+}
+
+const editZone = (zone) => {
+  editingZoneId.value = zone.id
+  Object.assign(zoneForm, {
+    name: zone.name,
+    type: zone.type,
+    description: zone.description || '',
+  })
+  draftPoints.value = (zone.points || []).map((point) => ({ x: Number(point.x), y: Number(point.y) }))
+}
+
+const toggleZoneEnabled = async (zone, enabled) => {
+  const previous = zone.enabled !== false
+  if (previous === enabled) return
+  switchingZoneId.value = zone.id
+  zones.value = zones.value.map((item) => (item.id === zone.id ? { ...item, enabled } : item))
+  try {
+    await zonesApi.update(zone.id, {
+      cameraId: zone.cameraId,
+      name: zone.name,
+      type: zone.type,
+      points: zone.points || [],
+      enabled,
+      description: zone.description || '',
+    })
+    ElMessage.success(enabled ? '区域已启用' : '区域已停用')
+    await loadZones()
+  } catch (error) {
+    zones.value = zones.value.map((item) => (item.id === zone.id ? { ...item, enabled: previous } : item))
+    ElMessage.error(getApiErrorMessage(error, '区域启用状态更新失败'))
+  } finally {
+    switchingZoneId.value = null
+  }
+}
+
+const deleteZone = async (zone) => {
+  await zonesApi.remove(zone.id)
+  if (editingZoneId.value === zone.id) {
+    editingZoneId.value = null
+    clearDraftPoints()
+    resetZoneForm()
+  }
+  await loadZones()
 }
 
 const loadCameras = async () => {
@@ -209,9 +422,6 @@ const loadZones = async () => {
       cameraId: cameraId.value || undefined,
     })
     zones.value = response?.data?.items || []
-    if (selectedZoneId.value && !zones.value.some((zone) => zone.id === selectedZoneId.value)) {
-      selectedZoneId.value = null
-    }
   } catch (error) {
     zones.value = []
     ElMessage.error(error?.response?.data?.message || '区域列表加载失败')
@@ -222,26 +432,34 @@ const loadZones = async () => {
 
 watch(cameraId, () => {
   clearDraftPoints()
-  selectedZoneId.value = null
   resetZoneForm()
   loadZones()
+  startPlayback({ ensureStream: true })
 })
 
 onMounted(async () => {
   await loadCameras()
   await loadZones()
+  resizeObserver = new ResizeObserver(updateVideoLayout)
+  if (editorRef.value) resizeObserver.observe(editorRef.value)
+})
+
+onBeforeUnmount(() => {
+  resizeObserver?.disconnect()
+  stopPlayback()
 })
 </script>
 
 <template>
   <div class="page-grid">
     <div class="panel">
-      <SectionHeader title="警戒区域配置" />
+      <SectionHeader title="警戒区域配置" description="区域查询和创建已接入后端接口，点位使用 0-1 归一化坐标保存。" />
       <div class="filter-row zone-toolbar">
         <el-select v-model="cameraId" v-loading="camerasLoading" placeholder="选择摄像头">
           <el-option v-for="camera in cameras" :key="camera.id" :label="camera.name" :value="camera.id" />
         </el-select>
         <el-button @click="useExamplePolygon">示例区域</el-button>
+        <el-button @click="startPlayback({ ensureStream: true })">重连视频</el-button>
         <el-button :disabled="draftPoints.length === 0" @click="undoDraftPoint">撤销点位</el-button>
         <el-button :disabled="draftPoints.length === 0" @click="clearDraftPoints">清空</el-button>
         <el-button type="primary" :loading="savingZone" :disabled="!canPreviewPolygon" @click="saveZone">保存区域</el-button>
@@ -259,9 +477,6 @@ onMounted(async () => {
             <el-option label="普通区域" value="general" />
           </el-select>
         </el-form-item>
-        <el-form-item label="启用">
-          <el-switch v-model="zoneForm.enabled" />
-        </el-form-item>
         <el-form-item label="说明">
           <el-input v-model="zoneForm.description" placeholder="区域用途或风险说明" />
         </el-form-item>
@@ -275,27 +490,21 @@ onMounted(async () => {
         @pointerup="stopDragPoint"
         @pointerleave="stopDragPoint"
       >
+        <video ref="videoRef" autoplay playsinline muted @loadedmetadata="updateVideoLayout" />
         <span class="monitor-label">
           {{ selectedCamera?.name || '请选择摄像头' }} / 点击画面添加点位 / 拖动蓝色点调整
         </span>
         <div class="zone-video-meta">
-          <strong>{{ selectedCamera?.location || '未配置位置' }}</strong>
-          <span>{{ selectedCamera?.processedStreamUrl || selectedCamera?.streamUrl || '视频流待配置' }}</span>
+          <strong>{{ selectedCamera?.location || '摄像头位置待接入' }}</strong>
+          <span>{{ playbackMessage }}</span>
         </div>
-        <svg class="zone-editor-layer" viewBox="0 0 100 100" preserveAspectRatio="none">
-          <polygon v-if="canPreviewSelectedZone" class="zone-saved-fill" :points="selectedZonePolygonPoints" />
-          <polyline v-if="selectedZonePoints.length > 1 && draftPoints.length === 0" class="zone-saved-line" :points="selectedZonePolygonPoints" />
+        <svg class="zone-editor-layer" :style="overlayStyle" viewBox="0 0 100 100" preserveAspectRatio="none">
+          <g v-for="zone in savedPolygons" :key="`saved-${zone.id}`">
+            <polygon class="zone-saved-fill" :points="zone.svgPoints" />
+            <text class="zone-saved-label" :x="Number(zone.points[0].x) > 1 ? Number(zone.points[0].x) : Number(zone.points[0].x) * 100" :y="Number(zone.points[0].y) > 1 ? Number(zone.points[0].y) : Number(zone.points[0].y) * 100">{{ zone.name }}</text>
+          </g>
           <polygon v-if="canPreviewPolygon" class="zone-draft-fill" :points="polygonPoints" />
           <polyline v-if="draftPoints.length > 1" class="zone-draft-line" :points="polygonPoints" />
-          <g
-            v-for="(point, index) in selectedZonePoints"
-            :key="`saved-${selectedZoneId}-${index}`"
-            class="zone-saved-point"
-            v-show="canPreviewSelectedZone"
-            :transform="`translate(${point.x * 100} ${point.y * 100})`"
-          >
-            <circle r="1.15" />
-          </g>
           <g
             v-for="(point, index) in draftPoints"
             :key="`${index}-${point.x}-${point.y}`"
@@ -308,7 +517,7 @@ onMounted(async () => {
             <text x="2.4" y="-2">{{ index + 1 }}</text>
           </g>
         </svg>
-        <div v-if="draftPoints.length === 0 && !canPreviewSelectedZone" class="zone-editor-empty">
+        <div v-if="draftPoints.length === 0" class="zone-editor-empty">
           <strong>在视频区域中点击开始框选危险区域</strong>
           <span>至少 3 个点形成多边形，双击点位可删除</span>
         </div>
@@ -332,21 +541,26 @@ onMounted(async () => {
 
     <div class="panel table-panel">
       <SectionHeader title="区域列表" />
-      <el-table
-        v-loading="zonesLoading"
-        :data="zoneRows"
-        stripe
-        highlight-current-row
-        :row-class-name="({ row }) => (row.id === selectedZoneId ? 'is-selected-zone-row' : '')"
-        @row-click="selectZone"
-      >
+      <el-table v-loading="zonesLoading" :data="zoneRows" stripe>
         <el-table-column prop="name" label="区域名称" min-width="160" />
         <el-table-column prop="cameraName" label="摄像头" min-width="150" />
         <el-table-column prop="type" label="类型" width="120" />
         <el-table-column prop="pointCount" label="点位数" width="100" />
         <el-table-column prop="description" label="说明" min-width="180" show-overflow-tooltip />
         <el-table-column label="启用" width="100">
-          <template #default="{ row }"><el-switch :model-value="row.enabled" disabled /></template>
+          <template #default="{ row }">
+            <el-switch
+              :model-value="row.enabled"
+              :loading="switchingZoneId === row.id"
+              @change="(value) => toggleZoneEnabled(row, value)"
+            />
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="150">
+          <template #default="{ row }">
+            <el-button link type="primary" @click="editZone(row)">编辑</el-button>
+            <el-button link type="danger" @click="deleteZone(row)">删除</el-button>
+          </template>
         </el-table-column>
       </el-table>
     </div>

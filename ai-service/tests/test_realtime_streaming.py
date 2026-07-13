@@ -1,4 +1,5 @@
 import unittest
+import time
 import numpy as np
 
 from modules.frame_processor import FrameProcessor
@@ -25,6 +26,12 @@ class _FakeDetector:
 
 
 class _FakeFaceService:
+    def __init__(self, loaded_faces=1):
+        self.loaded_faces = loaded_faces
+
+    def status(self):
+        return {"loadedFaces": self.loaded_faces}
+
     def recognize(self, _frame, person_detections=None, frame_id=None):
         return [
             {
@@ -41,9 +48,13 @@ class _FakeFaceService:
 
 
 class _SequencedFaceService:
-    def __init__(self, results_by_call):
+    def __init__(self, results_by_call, loaded_faces=1):
         self.results_by_call = results_by_call
+        self.loaded_faces = loaded_faces
         self.index = 0
+
+    def status(self):
+        return {"loadedFaces": self.loaded_faces}
 
     def recognize(self, _frame, person_detections=None, frame_id=None):
         results = self.results_by_call[min(self.index, len(self.results_by_call) - 1)]
@@ -57,7 +68,7 @@ class _FakeAlertFrameProcessor:
             "cameraId": kwargs.get("camera_id"),
             "frameId": kwargs.get("frame_id"),
             "timestamp": kwargs.get("timestamp"),
-            "results": [{"type": "FALL_ALERT", "trackId": "t-1", "isFall": True}],
+            "results": [{"type": "HELMET_WARNING", "trackId": "t-1", "helmetStatus": "no_helmet"}],
         }
 
 
@@ -167,6 +178,59 @@ class RealtimeStreamingTests(unittest.TestCase):
         service._status.processed_frames = 5
         self.assertTrue(service._should_detect())
 
+    def test_model_schedule_offsets_person_helmet_and_face_work(self):
+        service = ProcessedStreamService(
+            frame_processor=None,
+            person_detect_interval=10,
+            helmet_detect_interval=10,
+            helmet_detect_offset=5,
+            face_detect_interval=60,
+            face_detect_offset=2,
+        )
+
+        self.assertEqual(service._model_runs(include_faces=False), {"person": True, "helmet": False, "face": False})
+        service._status.processed_frames = 2
+        self.assertEqual(service._model_runs(include_faces=True), {"person": False, "helmet": False, "face": True})
+        service._status.processed_frames = 5
+        self.assertEqual(service._model_runs(include_faces=True), {"person": False, "helmet": True, "face": False})
+        service._status.processed_frames = 10
+        self.assertEqual(service._model_runs(include_faces=True), {"person": True, "helmet": False, "face": False})
+
+    def test_frame_processor_uses_cached_people_for_offset_helmet_detection(self):
+        processor = FrameProcessor(person_detector=_FakeDetector(), history_limit=5)
+        helmet_detector = processor.abnormal_service.helmet_detector
+        calls = []
+
+        def fake_helmet_detect(_frame, person_detections=None, frame_id=None, **_kwargs):
+            calls.append(list(person_detections or []))
+            return [
+                {
+                    "type": "HELMET_DETECTION",
+                    "trackId": "t-1",
+                    "helmetStatus": "helmet",
+                    "helmetConfidence": 0.9,
+                    "className": "helmet",
+                    "bbox": {"x1": 1, "y1": 2, "x2": 8, "y2": 9},
+                    "frameId": frame_id,
+                }
+            ]
+
+        helmet_detector.detect = fake_helmet_detect
+        first = processor.process_frame(frame=object(), include_faces=False, run_helmet_detection=False)
+        cached_people = [item for item in first["results"] if item.get("type") == "PERSON_DETECTION"]
+        report = processor.process_frame(
+            frame=object(),
+            include_faces=False,
+            person_detections=cached_people,
+            run_person_detection=False,
+            run_helmet_detection=True,
+        )
+
+        self.assertEqual(calls[0][0]["trackId"], "t-1")
+        person = next(item for item in report["results"] if item.get("type") == "PERSON_DETECTION")
+        self.assertEqual(person["helmetStatus"], "helmet")
+        self.assertIn("helmet", report["modelTimingsMs"])
+
     def test_processed_stream_attaches_event_media_before_backend_report(self):
         backend = _FakeBackendClient()
         recorder = _FakeEventMediaRecorder()
@@ -196,14 +260,48 @@ class RealtimeStreamingTests(unittest.TestCase):
             writer=None,
             include_faces=True,
             report_to_backend=True,
-            report_realtime_to_backend=False,
             zones=None,
             last_report={"results": []},
         )
 
+        deadline = time.monotonic() + 1
+        while backend.report is None and time.monotonic() < deadline:
+            time.sleep(0.01)
+
         self.assertEqual(service.status()["event_media_count"], 1)
         self.assertEqual(backend.report["eventMedia"][0]["eventId"], "event-1")
-        self.assertEqual(recorder.calls[0]["report"]["results"][0]["type"], "FALL_ALERT")
+        self.assertEqual(recorder.calls[0]["report"]["results"][0]["type"], "HELMET_WARNING")
+
+    def test_live_stream_reports_only_actionable_results(self):
+        service = ProcessedStreamService(frame_processor=None)
+        report = {
+            "cameraId": 1,
+            "results": [
+                {"type": "PERSON_DETECTION", "trackId": "person-1"},
+                {"type": "PERSON_DETECTION", "eventType": "face_recognized", "trackId": "person-spoof"},
+                {"type": "HELMET_DETECTION", "trackId": "person-1"},
+                {"type": "HELMET_WARNING", "trackId": "person-1"},
+                {"type": "FACE_RESULT", "trackId": "person-1", "matched": False},
+                {"type": "FACE_RESULT", "trackId": "person-2", "matched": True, "employeeId": 4},
+                {"type": "FACE_RECOGNIZED", "trackId": "person-2", "employeeId": 4},
+                {"type": "ZONE_WARNING", "trackId": "person-1"},
+            ],
+        }
+
+        filtered = service._reportable_event_report(report)
+
+        self.assertEqual(
+            [item["type"] for item in filtered["results"]],
+            ["HELMET_WARNING", "FACE_RECOGNIZED", "ZONE_WARNING"],
+        )
+        self.assertEqual(service.status()["filtered_results"], 5)
+
+    def test_reporting_requires_camera_id_and_rejects_legacy_realtime_path(self):
+        service = ProcessedStreamService(frame_processor=None, default_report_to_backend=True)
+        with self.assertRaisesRegex(ValueError, "cameraId"):
+            service.start({})
+        with self.assertRaisesRegex(ValueError, "reportRealtimeToBackend"):
+            service.start({"reportRealtimeToBackend": True})
 
     def test_track_history_keeps_lightweight_recent_points(self):
         processor = FrameProcessor(person_detector=_FakeDetector(), history_limit=5)
@@ -269,6 +367,25 @@ class RealtimeStreamingTests(unittest.TestCase):
         self.assertFalse(any(result.get("type") == "STRANGER_ALERT" for result in reports[0]["results"]))
         self.assertFalse(any(result.get("type") == "STRANGER_ALERT" for result in reports[1]["results"]))
         self.assertTrue(any(result.get("type") == "STRANGER_ALERT" for result in reports[2]["results"]))
+
+    def test_frame_processor_does_not_confirm_stranger_without_loaded_face_library(self):
+        processor = FrameProcessor(
+            person_detector=_FakeDetector(),
+            face_service=_FakeFaceService(loaded_faces=0),
+            abnormal_config={"strangerConfirmFrames": 1},
+        )
+
+        report = processor.process_frame(
+            frame=object(),
+            camera_id=1,
+            frame_id="frame-no-library",
+            timestamp="2026-07-08T03:00:00+08:00",
+            include_faces=True,
+            frame_index=1,
+            fps=10,
+        )
+
+        self.assertFalse(any(result.get("type") == "STRANGER_ALERT" for result in report["results"]))
 
     def test_frame_processor_emits_leave_and_return_presence_events(self):
         recognized = {

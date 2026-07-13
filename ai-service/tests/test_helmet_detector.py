@@ -172,6 +172,24 @@ class HelmetDetectorTests(unittest.TestCase):
         self.assertEqual(len(person_results), 1)
         self.assertNotIn("helmetStatus", person_results[0])
 
+    def test_frame_processor_keeps_helmet_boxes_for_stream_annotation(self):
+        processor = FrameProcessor(person_detector=_FakePersonDetector(), abnormal_config={"helmetModelPath": ""})
+        processor.abnormal_service.helmet_detector.detect = lambda *_args, **_kwargs: [
+            {
+                "type": "HELMET_DETECTION",
+                "trackId": "t-1",
+                "helmetStatus": "helmet",
+                "helmetConfidence": 0.91,
+                "bbox": {"x1": 20, "y1": 20, "x2": 45, "y2": 45},
+            }
+        ]
+
+        report = processor.process_frame(frame=object(), camera_id=1, frame_id="frame-1", include_faces=False)
+
+        helmet_results = [item for item in report["results"] if item.get("type") == "HELMET_DETECTION"]
+        self.assertEqual(len(helmet_results), 1)
+        self.assertEqual(helmet_results[0]["helmetStatus"], "helmet")
+
 
 if __name__ == "__main__":
     unittest.main()

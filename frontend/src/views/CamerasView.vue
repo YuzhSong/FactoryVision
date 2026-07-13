@@ -1,6 +1,6 @@
 <script setup>
 import { onMounted, reactive, ref } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import SectionHeader from '../components/SectionHeader.vue'
 import StatusTag from '../components/StatusTag.vue'
 import { camerasApi } from '../api/modules'
@@ -26,6 +26,7 @@ const cameraForm = reactive({
   streamUrl: '',
   processedStreamUrl: '',
   enabled: true,
+  includeFaces: false,
 })
 
 const resetCameraForm = () => {
@@ -36,6 +37,7 @@ const resetCameraForm = () => {
     streamUrl: '',
     processedStreamUrl: '',
     enabled: true,
+    includeFaces: false,
   })
 }
 
@@ -54,6 +56,7 @@ const openEditDialog = (row) => {
     streamUrl: row.streamUrl || '',
     processedStreamUrl: row.processedStreamUrl || '',
     enabled: row.enabled !== false,
+    includeFaces: row.includeFaces === true,
   })
   dialogVisible.value = true
 }
@@ -111,6 +114,7 @@ const submitCamera = async () => {
     const payload = {
       name: cameraForm.name,
       streamUrl: cameraForm.streamUrl,
+      includeFaces: cameraForm.includeFaces,
     }
     if (cameraForm.code) {
       payload.code = cameraForm.code
@@ -163,6 +167,29 @@ const toggleCameraStatus = async (row, status) => {
   }
 }
 
+const deleteCamera = async (row) => {
+  try {
+    await ElMessageBox.confirm(`确认删除摄像头 ${row.name || row.code}？关联区域也会被删除。`, '删除摄像头', {
+      type: 'warning',
+      confirmButtonText: '删除',
+      cancelButtonText: '取消',
+    })
+  } catch (error) {
+    return
+  }
+
+  switchingCameraId.value = row.id
+  try {
+    await camerasApi.remove(row.id)
+    ElMessage.success('摄像头已删除')
+    await loadCameras()
+  } catch (error) {
+    ElMessage.error(getApiErrorMessage(error, '摄像头删除失败'))
+  } finally {
+    switchingCameraId.value = null
+  }
+}
+
 onMounted(() => {
   loadCameras()
 })
@@ -197,7 +224,7 @@ onMounted(() => {
             </span>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="190">
+        <el-table-column label="操作" width="230">
           <template #default="{ row }">
             <div class="camera-actions">
               <el-button link type="primary" @click="openEditDialog(row)">编辑</el-button>
@@ -214,6 +241,7 @@ onMounted(() => {
                   </el-dropdown-menu>
                 </template>
               </el-dropdown>
+              <el-button link type="danger" :loading="switchingCameraId === row.id" @click="deleteCamera(row)">删除</el-button>
             </div>
           </template>
         </el-table-column>
@@ -228,6 +256,12 @@ onMounted(() => {
         <el-form-item label="位置"><el-input v-model="cameraForm.location" placeholder="安装位置" /></el-form-item>
         <el-form-item label="原始流地址" required><el-input v-model="cameraForm.streamUrl" placeholder="rtmp://... / rtsp://..." /></el-form-item>
         <el-form-item label="AI处理流地址"><el-input v-model="cameraForm.processedStreamUrl" placeholder="AI 处理后带框流地址，可为空" /></el-form-item>
+        <el-form-item label="实时人脸识别">
+          <el-radio-group v-model="cameraForm.includeFaces">
+            <el-radio-button :value="true">开启</el-radio-button>
+            <el-radio-button :value="false">关闭</el-radio-button>
+          </el-radio-group>
+        </el-form-item>
         <el-form-item v-if="editingCameraId" label="启用状态">
           <el-radio-group v-model="cameraForm.enabled">
             <el-radio-button :value="true">已启用</el-radio-button>

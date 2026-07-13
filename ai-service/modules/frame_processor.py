@@ -1,9 +1,14 @@
 from datetime import datetime, timezone
+from copy import deepcopy
 import math
+import time
 
 from .abnormal_behavior_service import AbnormalBehaviorService
 from .employee_presence_detector import EmployeePresenceDetector
+from .employee_recognition_detector import EmployeeRecognitionDetector
+from .event_classification import enrich_event_classification
 from .stranger_detector import StrangerDetector
+from .identity_cache import FaceIdentityCache
 
 
 class FrameProcessor:
@@ -32,8 +37,18 @@ class FrameProcessor:
             absence_timeout_seconds=abnormal_config.get("employeeAbsenceTimeoutSeconds", 60.0),
             min_similarity=abnormal_config.get("employeePresenceMinSimilarity", 0.0),
         )
+        self.employee_recognition_detector = EmployeeRecognitionDetector(
+            employee_cooldown_seconds=abnormal_config.get("faceRecognizedCooldownSeconds", 60.0),
+            track_ttl_seconds=abnormal_config.get("faceTrackTtlSeconds", 30.0),
+        )
         self.track_histories = {}
         self.history_limit = history_limit
+        self.identity_cache = FaceIdentityCache(
+            ttl_seconds=abnormal_config.get("faceIdentityCacheSeconds", 5.0),
+            unknown_ttl_seconds=abnormal_config.get("faceUnknownCacheSeconds", 1.0),
+            track_ttl_seconds=abnormal_config.get("faceTrackTtlSeconds", 30.0),
+            clock=abnormal_config.get("clock"),
+        )
 
     def process_frame(
         self,
@@ -45,6 +60,11 @@ class FrameProcessor:
         frame_index: int | None = None,
         fps: float | None = None,
         zones: list[dict] | None = None,
+        person_detections: list[dict] | None = None,
+        helmet_detections: list[dict] | None = None,
+        run_person_detection: bool = True,
+        run_helmet_detection: bool = True,
+        run_face_recognition: bool | None = None,
     ):
         """Process one frame into a unified AI report payload."""
         timestamp = timestamp or datetime.now(timezone.utc).astimezone().isoformat()
@@ -53,33 +73,67 @@ class FrameProcessor:
         if zones is not None:
             self.abnormal_service.zone_detector.set_zones(zones)
 
-        person_results = self.person_detector.detect(frame, frame_id=frame_id)
-        helmet_results = self.abnormal_service.helmet_detector.detect(
-            frame,
-            person_detections=person_results,
-            frame_id=frame_id,
-        )
+        timings = {}
+        if run_person_detection:
+            started_at = time.perf_counter()
+            person_results = self.person_detector.detect(frame, frame_id=frame_id)
+            timings["person"] = _elapsed_ms(started_at)
+        else:
+            person_results = deepcopy(person_detections or [])
+
+        if run_helmet_detection:
+            started_at = time.perf_counter()
+            helmet_results = self.abnormal_service.helmet_detector.detect(
+                frame,
+                person_detections=person_results,
+                frame_id=frame_id,
+            )
+            timings["helmet"] = _elapsed_ms(started_at)
+        else:
+            helmet_results = deepcopy(helmet_detections or [])
         self._apply_helmet_results(person_results, helmet_results)
         self._update_track_histories(person_results, timestamp=timestamp, frame_index=frame_index, fps=fps)
 
+        started_at = time.perf_counter()
         report = self.abnormal_service.build_ai_report(
             camera_id=camera_id,
             frame_id=frame_id,
             person_detections=person_results,
             track_histories=self.track_histories,
             timestamp=timestamp,
+            frame_shape=getattr(frame, "shape", None),
         )
+        timings["zoneRules"] = _elapsed_ms(started_at)
 
         face_results = []
-        if include_faces and self.face_service is not None:
+        run_face_recognition = include_faces if run_face_recognition is None else run_face_recognition
+        visible_track_ids = [item.get("trackId") for item in person_results if item.get("trackId") not in (None, "")]
+        self.identity_cache.purge_missing(camera_id, visible_track_ids)
+        if include_faces and run_face_recognition and self.face_service is not None:
+            started_at = time.perf_counter()
             face_results = self.face_service.recognize(
                 frame,
                 person_detections=person_results,
                 frame_id=frame_id,
             )
+            timings["face"] = _elapsed_ms(started_at)
+            for face_result in face_results:
+                self.identity_cache.put(camera_id, face_result)
+        elif include_faces:
+            face_results = self.identity_cache.results_for_tracks(camera_id, visible_track_ids)
+        self.employee_recognition_detector.observe_tracks(camera_id, visible_track_ids, timestamp=timestamp)
+
+        recognition_events = []
+        if include_faces and run_face_recognition and self.face_service is not None:
+            recognition_events = self.employee_recognition_detector.detect(
+                face_results,
+                camera_id=camera_id,
+                frame_id=frame_id,
+                timestamp=timestamp,
+            )
 
         presence_results = []
-        if include_faces and self.face_service is not None:
+        if include_faces and run_face_recognition and self.face_service is not None:
             presence_results = self.employee_presence_detector.detect(
                 face_results,
                 camera_id=camera_id,
@@ -87,19 +141,36 @@ class FrameProcessor:
                 timestamp=timestamp,
             )
 
-        stranger_results = self.stranger_detector.detect(
-            face_results,
-            camera_id=camera_id,
-            frame_id=frame_id,
-            timestamp=timestamp,
-        )
+        stranger_results = []
+        if include_faces and run_face_recognition and self.face_service is not None and self._face_library_ready():
+            stranger_results = self.stranger_detector.detect(
+                face_results,
+                camera_id=camera_id,
+                frame_id=frame_id,
+                timestamp=timestamp,
+            )
 
         non_person_results = [
             result
             for result in report["results"]
             if result.get("type") != "PERSON_DETECTION"
         ]
-        report["results"] = person_results + face_results + stranger_results + presence_results + non_person_results
+        # Keep the separate PPE boxes so the processed stream can render them alongside people.
+        report["results"] = enrich_event_classification(
+            person_results
+            + helmet_results
+            + face_results
+            + recognition_events
+            + stranger_results
+            + presence_results
+            + non_person_results
+        )
+        report["modelTimingsMs"] = timings
+        report["modelRuns"] = {
+            "person": bool(run_person_detection),
+            "helmet": bool(run_helmet_detection),
+            "face": bool(include_faces and run_face_recognition and self.face_service is not None),
+        }
         return report
 
     def reset(self):
@@ -107,6 +178,9 @@ class FrameProcessor:
         self.track_histories = {}
         self.stranger_detector.reset()
         self.employee_presence_detector.reset()
+        self.employee_recognition_detector.reset()
+        self.abnormal_service.zone_detector.reset()
+        self.identity_cache.clear()
         if hasattr(self.person_detector, "reset_tracks"):
             self.person_detector.reset_tracks()
 
@@ -176,6 +250,14 @@ class FrameProcessor:
             detection["helmetStatus"] = helmet.get("helmetStatus")
             detection["helmetConfidence"] = helmet.get("helmetConfidence")
             detection["helmetClassName"] = helmet.get("className")
+
+    def _face_library_ready(self):
+        if self.face_service is None or not hasattr(self.face_service, "status"):
+            return False
+        try:
+            return int((self.face_service.status() or {}).get("loadedFaces") or 0) > 0
+        except (TypeError, ValueError):
+            return False
 
 
 def _bbox_to_list(bbox):
@@ -251,3 +333,7 @@ def _helmet_priority(result):
     severity = 1 if result.get("helmetStatus") == "no_helmet" else 0
     confidence = float(result.get("helmetConfidence") or 0)
     return severity, confidence
+
+
+def _elapsed_ms(started_at):
+    return round((time.perf_counter() - started_at) * 1000, 2)

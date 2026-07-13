@@ -25,6 +25,7 @@ class EmployeeEndpointTests(TestCase):
         self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {token}")
 
     def test_create_employee_returns_new_id(self):
+        self.authenticate()
         response = self.client.post(
             "/api/employees/",
             {
@@ -44,6 +45,7 @@ class EmployeeEndpointTests(TestCase):
 
     def test_create_employee_rejects_duplicate_employee_no(self):
         Employee.objects.create(employee_no="E001", name="张三")
+        self.authenticate()
 
         response = self.client.post(
             "/api/employees/",
@@ -53,6 +55,15 @@ class EmployeeEndpointTests(TestCase):
 
         self.assertEqual(response.status_code, 409)
         self.assertEqual(response.data["code"], 409)
+
+    def test_create_employee_requires_authentication(self):
+        response = self.client.post(
+            "/api/employees/",
+            {"employeeNo": "E001", "name": "张三"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 401)
 
     def test_employee_list_requires_authentication(self):
         response = self.client.get("/api/employees/list/")
@@ -93,3 +104,36 @@ class EmployeeEndpointTests(TestCase):
 
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.data["code"], 400)
+
+    def test_update_employee_persists_fields(self):
+        employee = Employee.objects.create(
+            employee_no="E010",
+            name="Alice",
+            department="Production",
+            position="Operator",
+            phone="10086",
+        )
+        self.authenticate()
+
+        response = self.client.put(
+            f"/api/employees/{employee.id}/",
+            {
+                "employeeNo": "E011",
+                "name": "Alice Updated",
+                "department": "Safety",
+                "position": "Supervisor",
+                "phone": "10010",
+                "status": "inactive",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["code"], 200)
+        employee.refresh_from_db()
+        self.assertEqual(employee.employee_no, "E011")
+        self.assertEqual(employee.name, "Alice Updated")
+        self.assertEqual(employee.department, "Safety")
+        self.assertEqual(employee.position, "Supervisor")
+        self.assertEqual(employee.phone, "10010")
+        self.assertEqual(employee.status, Employee.Status.INACTIVE)
