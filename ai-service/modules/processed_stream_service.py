@@ -60,10 +60,13 @@ class StreamTaskStatus:
     person_inference_ms: float | None = None
     helmet_inference_ms: float | None = None
     face_inference_ms: float | None = None
+    fall_inference_ms: float | None = None
     last_person_frame_id: str | None = None
     last_helmet_frame_id: str | None = None
     last_face_frame_id: str | None = None
     timing_summary_ms: dict | None = None
+    helmet_diagnostics: dict | None = None
+    behavior_diagnostics: dict | None = None
     active_config: dict | None = None
 
 
@@ -167,7 +170,7 @@ class ProcessedStreamService:
         self._helmet_cache_frame = None
         self._timing_samples = {
             name: deque(maxlen=300)
-            for name in ("person", "helmet", "face", "zoneRules", "draw", "stream_write", "encode", "overall")
+            for name in ("person", "helmet", "face", "fall", "zoneRules", "draw", "stream_write", "encode", "overall")
         }
         self._frame_age_samples = deque(maxlen=120)
         self._schedule_frames = {name: deque(maxlen=20) for name in ("person", "helmet", "face")}
@@ -558,6 +561,8 @@ class ProcessedStreamService:
             "STRANGER_DETECTED",
             "STRANGER_ALERT",
             "FACE_RECOGNIZED",
+            "FALL_ALERT",
+            "FALL_DETECTED",
         }
         payload = dict(report)
         source_results = report.get("results") or []
@@ -672,7 +677,7 @@ class ProcessedStreamService:
         frame = normalize_camera_frame(packet.frame)
         normalized_shape = list(frame.shape[:2])
         if self.input_width and self.input_height:
-            frame = _resize_landscape_frame(frame, self.input_width, self.input_height, cv2)
+            frame = _resize_frame_preserving_orientation(frame, self.input_width, self.input_height, cv2)
         packet.frame = frame
         output_height, output_width = frame.shape[:2]
         with self._lock:
@@ -757,7 +762,12 @@ class ProcessedStreamService:
     def _record_model_metrics(self, report, frame_id):
         timings = report.get("modelTimingsMs") or {}
         model_runs = report.get("modelRuns") or {}
+        diagnostics = report.get("diagnostics") or {}
         with self._lock:
+            if diagnostics.get("helmet"):
+                self._status.helmet_diagnostics = diagnostics.get("helmet")
+            if diagnostics.get("behavior"):
+                self._status.behavior_diagnostics = diagnostics.get("behavior")
             if model_runs.get("person"):
                 self._status.person_inference_ms = timings.get("person")
                 self._status.last_person_frame_id = frame_id
@@ -770,7 +780,9 @@ class ProcessedStreamService:
                 self._status.face_inference_ms = timings.get("face")
                 self._status.last_face_frame_id = frame_id
                 self._schedule_frames["face"].append(self._status.processed_frames)
-        for name in ("person", "helmet", "face", "zoneRules"):
+            if model_runs.get("fall"):
+                self._status.fall_inference_ms = timings.get("fall")
+        for name in ("person", "helmet", "face", "fall", "zoneRules"):
             if name in timings:
                 self._record_timing(name, timings[name])
 
@@ -824,10 +836,15 @@ def normalize_camera_frame(frame):
     return cv2.rotate(frame, cv2.ROTATE_90_COUNTERCLOCKWISE)
 
 
-def _resize_landscape_frame(frame, target_width: int, target_height: int, cv2_module):
+def _resize_frame_preserving_orientation(frame, target_width: int, target_height: int, cv2_module):
     source_height, source_width = frame.shape[:2]
     if source_width <= 0 or source_height <= 0:
         return frame
+
+    source_is_portrait = source_height > source_width
+    target_is_portrait = target_height > target_width
+    if source_is_portrait != target_is_portrait:
+        target_width, target_height = target_height, target_width
 
     scale = min(target_width / source_width, target_height / source_height)
     if scale <= 0:

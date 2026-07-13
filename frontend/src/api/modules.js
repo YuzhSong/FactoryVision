@@ -1,8 +1,23 @@
 import http from './http'
 import axios from 'axios'
 
+function resolveAiServiceBaseUrl() {
+  const configuredUrl = import.meta.env.VITE_AI_SERVICE_BASE_URL
+  if (configuredUrl) {
+    return configuredUrl
+  }
+  if (typeof window === 'undefined') {
+    return '/ai-service'
+  }
+  const localHosts = new Set(['127.0.0.1', 'localhost'])
+  if (localHosts.has(window.location.hostname)) {
+    return '/ai-service'
+  }
+  return 'http://127.0.0.1:9000'
+}
+
 const aiServiceHttp = axios.create({
-  baseURL: import.meta.env.VITE_AI_SERVICE_BASE_URL || '/ai-service',
+  baseURL: resolveAiServiceBaseUrl(),
   timeout: 60000,
 })
 

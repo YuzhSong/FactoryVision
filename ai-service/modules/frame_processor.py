@@ -26,6 +26,7 @@ class FrameProcessor:
         self.person_detector = person_detector
         self.face_service = face_service
         abnormal_config = abnormal_config or {}
+        self.abnormal_config = abnormal_config
         self.abnormal_service = AbnormalBehaviorService(zones=zones or [], config=abnormal_config)
         self.stranger_detector = StrangerDetector(
             confirm_frames=abnormal_config.get("strangerConfirmFrames", 3),
@@ -92,7 +93,16 @@ class FrameProcessor:
         else:
             helmet_results = deepcopy(helmet_detections or [])
         self._apply_helmet_results(person_results, helmet_results)
-        self._update_track_histories(person_results, timestamp=timestamp, frame_index=frame_index, fps=fps)
+        # Cached boxes are for drawing/rule continuity only. Treating them as fresh
+        # observations made one detector result look like five temporal fall samples.
+        if run_person_detection:
+            self._update_track_histories(
+                person_results,
+                timestamp=timestamp,
+                frame_index=frame_index,
+                fps=fps,
+                frame_shape=getattr(frame, "shape", None),
+            )
 
         started_at = time.perf_counter()
         report = self.abnormal_service.build_ai_report(
@@ -103,7 +113,18 @@ class FrameProcessor:
             timestamp=timestamp,
             frame_shape=getattr(frame, "shape", None),
         )
-        timings["zoneRules"] = _elapsed_ms(started_at)
+        behavior_ms = _elapsed_ms(started_at)
+        behavior_timings = (
+            getattr(self.abnormal_service, "last_diagnostics", {}).get("timingsMs", {})
+            if getattr(self.abnormal_service, "last_diagnostics", None)
+            else {}
+        )
+        timings["zoneRules"] = behavior_timings.get("zoneRules", behavior_ms)
+        timings["fall"] = behavior_timings.get("fall", 0.0)
+        report["diagnostics"] = {
+            "helmet": dict(getattr(self.abnormal_service.helmet_detector, "last_diagnostics", {}) or {}),
+            "behavior": dict(getattr(self.abnormal_service, "last_diagnostics", {}) or {}),
+        }
 
         face_results = []
         run_face_recognition = include_faces if run_face_recognition is None else run_face_recognition
@@ -170,6 +191,7 @@ class FrameProcessor:
             "person": bool(run_person_detection),
             "helmet": bool(run_helmet_detection),
             "face": bool(include_faces and run_face_recognition and self.face_service is not None),
+            "fall": True,
         }
         return report
 
@@ -184,7 +206,14 @@ class FrameProcessor:
         if hasattr(self.person_detector, "reset_tracks"):
             self.person_detector.reset_tracks()
 
-    def _update_track_histories(self, person_results, timestamp: str, frame_index: int | None, fps: float | None):
+    def _update_track_histories(
+        self,
+        person_results,
+        timestamp: str,
+        frame_index: int | None,
+        fps: float | None,
+        frame_shape=None,
+    ):
         """Append lightweight per-track history for behavior rules."""
         for detection in person_results:
             track_id = detection.get("trackId")
@@ -207,6 +236,8 @@ class FrameProcessor:
                 entry["frameIndex"] = frame_index
             if fps is not None:
                 entry["fps"] = fps
+            if frame_shape is not None:
+                entry["frameShape"] = list(frame_shape[:2])
             if speed is not None:
                 entry["speed"] = round(speed, 2)
 

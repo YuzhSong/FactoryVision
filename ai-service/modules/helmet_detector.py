@@ -1,4 +1,6 @@
 from pathlib import Path
+import logging
+import time
 
 from .person_detector import (
     _configure_cuda_runtime,
@@ -13,6 +15,7 @@ HELMET_KEYWORDS = ("hardhat", "helmet")
 NO_HELMET_KEYWORDS = ("no-hardhat", "no_hardhat", "no hardhat", "no-helmet", "no_helmet", "no helmet")
 OPEN_SOURCE_PROVIDER = "opensource"
 SELF_TRAINED_PROVIDER = "self_trained"
+logger = logging.getLogger("uvicorn.error")
 
 
 class HelmetDetector:
@@ -30,6 +33,7 @@ class HelmetDetector:
         half_precision: str | bool = "auto",
         cudnn_benchmark: bool = True,
         match_upper_ratio: float = 0.65,
+        max_det: int = 300,
         class_ids: tuple[int, ...] = (1, 2),
         helmet_class_id: int = 1,
         no_helmet_class_id: int = 2,
@@ -44,6 +48,7 @@ class HelmetDetector:
         self.half_precision = half_precision
         self.cudnn_benchmark = cudnn_benchmark
         self.match_upper_ratio = float(match_upper_ratio)
+        self.max_det = max(1, int(max_det or 300))
         self.class_ids = tuple(int(value) for value in class_ids or ())
         self.helmet_class_id = int(helmet_class_id)
         self.no_helmet_class_id = int(no_helmet_class_id)
@@ -51,6 +56,8 @@ class HelmetDetector:
         self.class_names = {}
         self.helmet_class_ids = set()
         self.no_helmet_class_ids = set()
+        self.last_diagnostics = {}
+        self._last_diagnostic_log_at = 0.0
 
     def load_model(self):
         """Lazy-load configured helmet model and cache resolved class IDs."""
@@ -78,6 +85,14 @@ class HelmetDetector:
         self.model = YOLO(_resolve_model_path(str(model_path)))
         self.class_names = dict(getattr(self.model, "names", {}) or {})
         self._refresh_class_id_cache()
+        logger.info(
+            "helmet detector loaded path=%s provider=%s device=%s classes=%s target_classes=%s",
+            model_path,
+            self.provider,
+            self.device,
+            self.class_names,
+            self._target_classes(),
+        )
         return self.model
 
     def detect(self, frame, person_detections=None, camera_id=None, timestamp=None, frame_id: str | None = None):
@@ -88,27 +103,68 @@ class HelmetDetector:
             return []
 
         model = self.load_model()
+        frame_shape = list(getattr(frame, "shape", [])[:2]) if getattr(frame, "shape", None) is not None else None
+        target_classes = self._target_classes()
+        diagnostics = {
+            "inputShape": frame_shape,
+            "imgsz": self.image_size,
+            "confidenceThreshold": self.detection_confidence_threshold,
+            "warningThreshold": self.confidence_threshold,
+            "iouThreshold": self.iou_threshold,
+            "maxDet": self.max_det,
+            "targetClasses": target_classes,
+            # Ultralytics high-level predict returns post-NMS boxes; raw pre-NMS candidates
+            # are not exposed through this stable API, so keep this explicit instead of guessing.
+            "rawCandidateCount": None,
+            "rawCandidateSource": "not_exposed_by_ultralytics_predict",
+            "nmsBoxCount": 0,
+            "classCounts": {},
+            "helmetCount": 0,
+            "noHelmetCount": 0,
+            "filteredCount": 0,
+            "personCount": len(person_detections or []),
+            "matchedCount": 0,
+            "unmatchedHelmetCount": 0,
+            "finalDrawCount": 0,
+            "violationEventCandidateCount": 0,
+            "modelLoaded": True,
+            "modelPath": str(self.model_path),
+            "provider": self.provider,
+            "device": self.device,
+            "sampleDetections": [],
+            "rejectionReasons": {},
+        }
         predictions = model.predict(
             source=frame,
             conf=self.detection_confidence_threshold,
             iou=self.iou_threshold,
-            classes=self._target_classes(),
+            classes=target_classes,
             device=self.device,
             imgsz=self.image_size,
+            max_det=self.max_det,
             half=_resolve_half_precision(self.half_precision, self.device),
             verbose=False,
         )
 
         detections = []
         if not predictions:
+            self.last_diagnostics = diagnostics
+            self._log_diagnostics(frame_id, diagnostics)
             return detections
 
         for box in predictions[0].boxes:
+            diagnostics["nmsBoxCount"] += 1
             class_id = int(box.cls[0].item())
             class_name = str(self.class_names.get(class_id, class_id))
+            diagnostics["classCounts"][str(class_name)] = diagnostics["classCounts"].get(str(class_name), 0) + 1
             helmet_status = self._resolve_status(class_id, class_name)
             if helmet_status is None:
+                diagnostics["rejectionReasons"]["unmapped_class"] = diagnostics["rejectionReasons"].get("unmapped_class", 0) + 1
                 continue
+            if helmet_status == "helmet":
+                diagnostics["helmetCount"] += 1
+            elif helmet_status == "no_helmet":
+                diagnostics["noHelmetCount"] += 1
 
             x1, y1, x2, y2 = [float(value) for value in box.xyxy[0].tolist()]
             detection = {
@@ -127,11 +183,69 @@ class HelmetDetector:
             if frame_id is not None:
                 detection["frameId"] = frame_id
             detections.append(detection)
+            if len(diagnostics["sampleDetections"]) < 5:
+                diagnostics["sampleDetections"].append(
+                    {
+                        "classId": class_id,
+                        "className": class_name,
+                        "status": helmet_status,
+                        "confidence": detection["helmetConfidence"],
+                    }
+                )
 
+        diagnostics["filteredCount"] = len(detections)
+        if diagnostics["nmsBoxCount"] == 0:
+            diagnostics["rejectionReasons"]["model_returned_no_boxes"] = 1
         if not person_detections:
+            diagnostics["unmatchedHelmetCount"] = len(detections)
+            diagnostics["finalDrawCount"] = len(detections)
+            diagnostics["violationEventCandidateCount"] = sum(
+                1
+                for item in detections
+                if item.get("helmetStatus") == "no_helmet"
+                and float(item.get("helmetConfidence") or 0) >= self.confidence_threshold
+            )
+            self.last_diagnostics = diagnostics
+            self._log_diagnostics(frame_id, diagnostics)
             return detections
 
-        return self._match_to_people(detections, person_detections, frame_id=frame_id)
+        matched = self._match_to_people(detections, person_detections, frame_id=frame_id)
+        diagnostics["matchedCount"] = sum(1 for item in matched if item.get("trackId"))
+        diagnostics["unmatchedHelmetCount"] = sum(1 for item in matched if not item.get("trackId"))
+        diagnostics["finalDrawCount"] = len(matched)
+        diagnostics["violationEventCandidateCount"] = sum(
+            1
+            for item in matched
+            if item.get("trackId")
+            and item.get("helmetStatus") == "no_helmet"
+            and float(item.get("helmetConfidence") or 0) >= self.confidence_threshold
+        )
+        self.last_diagnostics = diagnostics
+        if diagnostics["unmatchedHelmetCount"]:
+            diagnostics["rejectionReasons"]["person_association_failed"] = diagnostics["unmatchedHelmetCount"]
+        self._log_diagnostics(frame_id, diagnostics)
+        return matched
+
+    def _log_diagnostics(self, frame_id, diagnostics):
+        now = time.monotonic()
+        if now - self._last_diagnostic_log_at < 10.0:
+            return
+        self._last_diagnostic_log_at = now
+        logger.info(
+            "helmet inference frame=%s input=%s raw=%s nms=%s filtered=%s classes=%s "
+            "persons=%s matched=%s unmatched=%s event_candidates=%s rejected=%s",
+            frame_id,
+            diagnostics.get("inputShape"),
+            diagnostics.get("rawCandidateCount"),
+            diagnostics.get("nmsBoxCount"),
+            diagnostics.get("filteredCount"),
+            diagnostics.get("sampleDetections"),
+            diagnostics.get("personCount"),
+            diagnostics.get("matchedCount"),
+            diagnostics.get("unmatchedHelmetCount"),
+            diagnostics.get("violationEventCandidateCount"),
+            diagnostics.get("rejectionReasons"),
+        )
 
     def annotate_person_detections(self, person_detections, helmet_detections):
         """Copy matched helmet status fields onto person detection results."""

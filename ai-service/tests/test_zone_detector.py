@@ -30,14 +30,14 @@ def _person_box(track_id="t-1", x1=40, y1=30, x2=80, y2=130):
 
 class ZoneDetectorTests(unittest.TestCase):
     def test_point_inside_outside_and_boundary(self):
-        detector = ZoneDetector([_zone()], min_stay_seconds=99)
+        detector = ZoneDetector([_zone()], min_stay_seconds=99, enter_confirm_seconds=0)
         self.assertEqual(len(detector.detect_events(1, [_person(x=50, y=50)], "2026-07-11T10:00:00+08:00")), 1)
         self.assertEqual(detector.detect_events(1, [_person(x=150, y=50)], "2026-07-11T10:00:01+08:00"), [])
-        boundary_detector = ZoneDetector([_zone()], min_stay_seconds=99)
+        boundary_detector = ZoneDetector([_zone()], min_stay_seconds=99, enter_confirm_seconds=0)
         self.assertEqual(len(boundary_detector.detect_events(1, [_person(x=0, y=50)], "2026-07-11T10:00:02+08:00")), 1)
 
     def test_dwell_event_is_emitted_once_per_continuous_stay(self):
-        detector = ZoneDetector([_zone(type="general")], min_stay_seconds=10)
+        detector = ZoneDetector([_zone(type="general")], min_stay_seconds=10, enter_confirm_seconds=0)
         self.assertEqual(detector.detect_events(1, [_person()], "2026-07-11T10:00:00+08:00"), [])
         dwell = detector.detect_events(1, [_person()], "2026-07-11T10:00:10+08:00")
         self.assertEqual(dwell[0]["eventType"], "region_dwell")
@@ -45,11 +45,11 @@ class ZoneDetectorTests(unittest.TestCase):
         self.assertEqual(detector.detect_events(1, [_person()], "2026-07-11T10:00:11+08:00"), [])
 
     def test_leave_ttl_and_reentry_reset_the_state(self):
-        detector = ZoneDetector([_zone(type="general")], min_stay_seconds=5, state_ttl_seconds=3)
+        detector = ZoneDetector([_zone(type="general")], min_stay_seconds=5, state_ttl_seconds=3, enter_confirm_seconds=0)
         detector.detect_events(1, [_person()], "2026-07-11T10:00:00+08:00")
         detector.detect_events(1, [_person(x=150, y=50)], "2026-07-11T10:00:01+08:00")
         self.assertEqual(detector.state_count(), 1)
-        detector.detect_events(1, [], "2026-07-11T10:00:04+08:00")
+        detector.detect_events(1, [], "2026-07-11T10:00:04.100000+08:00")
         self.assertEqual(detector.state_count(), 0)
         detector.detect_events(1, [_person()], "2026-07-11T10:00:05+08:00")
         detector.detect_events(1, [_person()], "2026-07-11T10:00:08+08:00")
@@ -57,7 +57,7 @@ class ZoneDetectorTests(unittest.TestCase):
         self.assertEqual(dwell[0]["eventType"], "region_dwell")
 
     def test_camera_region_and_track_states_are_isolated(self):
-        detector = ZoneDetector([_zone(type="general")], min_stay_seconds=5)
+        detector = ZoneDetector([_zone(type="general")], min_stay_seconds=5, enter_confirm_seconds=0)
         detector.detect_events(1, [_person("t-1")], "2026-07-11T10:00:00+08:00")
         detector.detect_events(2, [_person("t-1")], "2026-07-11T10:00:01+08:00")
         detector.detect_events(1, [_person("t-2")], "2026-07-11T10:00:01+08:00")
@@ -68,20 +68,33 @@ class ZoneDetectorTests(unittest.TestCase):
         self.assertEqual(dwell[0]["trackId"], "t-1")
 
     def test_normalized_backend_zone_points_use_frame_dimensions(self):
-        detector = ZoneDetector([_zone(points=[{"x": 0.4, "y": 0.4}, {"x": 0.6, "y": 0.4}, {"x": 0.6, "y": 0.8}, {"x": 0.4, "y": 0.8}])], min_stay_seconds=99)
+        detector = ZoneDetector([_zone(points=[{"x": 0.4, "y": 0.4}, {"x": 0.6, "y": 0.4}, {"x": 0.6, "y": 0.8}, {"x": 0.4, "y": 0.8}])], min_stay_seconds=99, enter_confirm_seconds=0)
         events = detector.detect_events(1, [_person(x=50, y=70)], "2026-07-11T10:00:00+08:00", frame_shape=(100, 100, 3))
         self.assertEqual(events[0]["eventType"], "region_intrusion")
 
     def test_legacy_percentage_zone_points_use_frame_dimensions(self):
-        detector = ZoneDetector([_zone(points=[{"x": 40, "y": 40}, {"x": 60, "y": 40}, {"x": 60, "y": 80}, {"x": 40, "y": 80}])], min_stay_seconds=99)
+        detector = ZoneDetector([_zone(points=[{"x": 40, "y": 40}, {"x": 60, "y": 40}, {"x": 60, "y": 80}, {"x": 40, "y": 80}])], min_stay_seconds=99, enter_confirm_seconds=0)
         events = detector.detect_events(1, [_person(x=50, y=70)], "2026-07-11T10:00:00+08:00", frame_shape=(100, 100, 3))
         self.assertEqual(events[0]["eventType"], "region_intrusion")
 
-    def test_bbox_body_point_inside_region_triggers_when_foot_is_outside(self):
-        detector = ZoneDetector([_zone(points=[{"x": 50, "y": 40}, {"x": 70, "y": 40}, {"x": 70, "y": 80}, {"x": 50, "y": 80}])], min_stay_seconds=99)
+    def test_ground_region_uses_foot_anchor_not_body_center(self):
+        detector = ZoneDetector([_zone(points=[{"x": 50, "y": 40}, {"x": 70, "y": 40}, {"x": 70, "y": 80}, {"x": 50, "y": 80}])], min_stay_seconds=99, enter_confirm_seconds=0)
         events = detector.detect_events(1, [_person_box()], "2026-07-11T10:00:00+08:00", frame_shape=(100, 100, 3))
-        self.assertEqual(events[0]["eventType"], "region_intrusion")
-        self.assertLessEqual(events[0]["footPoint"]["y"], 80)
+        self.assertEqual(events, [])
+        self.assertEqual(detector.last_diagnostics["observations"][0]["anchorMode"], "bbox_bottom_center")
+        self.assertFalse(detector.last_diagnostics["observations"][0]["inside"])
+
+    def test_exit_confirmation_allows_reentry_to_emit_again(self):
+        detector = ZoneDetector([_zone()], enter_confirm_seconds=0.2, exit_confirm_seconds=0.5)
+        self.assertEqual(detector.detect_events(1, [_person()], "2026-07-11T10:00:00+08:00"), [])
+        first = detector.detect_events(1, [_person()], "2026-07-11T10:00:00.300000+08:00")
+        self.assertEqual([item["eventType"] for item in first], ["region_intrusion"])
+        detector.detect_events(1, [_person(x=150)], "2026-07-11T10:00:01+08:00")
+        detector.detect_events(1, [_person(x=150)], "2026-07-11T10:00:01.600000+08:00")
+        self.assertEqual(detector.state_count(), 0)
+        detector.detect_events(1, [_person()], "2026-07-11T10:00:02+08:00")
+        second = detector.detect_events(1, [_person()], "2026-07-11T10:00:02.300000+08:00")
+        self.assertEqual([item["eventType"] for item in second], ["region_intrusion"])
 
     def test_disabled_region_does_not_create_or_retain_state(self):
         detector = ZoneDetector([_zone(enabled=False)])
