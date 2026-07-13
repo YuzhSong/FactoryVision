@@ -39,6 +39,13 @@ const systemStatus = computed(() => [
 
 const currentCamera = computed(() => cameras.value.find((camera) => String(camera.id) === String(activeCamera.value)) || cameras.value[0] || null)
 const detectedPlayUrl = computed(() => currentCamera.value?.processedStreamUrl || currentCamera.value?.playUrl || '')
+const detectedRtcUrl = computed(() => {
+  const camera = currentCamera.value
+  return toRtcUrl(camera?.streamConfig?.playUrl)
+    || toRtcUrl(camera?.processedStreamUrl)
+    || toRtcUrl(camera?.streamConfig?.outputUrl)
+    || toRtcUrl(deriveOutputUrl(camera))
+})
 const monitorStats = computed(() => {
   const highRiskTypes = new Set(['high', 'medium'])
   const highRiskCount = realtimeEvents.value.filter((event) => highRiskTypes.has(event.level)).length
@@ -51,7 +58,7 @@ const monitorStats = computed(() => {
   ]
 })
 const detectedFlvUrl = computed(() => {
-  const url = detectedPlayUrl.value
+  const url = detectedPlayUrl.value || detectedRtcUrl.value
   if (!url || !url.startsWith('webrtc://')) {
     return url
   }
@@ -60,6 +67,24 @@ const detectedFlvUrl = computed(() => {
     .replace('webrtc://', 'https://')
     .replace(/\/([^/?]+)(\?.*)?$/, '/$1.flv')
 })
+
+function toRtcUrl(url) {
+  const value = `${url || ''}`.trim()
+  if (!value) return ''
+  if (value.startsWith('webrtc://')) return value
+
+  const flvMatch = value.match(/^https?:\/\/([^/:]+)(?::\d+)?\/(.+)\.flv(?:[?#].*)?$/)
+  if (flvMatch) {
+    return `webrtc://${flvMatch[1]}:8443/${flvMatch[2]}`
+  }
+
+  const rtmpMatch = value.match(/^rtmps?:\/\/[^/]+\/(.+)$/)
+  if (rtmpMatch) {
+    return `webrtc://webrtc.rainycode.cn:8443/${rtmpMatch[1]}`
+  }
+
+  return ''
+}
 const streamHudMetrics = computed(() => {
   const status = streamStatus.value || {}
   const dropped = Number.isFinite(Number(status.dropped_frames)) ? Number(status.dropped_frames) : 0
@@ -228,7 +253,7 @@ function stopStreamStatusPolling() {
 async function startPlayback(options = {}) {
   const { ensureStream = false } = options
   stopPlayback()
-  if (!detectedPlayUrl.value) {
+  if (!detectedPlayUrl.value && !detectedRtcUrl.value) {
     playbackStatus.value = 'idle'
     playbackMessage.value = '当前摄像头未配置可播放地址'
     return
@@ -240,6 +265,14 @@ async function startPlayback(options = {}) {
     if (ensureStream) {
       await ensureProcessedStream()
       await refreshStreamStatus()
+    }
+    if (detectedRtcUrl.value) {
+      try {
+        await startRtcPlayback()
+        return
+      } catch (rtcError) {
+        playbackMessage.value = `WebRTC 连接失败，切换 HTTP-FLV：${rtcError.message}`
+      }
     }
     await startFlvPlayback()
   } catch (error) {
@@ -256,7 +289,7 @@ async function startRtcPlayback() {
       videoRef.value.srcObject = player.stream
       videoRef.value.muted = true
     }
-    const playUrl = normalizeSrsWebRtcUrl(detectedPlayUrl.value)
+    const playUrl = normalizeSrsWebRtcUrl(detectedRtcUrl.value)
     await player.play(playUrl)
     playbackStatus.value = 'connected'
     playbackMessage.value = `正在播放 ${playUrl}`
