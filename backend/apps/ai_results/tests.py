@@ -180,6 +180,45 @@ class AIResultsReportTests(TestCase):
         self.assertEqual(alert.level, "high")
         self.assertEqual(alert.status, Alert.Status.PENDING)
 
+    def test_region_intrusion_alert_uses_region_name_without_track_id(self):
+        from unittest.mock import patch
+
+        with patch("apps.ai_results.views.async_to_sync") as sync_mock:
+            sync_mock.return_value.return_value = None
+            response = self.client.post(
+                "/api/ai-results/report/",
+                {
+                    "cameraId": self.camera.code,
+                    "frameId": "region-frame",
+                    "timestamp": "2026-07-07T10:02:00+08:00",
+                    "results": [
+                        {
+                            "type": "ZONE_WARNING",
+                            "eventType": "region_intrusion",
+                            "trackId": "t-49",
+                            "regionId": 13,
+                            "zoneName": "一号车间入口禁区",
+                            "confidence": 0.869,
+                        }
+                    ],
+                },
+                format="json",
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["data"]["acceptedResults"], 1)
+        event = Event.objects.get()
+        alert = Alert.objects.get()
+        self.assertEqual(event.event_type, "region_intrusion")
+        self.assertEqual(alert.description, "区域：一号车间入口禁区")
+        self.assertNotIn("trackId", alert.description)
+        pushed_payload = sync_mock.return_value.call_args.args[1]["data"]["payload"]
+        self.assertEqual(pushed_payload["eventType"], "region_intrusion")
+        self.assertEqual(pushed_payload["zoneName"], "一号车间入口禁区")
+        self.assertEqual(pushed_payload["regionName"], "一号车间入口禁区")
+        self.assertEqual(pushed_payload["regionId"], 13)
+        self.assertEqual(pushed_payload["description"], "区域：一号车间入口禁区")
+
     def test_report_endpoint_rejects_invalid_payload(self):
         response = self.client.post(
             "/api/ai-results/report/",

@@ -242,6 +242,9 @@ def report_ai_results(request):
                                     "name": result.get("name") or result.get("employeeName"),
                                     "employeeName": result.get("employeeName") or result.get("name"),
                                     "employeeId": result.get("employeeId"),
+                                    "zoneName": result.get("zoneName") or result.get("regionName"),
+                                    "regionName": result.get("regionName") or result.get("zoneName"),
+                                    "regionId": result.get("regionId") or result.get("zoneId"),
                                     "description": event_description,
                                     "occurredAt": str(event.occurred_at),
                                 },
@@ -658,7 +661,8 @@ def _alert_title(result_type):
 
 
 def _alert_description(result):
-    if _normalize_event_type(result) == "face_recognized":
+    result_type = _normalize_event_type(result)
+    if result_type == "face_recognized":
         name = result.get("name") or result.get("employeeName") or "Unknown"
         confidence = _extract_confidence(result)
         if confidence is None:
@@ -666,6 +670,14 @@ def _alert_description(result):
         if confidence <= 1.0:
             return f"{name} 置信度 {confidence * 100:.1f}%"
         return f"{name} 置信度 {confidence:.1f}%"
+
+    if result_type in {"region_intrusion", "region_dwell"}:
+        zone_name = result.get("zoneName") or result.get("regionName")
+        if zone_name:
+            return f"区域：{zone_name}"
+        region_id = result.get("regionId") or result.get("zoneId")
+        if region_id not in (None, ""):
+            return f"区域ID：{region_id}"
 
     track_id = result.get("trackId")
     zone_name = result.get("zoneName")
@@ -733,7 +745,7 @@ def _notify_dingtalk_alert(alert: Alert) -> None:
             alert_title=_alert_type_display(alert),
             level=_ALERT_LEVEL_DISPLAY.get(alert.level, alert.level),
             content=alert.description or alert.title,
-            occurred_at=alert.occurred_at.isoformat() if alert.occurred_at else None,
+            occurred_at=_format_alert_time(alert.occurred_at),
             camera_name=alert.camera.name if alert.camera else None,
             location=alert.camera.location if alert.camera else None,
             responsible_name=settings.DINGTALK_RESPONSIBLE_NAME or None,
@@ -765,7 +777,7 @@ def _escalate_alert(alert_id: int) -> None:
             alert_title=f"[告警升级] {_alert_type_display(alert)}",
             level=_ALERT_LEVEL_DISPLAY.get(alert.level, alert.level),
             content=alert.description or alert.title,
-            occurred_at=alert.occurred_at.isoformat() if alert.occurred_at else None,
+            occurred_at=_format_alert_time(alert.occurred_at),
             camera_name=alert.camera.name if alert.camera else None,
             location=alert.camera.location if alert.camera else None,
             responsible_name=settings.DINGTALK_LEADER_NAME or None,
@@ -775,5 +787,11 @@ def _escalate_alert(alert_id: int) -> None:
         logger.exception("DingTalk escalation failed alert_id=%s", alert_id)
     except Exception:
         logger.exception("Unexpected DingTalk escalation error alert_id=%s", alert_id)
+
+
+def _format_alert_time(value) -> str | None:
+    if value is None:
+        return None
+    return timezone.localtime(value).strftime("%Y-%m-%d %H:%M:%S")
 
 # Create your views here.

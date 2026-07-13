@@ -210,6 +210,28 @@ class NotifyAlertByTypeTests(TestCase):
                 kwargs = send_alert.call_args.kwargs
                 self.assertEqual(kwargs["alert_title"], chinese)
 
+    def test_alert_time_is_formatted_to_seconds(self):
+        alert = self._make_alert("region_intrusion")
+        alert.occurred_at = timezone.datetime(
+            2026,
+            7,
+            13,
+            19,
+            35,
+            50,
+            366943,
+            tzinfo=timezone.get_current_timezone(),
+        )
+        alert.save(update_fields=["occurred_at"])
+
+        with mock.patch.object(views.DingTalkNotifier, "send_alert") as send_alert:
+            views._notify_dingtalk_alert(alert)
+
+        occurred_at = send_alert.call_args.kwargs["occurred_at"]
+        self.assertEqual(occurred_at, "2026-07-13 19:35:50")
+        self.assertNotIn("T", occurred_at)
+        self.assertNotIn("+", occurred_at)
+
     def test_message_text_contains_chinese_type(self):
         """端到端到 payload：中文类型名真正出现在钉钉 markdown 文本里。"""
         for event_type, chinese in ALERT_TYPES.items():

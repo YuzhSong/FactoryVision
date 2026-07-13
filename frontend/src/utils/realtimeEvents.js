@@ -38,14 +38,29 @@ export function prependRealtimeEvent(events, message, limit = 30) {
 }
 
 function formatEventText(eventType, payload = {}, message = {}) {
-  const description = payload.description || message.description
-  if (description) return description
-
   if (eventType === 'face_recognized') {
     const name = payload.name || payload.employeeName || message.name || message.employeeName || 'Unknown'
     const confidence = formatConfidence(payload.confidence ?? payload.similarity ?? message.confidence ?? message.similarity)
     return confidence ? `${name} 置信度 ${confidence}` : name
   }
+
+  if (eventType === 'region_intrusion' || eventType === 'region_dwell') {
+    const label = eventType === 'region_dwell' ? '区域滞留' : '区域闯入'
+    const zoneName =
+      payload.zoneName ||
+      payload.regionName ||
+      payload.zone ||
+      message.zoneName ||
+      message.regionName ||
+      payload.regionId ||
+      payload.zoneId ||
+      '未知区域'
+    const confidence = formatConfidence(payload.confidence ?? message.confidence)
+    return `${label}：${zoneName}${confidence ? ` / ${confidence}` : ''}`
+  }
+
+  const description = payload.description || message.description
+  if (description) return description
 
   const trackId = payload.trackId ? ` trackId ${payload.trackId}` : ''
   const confidence = formatConfidence(payload.confidence ?? message.confidence)
