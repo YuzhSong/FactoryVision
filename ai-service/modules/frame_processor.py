@@ -11,6 +11,18 @@ from .stranger_detector import StrangerDetector
 from .identity_cache import FaceIdentityCache
 
 
+REPLAY_EVENT_TYPES = {
+    "HELMET_WARNING",
+    "ZONE_WARNING",
+    "RUNNING_ALERT",
+    "STRANGER_DETECTED",
+    "STRANGER_ALERT",
+    "FACE_RECOGNIZED",
+    "FALL_ALERT",
+    "FALL_DETECTED",
+}
+
+
 class FrameProcessor:
     """Coordinate person detection, face recognition, and behavior report building."""
 
@@ -186,6 +198,7 @@ class FrameProcessor:
             + presence_results
             + non_person_results
         )
+        self._attach_replay_evidence(report["results"])
         report["modelTimingsMs"] = timings
         report["modelRuns"] = {
             "person": bool(run_person_detection),
@@ -282,6 +295,22 @@ class FrameProcessor:
             detection["helmetConfidence"] = helmet.get("helmetConfidence")
             detection["helmetClassName"] = helmet.get("className")
 
+    def _attach_replay_evidence(self, results):
+        """Attach bounded trajectory metadata to actionable results without storing frames."""
+        for result in results or []:
+            if not _is_replay_event(result):
+                continue
+            track_id = result.get("trackId")
+            if track_id in (None, ""):
+                continue
+            history = self.track_histories.get(track_id) or self.track_histories.get(str(track_id)) or []
+            trajectory = [_replay_point(entry) for entry in history[-self.history_limit:]]
+            trajectory = [point for point in trajectory if point.get("center") or point.get("bbox")]
+            if not trajectory:
+                continue
+            result.setdefault("trajectory", trajectory)
+            result.setdefault("triggerPoint", trajectory[-1].get("center"))
+
     def _face_library_ready(self):
         if self.face_service is None or not hasattr(self.face_service, "status"):
             return False
@@ -320,6 +349,23 @@ def _extract_keypoints(detection):
     if isinstance(keypoints, list):
         return keypoints
     return None
+
+
+def _is_replay_event(result):
+    event_type = result.get("type") or result.get("eventType")
+    return event_type in REPLAY_EVENT_TYPES
+
+
+def _replay_point(entry):
+    point = {
+        "timestamp": entry.get("timestamp"),
+        "center": list(entry.get("center") or []),
+        "bbox": list(entry.get("bbox") or []),
+    }
+    for key in ("speed", "frameIndex", "keypoints"):
+        if key in entry:
+            point[key] = entry[key]
+    return {key: value for key, value in point.items() if value not in (None, [], {})}
 
 
 def _elapsed_seconds(previous_timestamp, current_timestamp):

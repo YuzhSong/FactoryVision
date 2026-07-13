@@ -219,6 +219,55 @@ class AIResultsReportTests(TestCase):
         self.assertEqual(pushed_payload["regionId"], 13)
         self.assertEqual(pushed_payload["description"], "区域：一号车间入口禁区")
 
+    def test_alert_detail_returns_replay_trajectory_region_and_media_placeholder(self):
+        response = self.client.post(
+            "/api/ai-results/report/",
+            {
+                "cameraId": self.camera.code,
+                "frameId": "replay-frame",
+                "timestamp": "2026-07-07T10:03:00+08:00",
+                "results": [
+                    {
+                        "type": "ZONE_WARNING",
+                        "eventType": "region_intrusion",
+                        "trackId": "t-49",
+                        "regionId": 13,
+                        "regionName": "Restricted Gate",
+                        "regionPoints": [{"x": 10, "y": 10}, {"x": 90, "y": 10}, {"x": 90, "y": 90}],
+                        "trajectory": [
+                            {
+                                "timestamp": "2026-07-07T10:02:59+08:00",
+                                "center": [20, 30],
+                                "bbox": [10, 10, 30, 50],
+                                "speed": 4.2,
+                                "frameIndex": 12,
+                            }
+                        ],
+                        "triggerPoint": [20, 30],
+                        "keyframePath": "event_media/cam-a/replay-frame.jpg",
+                        "confidence": 0.869,
+                    }
+                ],
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        alert_id = response.data["data"]["alertIds"][0]
+
+        detail_response = self.client.get(f"/api/alerts/{alert_id}/detail/")
+
+        self.assertEqual(detail_response.status_code, 200)
+        detail = detail_response.data["data"]
+        self.assertEqual(detail["event"]["eventType"], "region_intrusion")
+        self.assertEqual(detail["event"]["trackId"], "t-49")
+        self.assertEqual(detail["replay"]["region"]["name"], "Restricted Gate")
+        self.assertEqual(detail["replay"]["region"]["points"][0], [10.0, 10.0])
+        self.assertEqual(detail["replay"]["trajectory"][0]["center"], [20.0, 30.0])
+        self.assertEqual(detail["replay"]["triggerPoint"], [20.0, 30.0])
+        self.assertEqual(detail["replay"]["media"]["keyframePath"], "event_media/cam-a/replay-frame.jpg")
+        self.assertNotIn("frame", detail["event"]["payload"])
+
     def test_report_endpoint_rejects_invalid_payload(self):
         response = self.client.post(
             "/api/ai-results/report/",

@@ -374,6 +374,11 @@ class RealtimeStreamingTests(unittest.TestCase):
         self.assertFalse(any(result.get("type") == "STRANGER_ALERT" for result in reports[0]["results"]))
         self.assertFalse(any(result.get("type") == "STRANGER_ALERT" for result in reports[1]["results"]))
         self.assertTrue(any(result.get("type") == "STRANGER_ALERT" for result in reports[2]["results"]))
+        stranger = next(result for result in reports[2]["results"] if result.get("type") == "STRANGER_ALERT")
+        self.assertEqual(stranger["trajectory"][-1]["center"], processor.track_histories["t-1"][-1]["center"])
+        self.assertEqual(stranger["triggerPoint"], stranger["trajectory"][-1]["center"])
+        self.assertLessEqual(len(stranger["trajectory"]), processor.history_limit)
+        self.assertNotIn("frame", stranger["trajectory"][-1])
 
     def test_frame_processor_does_not_confirm_stranger_without_loaded_face_library(self):
         processor = FrameProcessor(

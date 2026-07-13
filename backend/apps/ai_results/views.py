@@ -29,6 +29,7 @@ logger = logging.getLogger(__name__)
 from .serializers import (
     AIResultPlaceholderSerializer,
     AIResultReportSerializer,
+    AlertDetailSerializer,
     AlertHandleSerializer,
     AlertSerializer,
     DashboardSummarySerializer,
@@ -387,6 +388,25 @@ def alert_list_view(request):
 
 
 @extend_schema(
+    summary="Get alert detail with replay evidence",
+    description="Return alert/event metadata plus lightweight replay evidence persisted in Event.payload.",
+    responses={200: AlertDetailSerializer, 404: None},
+)
+@api_view(["GET"])
+def alert_detail_view(_request, alert_id):
+    alert = Alert.objects.select_related("event", "camera").filter(id=alert_id).first()
+    if alert is None:
+        return api_response(
+            code=404,
+            message="告警不存在",
+            data=None,
+            status=http_status.HTTP_404_NOT_FOUND,
+        )
+
+    return api_response(data=_serialize_alert_detail(alert), message="success")
+
+
+@extend_schema(
     summary="处置告警",
     description="更新告警状态（pending→processing→closed）。该接口需要 Bearer JWT 认证。",
     request=AlertHandleSerializer,
@@ -559,7 +579,7 @@ def _extract_track_id(result):
 
 
 def _extract_snapshot_path(result, event_media):
-    for key in ("snapshotPath", "snapshotUrl", "imagePath"):
+    for key in ("snapshotPath", "snapshotUrl", "imagePath", "keyframePath", "keyframeUrl"):
         value = result.get(key)
         if value:
             return str(value)
@@ -568,10 +588,158 @@ def _extract_snapshot_path(result, event_media):
     for media in event_media or []:
         if event_id and str(media.get("eventId")) != str(event_id):
             continue
-        value = media.get("snapshotPath") or media.get("snapshotUrl")
+        value = (
+            media.get("snapshotPath")
+            or media.get("snapshotUrl")
+            or media.get("keyframePath")
+            or media.get("keyframeUrl")
+        )
         if value:
             return str(value)
     return ""
+
+
+def _serialize_alert_detail(alert):
+    event = alert.event
+    payload = dict(event.payload or {}) if event else {}
+    return {
+        "alert": dict(AlertSerializer(alert).data),
+        "event": {
+            "eventId": event.id if event else None,
+            "eventType": event.event_type if event else alert.event_type,
+            "cameraId": event.camera_id if event else alert.camera_id,
+            "cameraName": alert.camera.name if alert.camera else None,
+            "occurredAt": event.occurred_at if event else alert.occurred_at,
+            "trackId": event.track_id if event else "",
+            "bbox": event.bbox if event else {},
+            "confidence": event.confidence if event else None,
+            "payload": payload,
+        },
+        "replay": {
+            "trajectory": _extract_replay_trajectory(payload),
+            "triggerPoint": _extract_trigger_point(event, payload),
+            "region": _extract_replay_region(payload),
+            "media": _extract_replay_media(event, payload),
+        },
+    }
+
+
+def _extract_replay_trajectory(payload):
+    trajectory = payload.get("trajectory") or payload.get("trackHistory") or payload.get("path") or []
+    if not isinstance(trajectory, list):
+        return []
+    points = []
+    for item in trajectory:
+        if not isinstance(item, dict):
+            continue
+        point = {
+            "timestamp": item.get("timestamp"),
+            "center": _normalize_point_list(item.get("center") or item.get("centerPoint")),
+            "bbox": _normalize_bbox_list(item.get("bbox")),
+        }
+        for key in ("speed", "frameIndex", "keypoints"):
+            if key in item:
+                point[key] = item[key]
+        points.append({key: value for key, value in point.items() if value not in (None, [], {})})
+    return points[-60:]
+
+
+def _extract_trigger_point(event, payload):
+    for key in ("triggerPoint", "footPoint", "anchorPoint", "centerPoint"):
+        value = _normalize_point_list(payload.get(key))
+        if value:
+            return value
+    trajectory = _extract_replay_trajectory(payload)
+    if trajectory:
+        center = trajectory[-1].get("center")
+        if center:
+            return center
+    return _bbox_center(event.bbox if event else payload.get("bbox"))
+
+
+def _extract_replay_region(payload):
+    points = (
+        payload.get("regionPoints")
+        or payload.get("zonePoints")
+        or payload.get("polygonPoints")
+        or payload.get("polygon")
+        or []
+    )
+    return {
+        "id": payload.get("regionId") or payload.get("zoneId"),
+        "name": payload.get("regionName") or payload.get("zoneName"),
+        "type": payload.get("regionType") or payload.get("zoneType"),
+        "points": _normalize_points(points),
+    }
+
+
+def _extract_replay_media(event, payload):
+    media = payload.get("media") if isinstance(payload.get("media"), dict) else {}
+    return {
+        "status": media.get("status") or payload.get("mediaStatus") or ("ready" if event and event.snapshot_path else "unavailable"),
+        "keyframeUrl": media.get("keyframeUrl") or payload.get("keyframeUrl") or payload.get("snapshotUrl"),
+        "keyframePath": media.get("keyframePath") or payload.get("keyframePath") or (event.snapshot_path if event else ""),
+        "clipUrl": media.get("clipUrl") or payload.get("clipUrl"),
+        "clipPath": media.get("clipPath") or payload.get("clipPath"),
+        "manifestUrl": media.get("manifestUrl") or payload.get("manifestUrl"),
+        "manifestPath": media.get("manifestPath") or payload.get("manifestPath"),
+    }
+
+
+def _normalize_points(points):
+    if not isinstance(points, list):
+        return []
+    normalized = []
+    for point in points:
+        value = _normalize_point_list(point)
+        if value:
+            normalized.append(value)
+    return normalized
+
+
+def _normalize_point_list(value):
+    if isinstance(value, dict):
+        x = value.get("x", value.get("0"))
+        y = value.get("y", value.get("1"))
+    elif isinstance(value, (list, tuple)) and len(value) >= 2:
+        x, y = value[0], value[1]
+    else:
+        return []
+    try:
+        return [float(x), float(y)]
+    except (TypeError, ValueError):
+        return []
+
+
+def _normalize_bbox_list(value):
+    if isinstance(value, dict):
+        if all(key in value for key in ("x1", "y1", "x2", "y2")):
+            raw = [value.get("x1"), value.get("y1"), value.get("x2"), value.get("y2")]
+        elif all(key in value for key in ("x", "y", "w", "h")):
+            raw = [value.get("x"), value.get("y"), value.get("x"), value.get("y")]
+            try:
+                raw[2] = float(raw[0]) + float(value.get("w"))
+                raw[3] = float(raw[1]) + float(value.get("h"))
+            except (TypeError, ValueError):
+                return []
+        else:
+            return []
+    elif isinstance(value, (list, tuple)) and len(value) >= 4:
+        raw = value[:4]
+    else:
+        return []
+    try:
+        return [float(item) for item in raw]
+    except (TypeError, ValueError):
+        return []
+
+
+def _bbox_center(bbox):
+    normalized = _normalize_bbox_list(bbox)
+    if not normalized:
+        return []
+    x1, y1, x2, y2 = normalized
+    return [(x1 + x2) / 2, (y1 + y2) / 2]
 
 
 def _should_create_alert(result_type):

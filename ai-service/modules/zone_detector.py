@@ -152,9 +152,11 @@ class ZoneDetector:
             "regionId": region_id,
             "regionName": zone.get("name", zone.get("zoneName")),
             "regionType": zone.get("type", "restricted"),
+            "regionPoints": [{"x": round(point[0], 2), "y": round(point[1], 2)} for point in self._get_zone_points(zone, None)],
             # zone aliases retain compatibility with current backend alert descriptions.
             "zoneId": region_id,
             "zoneName": zone.get("name", zone.get("zoneName")),
+            "zonePoints": [{"x": round(point[0], 2), "y": round(point[1], 2)} for point in self._get_zone_points(zone, None)],
             "enteredAt": state["enteredAt"],
             "durationSeconds": round(duration, 2),
             "timestamp": state["lastSeenAt"],

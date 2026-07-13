@@ -49,6 +49,12 @@ class AlertHandleSerializer(serializers.Serializer):
     status = serializers.ChoiceField(choices=Alert.Status.choices)
 
 
+class AlertDetailSerializer(serializers.Serializer):
+    alert = serializers.DictField()
+    event = serializers.DictField()
+    replay = serializers.DictField()
+
+
 class EventTrendSerializer(serializers.Serializer):
     hour = serializers.DateTimeField()
     count = serializers.IntegerField()

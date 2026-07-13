@@ -139,6 +139,9 @@ export const alertsApi = {
   list(params = {}) {
     return http.get('/alerts/list/', { params })
   },
+  detail(alertId) {
+    return http.get(`/alerts/${alertId}/detail/`)
+  },
   handle(alertId, data) {
     return http.post(`/alerts/${alertId}/handle/`, data)
   },

@@ -100,6 +100,7 @@ class StrangerDetector:
             "cameraId": camera_id,
             "frameId": frame_id,
             "timestamp": timestamp,
+            "trackId": face_result.get("trackId"),
             "strangerTrackId": state["strangerTrackId"],
             "faceBox": state.get("faceBox"),
             "similarity": face_result.get("similarity"),
