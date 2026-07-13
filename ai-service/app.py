@@ -569,7 +569,12 @@ async def _resolve_face_image_source(
 def _reload_face_library(payload):
     source = payload.get("source", "local")
     if source == "backend":
-        records = backend_client.list_face_records(status=payload.get("status", "active"))
+        try:
+            records = backend_client.list_face_records(status=payload.get("status", "active"))
+        except Exception:
+            bootstrap = backend_client.get_bootstrap()
+            data = bootstrap.get("data", bootstrap) if isinstance(bootstrap, dict) else {}
+            records = data.get("employees") if isinstance(data, dict) else []
         return face_service.load_face_library(
             employee_items=records,
             image_base_url=payload.get("imageBaseUrl", Config.FACE_IMAGE_BASE_URL),

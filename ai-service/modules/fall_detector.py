@@ -40,12 +40,12 @@ class FallDetector:
         fall_like = [score for score in frame_scores if score["isFallLike"]]
         all_consecutive = len(fall_like) == self.confirm_frames
         baseline = self._find_upright_baseline(history[: -self.confirm_frames])
-        transition = self._transition_evidence(baseline, recent[0]) if baseline else None
+        transition = self._transition_evidence(baseline, recent) if baseline else None
 
         rejection_reason = None
         if any(score.get("rejectionReason") for score in frame_scores):
             rejection_reason = next(score["rejectionReason"] for score in frame_scores if score.get("rejectionReason"))
-        elif not all_consecutive:
+        elif not all_consecutive and not (transition and transition.get("rapidDescent")):
             rejection_reason = "not_consecutive"
         elif baseline is None:
             rejection_reason = "no_upright_baseline"
@@ -151,23 +151,51 @@ class FallDetector:
                 return entry
         return None
 
-    def _transition_evidence(self, baseline, first_fall_like):
+    def _transition_evidence(self, baseline, recent_entries):
         base_bbox = self._bbox(baseline.get("bbox"))
-        fall_bbox = self._bbox(first_fall_like.get("bbox"))
-        if base_bbox is None or fall_bbox is None:
+        candidates = []
+        for entry in recent_entries or []:
+            fall_bbox = self._bbox(entry.get("bbox"))
+            if fall_bbox is not None:
+                candidates.append((entry, fall_bbox))
+        if base_bbox is None or not candidates:
             return {"hasDrop": False, "fastEnough": False, "centerDropRatio": 0.0, "heightDropRatio": 0.0, "elapsedSeconds": None}
         base_height = max(1e-6, base_bbox[3] - base_bbox[1])
-        fall_height = max(1e-6, fall_bbox[3] - fall_bbox[1])
         base_center_y = (base_bbox[1] + base_bbox[3]) / 2
-        fall_center_y = (fall_bbox[1] + fall_bbox[3]) / 2
-        center_drop_ratio = (fall_center_y - base_center_y) / base_height
-        height_drop_ratio = 1.0 - (fall_height / base_height)
-        elapsed = _elapsed_seconds(baseline.get("timestamp"), first_fall_like.get("timestamp"))
+        best = None
+        latest = None
+        for entry, fall_bbox in candidates:
+            fall_height = max(1e-6, fall_bbox[3] - fall_bbox[1])
+            fall_center_y = (fall_bbox[1] + fall_bbox[3]) / 2
+            center_drop_ratio = (fall_center_y - base_center_y) / base_height
+            height_drop_ratio = 1.0 - (fall_height / base_height)
+            elapsed = _elapsed_seconds(baseline.get("timestamp"), entry.get("timestamp"))
+            score = center_drop_ratio + max(0.0, height_drop_ratio)
+            if best is None or score > best["score"]:
+                best = {
+                    "score": score,
+                    "centerDropRatio": center_drop_ratio,
+                    "heightDropRatio": height_drop_ratio,
+                    "elapsed": elapsed,
+                }
+            latest = {
+                "centerDropRatio": center_drop_ratio,
+                "heightDropRatio": height_drop_ratio,
+            }
+        center_drop_ratio = best["centerDropRatio"]
+        height_drop_ratio = best["heightDropRatio"]
+        elapsed = best["elapsed"]
+        has_drop = center_drop_ratio >= self.min_center_drop_ratio or height_drop_ratio >= self.min_height_drop_ratio
+        rapid_descent = (
+            latest["centerDropRatio"] >= self.min_center_drop_ratio
+            and latest["heightDropRatio"] >= self.min_height_drop_ratio
+        )
         return {
             "centerDropRatio": round(center_drop_ratio, 4),
             "heightDropRatio": round(height_drop_ratio, 4),
             "elapsedSeconds": round(elapsed, 4) if elapsed is not None else None,
-            "hasDrop": center_drop_ratio >= self.min_center_drop_ratio or height_drop_ratio >= self.min_height_drop_ratio,
+            "hasDrop": has_drop,
+            "rapidDescent": rapid_descent,
             "fastEnough": elapsed is not None and 0 < elapsed <= self.max_transition_seconds,
         }
 

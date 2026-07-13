@@ -3,7 +3,7 @@ import { computed, nextTick, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import SectionHeader from '../components/SectionHeader.vue'
 import StatusTag from '../components/StatusTag.vue'
-import { employeesApi, faceApi } from '../api/modules'
+import { aiServiceApi, employeesApi, faceApi } from '../api/modules'
 
 const dialogVisible = ref(false)
 const editDialogVisible = ref(false)
@@ -355,13 +355,29 @@ const submitFace = async () => {
 
   enrolling.value = true
   try {
-    await faceApi.enroll({
-      employeeId: currentEmployee.value.id,
-      faces: faceShotTypes.map((item) => ({
+    const extractedFaces = []
+    for (const item of faceShotTypes) {
+      const response = await aiServiceApi.extractFace({
+        imageBase64: faceImages[item.key],
+        requireSingleFace: true,
+      })
+      const data = response.data?.data || {}
+      extractedFaces.push({
         faceType: item.key,
         imageBase64: faceImages[item.key],
-      })),
+        featureVector: data.featureVector,
+        dimension: data.dimension,
+      })
+    }
+    await faceApi.enroll({
+      employeeId: currentEmployee.value.id,
+      faces: extractedFaces,
     })
+    try {
+      await aiServiceApi.reloadCache({ source: 'backend' })
+    } catch (cacheError) {
+      console.warn('AIService face cache reload failed', cacheError)
+    }
     ElMessage.success('人脸录入已提交')
     closeFaceDialog()
   } catch (error) {

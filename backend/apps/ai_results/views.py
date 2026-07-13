@@ -210,6 +210,7 @@ def report_ai_results(request):
                 payload=result,
             )
             event_ids.append(event.id)
+            event_description = _alert_description(result)
 
             should_push = _should_create_alert(result_type) or result_type == "face_recognized"
             if result_type == "face_recognized" and result.get("employeeId"):
@@ -238,6 +239,10 @@ def report_ai_results(request):
                                     "trackId": event.track_id,
                                     "bbox": event.bbox,
                                     "confidence": event.confidence,
+                                    "name": result.get("name") or result.get("employeeName"),
+                                    "employeeName": result.get("employeeName") or result.get("name"),
+                                    "employeeId": result.get("employeeId"),
+                                    "description": event_description,
                                     "occurredAt": str(event.occurred_at),
                                 },
                             },
@@ -258,7 +263,7 @@ def report_ai_results(request):
                     event_type=result_type,
                     level=str(result.get("level") or _default_level(result_type)),
                     title=_alert_title(result_type),
-                    description=_alert_description(result),
+                    description=event_description,
                     snapshot_path=event.snapshot_path,
                     occurred_at=event.occurred_at,
                 )
@@ -653,6 +658,15 @@ def _alert_title(result_type):
 
 
 def _alert_description(result):
+    if _normalize_event_type(result) == "face_recognized":
+        name = result.get("name") or result.get("employeeName") or "Unknown"
+        confidence = _extract_confidence(result)
+        if confidence is None:
+            return str(name)
+        if confidence <= 1.0:
+            return f"{name} 置信度 {confidence * 100:.1f}%"
+        return f"{name} 置信度 {confidence:.1f}%"
+
     track_id = result.get("trackId")
     zone_name = result.get("zoneName")
     name = result.get("name") or result.get("employeeName")

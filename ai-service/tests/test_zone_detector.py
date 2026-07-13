@@ -77,12 +77,12 @@ class ZoneDetectorTests(unittest.TestCase):
         events = detector.detect_events(1, [_person(x=50, y=70)], "2026-07-11T10:00:00+08:00", frame_shape=(100, 100, 3))
         self.assertEqual(events[0]["eventType"], "region_intrusion")
 
-    def test_ground_region_uses_foot_anchor_not_body_center(self):
+    def test_body_hit_point_inside_region_triggers_event(self):
         detector = ZoneDetector([_zone(points=[{"x": 50, "y": 40}, {"x": 70, "y": 40}, {"x": 70, "y": 80}, {"x": 50, "y": 80}])], min_stay_seconds=99, enter_confirm_seconds=0)
         events = detector.detect_events(1, [_person_box()], "2026-07-11T10:00:00+08:00", frame_shape=(100, 100, 3))
-        self.assertEqual(events, [])
-        self.assertEqual(detector.last_diagnostics["observations"][0]["anchorMode"], "bbox_bottom_center")
-        self.assertFalse(detector.last_diagnostics["observations"][0]["inside"])
+        self.assertEqual(events[0]["eventType"], "region_intrusion")
+        self.assertEqual(detector.last_diagnostics["observations"][0]["anchorMode"], "bbox_center")
+        self.assertTrue(detector.last_diagnostics["observations"][0]["inside"])
 
     def test_exit_confirmation_allows_reentry_to_emit_again(self):
         detector = ZoneDetector([_zone()], enter_confirm_seconds=0.2, exit_confirm_seconds=0.5)

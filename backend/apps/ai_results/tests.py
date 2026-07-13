@@ -79,7 +79,11 @@ class AIResultsReportTests(TestCase):
         sync_mock.assert_called_once()
         call = sync_mock.return_value.call_args
         self.assertEqual(call.args[0], f"realtime_{self.camera.id}")
-        self.assertEqual(call.args[1]["data"]["payload"]["eventType"], "face_recognized")
+        pushed_payload = call.args[1]["data"]["payload"]
+        self.assertEqual(pushed_payload["eventType"], "face_recognized")
+        self.assertEqual(pushed_payload["name"], "Employee 4")
+        self.assertEqual(pushed_payload["confidence"], 0.82)
+        self.assertEqual(pushed_payload["description"], "Employee 4 置信度 82.0%")
 
     def test_person_detection_cannot_spoof_actionable_event_type(self):
         response = self.client.post(
