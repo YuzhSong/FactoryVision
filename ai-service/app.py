@@ -97,6 +97,7 @@ frame_processor = FrameProcessor(
         "zoneEnterConfirmSeconds": Config.ZONE_ENTER_CONFIRM_SECONDS,
         "zoneExitConfirmSeconds": Config.ZONE_EXIT_CONFIRM_SECONDS,
         "helmetEventCooldownSeconds": Config.HELMET_EVENT_COOLDOWN_SECONDS,
+        "helmetResultCacheTtlSeconds": Config.HELMET_RESULT_CACHE_TTL_SECONDS,
         "trackStateTtlSeconds": Config.TRACK_STATE_TTL_SECONDS,
         "faceIdentityCacheSeconds": Config.FACE_IDENTITY_CACHE_SECONDS,
         "faceUnknownCacheSeconds": Config.FACE_UNKNOWN_CACHE_SECONDS,

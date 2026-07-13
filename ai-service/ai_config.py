@@ -89,7 +89,7 @@ class Config:
     HELMET_CUDNN_BENCHMARK = os.getenv("HELMET_CUDNN_BENCHMARK", str(YOLO_CUDNN_BENCHMARK)).lower() == "true"
     HELMET_CONFIDENCE_THRESHOLD = float(os.getenv("HELMET_CONFIDENCE_THRESHOLD", "0.35"))
     HELMET_IOU_THRESHOLD = float(os.getenv("HELMET_IOU_THRESHOLD", "0.45"))
-    HELMET_WARNING_THRESHOLD = float(os.getenv("HELMET_WARNING_THRESHOLD", "0.6"))
+    HELMET_WARNING_THRESHOLD = float(os.getenv("HELMET_WARNING_THRESHOLD", str(HELMET_CONFIDENCE_THRESHOLD)))
     HELMET_MATCH_UPPER_RATIO = float(os.getenv("HELMET_MATCH_UPPER_RATIO", "0.65"))
     HELMET_MAX_DET = int(os.getenv("HELMET_MAX_DET", "300"))
     HELMET_CLASS_IDS = tuple(
@@ -140,8 +140,8 @@ class Config:
     # Run one expensive model per analysis tick by default. The intervals are based on
     # processed output frames, so they remain stable when capture drops source frames.
     PERSON_DETECT_INTERVAL = int(os.getenv("PERSON_DETECT_INTERVAL", "5"))
-    HELMET_DETECT_INTERVAL = int(os.getenv("HELMET_DETECT_INTERVAL", "4"))
-    HELMET_DETECT_OFFSET = int(os.getenv("HELMET_DETECT_OFFSET", "2"))
+    HELMET_DETECT_INTERVAL = int(os.getenv("HELMET_DETECT_INTERVAL", "8"))
+    HELMET_DETECT_OFFSET = int(os.getenv("HELMET_DETECT_OFFSET", "4"))
     STREAM_INCLUDE_FACES_DEFAULT = os.getenv("STREAM_INCLUDE_FACES_DEFAULT", "False").lower() == "true"
     FACE_DETECT_INTERVAL = int(os.getenv("FACE_RECOGNITION_INTERVAL", os.getenv("FACE_DETECT_INTERVAL", "30")))
     FACE_DETECT_OFFSET = int(os.getenv("FACE_DETECT_OFFSET", "2"))
@@ -169,8 +169,8 @@ class Config:
     ZONE_ENTER_CONFIRM_SECONDS = float(os.getenv("ZONE_ENTER_CONFIRM_SECONDS", "0.3"))
     ZONE_EXIT_CONFIRM_SECONDS = float(os.getenv("ZONE_EXIT_CONFIRM_SECONDS", "1.0"))
     ZONE_REFRESH_INTERVAL_SECONDS = float(os.getenv("ZONE_REFRESH_INTERVAL_SECONDS", "10"))
-    HELMET_EVENT_COOLDOWN_SECONDS = float(os.getenv("HELMET_EVENT_COOLDOWN_SECONDS", "10"))
-    HELMET_RESULT_CACHE_TTL_SECONDS = float(os.getenv("HELMET_RESULT_CACHE_TTL_SECONDS", "3"))
+    HELMET_EVENT_COOLDOWN_SECONDS = float(os.getenv("HELMET_EVENT_COOLDOWN_SECONDS", "60"))
+    HELMET_RESULT_CACHE_TTL_SECONDS = float(os.getenv("HELMET_RESULT_CACHE_TTL_SECONDS", str(FACE_IDENTITY_CACHE_SECONDS)))
     TRACK_STATE_TTL_SECONDS = float(os.getenv("TRACK_STATE_TTL_SECONDS", "30"))
     FALL_RATIO_THRESHOLD = float(os.getenv("FALL_RATIO_THRESHOLD", "1.2"))
     FALL_CONFIRM_FRAMES = int(os.getenv("FALL_CONFIRM_FRAMES", "5"))

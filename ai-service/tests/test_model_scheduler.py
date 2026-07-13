@@ -15,8 +15,8 @@ class ModelSchedulerTests(unittest.TestCase):
                 if should_run:
                     executed[model].append(frame)
         self.assertEqual(executed["person"], list(range(0, 61, 5)))
-        self.assertEqual(executed["helmet"], [2, 6, 11, 14, 18, 22, 26, 31, 34, 38, 42, 46, 51, 54, 58])
-        self.assertEqual(executed["face"], [3, 32])
+        self.assertEqual(executed["helmet"], [4, 12, 21, 28, 36, 44, 52])
+        self.assertEqual(executed["face"], [2, 32])
         service._status.processed_frames = 2
         self.assertFalse(service._model_runs(include_faces=False)["face"])
 
@@ -29,9 +29,9 @@ class ModelSchedulerTests(unittest.TestCase):
             for model, should_run in runs.items():
                 if should_run:
                     executed[model].append(frame)
-        self.assertIn(91, executed["helmet"])
-        self.assertIn(92, executed["face"])
-        self.assertEqual(executed["face"], [3, 32, 63, 92])
+        self.assertIn(92, executed["helmet"])
+        self.assertIn(93, executed["face"])
+        self.assertEqual(executed["face"], [2, 32, 62, 93])
 
 
 if __name__ == "__main__":

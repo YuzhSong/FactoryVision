@@ -56,6 +56,12 @@ class FrameProcessor:
         )
         self.track_histories = {}
         self.history_limit = history_limit
+        self.clock = abnormal_config.get("clock") or time.monotonic
+        self.helmet_result_cache_ttl_seconds = max(
+            0.0,
+            float(abnormal_config.get("helmetResultCacheTtlSeconds", abnormal_config.get("faceIdentityCacheSeconds", 5.0))),
+        )
+        self.helmet_result_cache = {}
         self.identity_cache = FaceIdentityCache(
             ttl_seconds=abnormal_config.get("faceIdentityCacheSeconds", 5.0),
             unknown_ttl_seconds=abnormal_config.get("faceUnknownCacheSeconds", 1.0),
@@ -96,13 +102,17 @@ class FrameProcessor:
 
         if run_helmet_detection:
             started_at = time.perf_counter()
-            helmet_results = self.abnormal_service.helmet_detector.detect(
+            fresh_helmet_results = self.abnormal_service.helmet_detector.detect(
                 frame,
                 person_detections=person_results,
                 frame_id=frame_id,
             )
             timings["helmet"] = _elapsed_ms(started_at)
+            self._update_helmet_result_cache(camera_id, fresh_helmet_results)
         else:
+            fresh_helmet_results = []
+        helmet_results = self._helmet_results_for_tracks(camera_id, person_results)
+        if not helmet_results and not run_helmet_detection:
             helmet_results = deepcopy(helmet_detections or [])
         self._apply_helmet_results(person_results, helmet_results)
         # Cached boxes are for drawing/rule continuity only. Treating them as fresh
@@ -216,6 +226,7 @@ class FrameProcessor:
         self.employee_recognition_detector.reset()
         self.abnormal_service.zone_detector.reset()
         self.identity_cache.clear()
+        self.helmet_result_cache.clear()
         if hasattr(self.person_detector, "reset_tracks"):
             self.person_detector.reset_tracks()
 
@@ -301,6 +312,64 @@ class FrameProcessor:
             detection["helmetStatus"] = helmet.get("helmetStatus")
             detection["helmetConfidence"] = helmet.get("helmetConfidence")
             detection["helmetClassName"] = helmet.get("className")
+
+    def _update_helmet_result_cache(self, camera_id, helmet_results):
+        """Remember fresh helmet detections so PPE boxes persist between model runs."""
+        if self.helmet_result_cache_ttl_seconds <= 0:
+            self.helmet_result_cache.clear()
+            return
+
+        now = self.clock()
+        self._purge_helmet_result_cache(now)
+        for result in helmet_results or []:
+            track_id = result.get("trackId")
+            if track_id in (None, ""):
+                continue
+            cached = dict(result)
+            cached["_cachedAt"] = now
+            self.helmet_result_cache[self._helmet_cache_key(camera_id, track_id)] = cached
+
+    def _helmet_results_for_tracks(self, camera_id, person_results):
+        """Return cached helmet boxes for currently visible tracks."""
+        now = self.clock()
+        visible_tracks = {
+            str(item.get("trackId"))
+            for item in person_results or []
+            if item.get("trackId") not in (None, "")
+        }
+        self._purge_helmet_result_cache(now, visible_tracks=visible_tracks, camera_id=camera_id)
+
+        results = []
+        for track_id in visible_tracks:
+            cached = self.helmet_result_cache.get(self._helmet_cache_key(camera_id, track_id))
+            if not cached:
+                continue
+            result = {
+                key: deepcopy(value)
+                for key, value in cached.items()
+                if not str(key).startswith("_")
+            }
+            result["cached"] = now - float(cached.get("_cachedAt", now)) > 0.001
+            results.append(result)
+        return results
+
+    def _purge_helmet_result_cache(self, now, visible_tracks=None, camera_id=None):
+        visible_tracks = {str(track_id) for track_id in (visible_tracks or set())}
+        self.helmet_result_cache = {
+            key: value
+            for key, value in self.helmet_result_cache.items()
+            if now - float(value.get("_cachedAt", now)) <= self.helmet_result_cache_ttl_seconds
+            and (
+                not visible_tracks
+                or camera_id is None
+                or not key.startswith(f"{camera_id}:")
+                or key.rsplit(":", 1)[-1] in visible_tracks
+            )
+        }
+
+    @staticmethod
+    def _helmet_cache_key(camera_id, track_id):
+        return f"{camera_id}:{track_id}"
 
     def _attach_replay_evidence(self, results):
         """Attach bounded trajectory metadata to actionable results without storing frames."""

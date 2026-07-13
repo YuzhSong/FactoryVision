@@ -63,6 +63,17 @@ class _FakePersonDetector:
         ]
 
 
+class _ManualClock:
+    def __init__(self):
+        self.now = 0.0
+
+    def __call__(self):
+        return self.now
+
+    def advance(self, seconds):
+        self.now += seconds
+
+
 class _HelmetDetectorForTest(HelmetDetector):
     def __init__(self, fake_model, **kwargs):
         super().__init__(**kwargs)
@@ -224,6 +235,41 @@ class HelmetDetectorTests(unittest.TestCase):
         helmet_results = [item for item in report["results"] if item.get("type") == "HELMET_DETECTION"]
         self.assertEqual(len(helmet_results), 1)
         self.assertEqual(helmet_results[0]["helmetStatus"], "helmet")
+
+    def test_frame_processor_reuses_recent_helmet_box_between_detection_runs(self):
+        clock = _ManualClock()
+        processor = FrameProcessor(
+            person_detector=_FakePersonDetector(),
+            abnormal_config={"helmetModelPath": "", "helmetResultCacheTtlSeconds": 10, "clock": clock},
+        )
+        processor.abnormal_service.helmet_detector.detect = lambda *_args, **_kwargs: [
+            {
+                "type": "HELMET_DETECTION",
+                "trackId": "t-1",
+                "helmetStatus": "helmet",
+                "helmetConfidence": 0.91,
+                "bbox": {"x1": 20, "y1": 20, "x2": 45, "y2": 45},
+            }
+        ]
+
+        first = processor.process_frame(frame=object(), camera_id=1, frame_id="frame-1", include_faces=False)
+        people = [item for item in first["results"] if item.get("type") == "PERSON_DETECTION"]
+        clock.advance(2)
+
+        second = processor.process_frame(
+            frame=object(),
+            camera_id=1,
+            frame_id="frame-2",
+            include_faces=False,
+            person_detections=people,
+            run_person_detection=False,
+            run_helmet_detection=False,
+        )
+
+        helmet_results = [item for item in second["results"] if item.get("type") == "HELMET_DETECTION"]
+        self.assertEqual(len(helmet_results), 1)
+        self.assertEqual(helmet_results[0]["helmetStatus"], "helmet")
+        self.assertTrue(helmet_results[0]["cached"])
 
 
 if __name__ == "__main__":
