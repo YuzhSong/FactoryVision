@@ -33,6 +33,30 @@ class ModelSchedulerTests(unittest.TestCase):
         self.assertIn(93, executed["face"])
         self.assertEqual(executed["face"], [2, 32, 62, 93])
 
+    def test_helmet_schedule_respects_runtime_switch(self):
+        service = ProcessedStreamService(frame_processor=None)
+        service._status.processed_frames = 4
+
+        runs = service._model_runs(include_faces=True, include_helmet=False)
+
+        self.assertEqual(runs, {"person": False, "helmet": False, "face": True})
+
+    def test_helmet_waits_for_fresh_person_cache_in_live_service(self):
+        service = ProcessedStreamService(frame_processor=object())
+        service._status.processed_frames = 4
+
+        runs = service._model_runs(include_faces=False, include_helmet=True)
+
+        self.assertEqual(runs, {"person": False, "helmet": False, "face": False})
+        self.assertTrue(service._helmet_waiting_for_fresh_people)
+
+        service._status.processed_frames = 5
+        self.assertEqual(service._model_runs(include_faces=False, include_helmet=True), {"person": True, "helmet": False, "face": False})
+        service._person_cache_frame = 5
+        service._status.processed_frames = 6
+
+        self.assertEqual(service._model_runs(include_faces=False, include_helmet=True), {"person": False, "helmet": True, "face": False})
+
 
 if __name__ == "__main__":
     unittest.main()

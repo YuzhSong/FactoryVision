@@ -271,6 +271,156 @@ class HelmetDetectorTests(unittest.TestCase):
         self.assertEqual(helmet_results[0]["helmetStatus"], "helmet")
         self.assertTrue(helmet_results[0]["cached"])
 
+    def test_frame_processor_keeps_helmet_state_through_one_missing_person_frame(self):
+        clock = _ManualClock()
+        processor = FrameProcessor(
+            person_detector=_FakePersonDetector(),
+            abnormal_config={"helmetModelPath": "", "helmetResultCacheTtlSeconds": 5, "clock": clock},
+        )
+        processor.abnormal_service.helmet_detector.detect = lambda *_args, **_kwargs: [
+            {
+                "type": "HELMET_DETECTION",
+                "trackId": "t-1",
+                "helmetStatus": "helmet",
+                "helmetConfidence": 0.91,
+                "bbox": {"x1": 20, "y1": 20, "x2": 45, "y2": 45},
+            }
+        ]
+
+        processor.process_frame(frame=object(), camera_id=1, frame_id="frame-1", include_faces=False)
+        clock.advance(1)
+        processor.process_frame(
+            frame=object(),
+            camera_id=1,
+            frame_id="frame-miss",
+            include_faces=False,
+            person_detections=[],
+            run_person_detection=False,
+            run_helmet_detection=False,
+        )
+        clock.advance(1)
+        report = processor.process_frame(
+            frame=object(),
+            camera_id=1,
+            frame_id="frame-2",
+            include_faces=False,
+            person_detections=[{
+                "type": "PERSON_DETECTION",
+                "trackId": "t-1",
+                "bbox": {"x1": 10, "y1": 10, "x2": 110, "y2": 210},
+            }],
+            run_person_detection=False,
+            run_helmet_detection=False,
+        )
+
+        helmet_results = [item for item in report["results"] if item.get("type") == "HELMET_DETECTION"]
+        self.assertEqual(len(helmet_results), 1)
+        self.assertTrue(helmet_results[0]["cached"])
+
+    def test_frame_processor_expires_helmet_state_after_ttl(self):
+        clock = _ManualClock()
+        processor = FrameProcessor(
+            person_detector=_FakePersonDetector(),
+            abnormal_config={"helmetModelPath": "", "helmetResultCacheTtlSeconds": 5, "clock": clock},
+        )
+        processor.abnormal_service.helmet_detector.detect = lambda *_args, **_kwargs: [
+            {
+                "type": "HELMET_DETECTION",
+                "trackId": "t-1",
+                "helmetStatus": "helmet",
+                "helmetConfidence": 0.91,
+                "bbox": {"x1": 20, "y1": 20, "x2": 45, "y2": 45},
+            }
+        ]
+
+        processor.process_frame(frame=object(), camera_id=1, frame_id="frame-1", include_faces=False)
+        clock.advance(6)
+        report = processor.process_frame(
+            frame=object(),
+            camera_id=1,
+            frame_id="frame-2",
+            include_faces=False,
+            person_detections=[{
+                "type": "PERSON_DETECTION",
+                "trackId": "t-1",
+                "bbox": {"x1": 10, "y1": 10, "x2": 110, "y2": 210},
+            }],
+            run_person_detection=False,
+            run_helmet_detection=False,
+        )
+
+        helmet_results = [item for item in report["results"] if item.get("type") == "HELMET_DETECTION"]
+        self.assertEqual(helmet_results, [])
+
+    def test_frame_processor_projects_cached_helmet_box_to_latest_person_box(self):
+        clock = _ManualClock()
+        processor = FrameProcessor(
+            person_detector=_FakePersonDetector(),
+            abnormal_config={"helmetModelPath": "", "helmetResultCacheTtlSeconds": 5, "clock": clock},
+        )
+        processor.abnormal_service.helmet_detector.detect = lambda *_args, **_kwargs: [
+            {
+                "type": "HELMET_DETECTION",
+                "trackId": "t-1",
+                "helmetStatus": "helmet",
+                "helmetConfidence": 0.91,
+                "bbox": {"x1": 20, "y1": 20, "x2": 45, "y2": 45},
+            }
+        ]
+
+        processor.process_frame(frame=object(), camera_id=1, frame_id="frame-1", include_faces=False)
+        clock.advance(1)
+        report = processor.process_frame(
+            frame=object(),
+            camera_id=1,
+            frame_id="frame-2",
+            include_faces=False,
+            person_detections=[{
+                "type": "PERSON_DETECTION",
+                "trackId": "t-1",
+                "bbox": {"x1": 20, "y1": 20, "x2": 220, "y2": 420},
+            }],
+            run_person_detection=False,
+            run_helmet_detection=False,
+        )
+
+        helmet = next(item for item in report["results"] if item.get("type") == "HELMET_DETECTION")
+        self.assertEqual(helmet["bbox"], {"x1": 40.0, "y1": 40.0, "x2": 90.0, "y2": 90.0})
+
+    def test_unmatched_helmet_detection_draws_once_without_persisting_to_person(self):
+        clock = _ManualClock()
+        processor = FrameProcessor(
+            person_detector=_FakePersonDetector(),
+            abnormal_config={"helmetModelPath": "", "helmetResultCacheTtlSeconds": 5, "clock": clock},
+        )
+        processor.abnormal_service.helmet_detector.detect = lambda *_args, **_kwargs: [
+            {
+                "type": "HELMET_DETECTION",
+                "helmetStatus": "helmet",
+                "helmetConfidence": 0.91,
+                "bbox": {"x1": 20, "y1": 20, "x2": 45, "y2": 45},
+            }
+        ]
+
+        first = processor.process_frame(frame=object(), camera_id=1, frame_id="frame-1", include_faces=False)
+        first_helmets = [item for item in first["results"] if item.get("type") == "HELMET_DETECTION"]
+        first_people = [item for item in first["results"] if item.get("type") == "PERSON_DETECTION"]
+        self.assertEqual(len(first_helmets), 1)
+        self.assertNotIn("helmetStatus", first_people[0])
+
+        clock.advance(1)
+        second = processor.process_frame(
+            frame=object(),
+            camera_id=1,
+            frame_id="frame-2",
+            include_faces=False,
+            person_detections=first_people,
+            run_person_detection=False,
+            run_helmet_detection=False,
+        )
+        second_helmets = [item for item in second["results"] if item.get("type") == "HELMET_DETECTION"]
+        self.assertEqual(second_helmets, [])
+
 
 if __name__ == "__main__":
     unittest.main()

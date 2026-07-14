@@ -106,8 +106,8 @@ export const camerasApi = {
   streamStatus(cameraId) {
     return http.get(`/cameras/${cameraId}/stream/status/`)
   },
-  startStream(cameraId) {
-    return http.post(`/cameras/${cameraId}/stream/start/`)
+  startStream(cameraId, data = {}) {
+    return http.post(`/cameras/${cameraId}/stream/start/`, data)
   },
   stopStream(cameraId) {
     return http.post(`/cameras/${cameraId}/stream/stop/`)

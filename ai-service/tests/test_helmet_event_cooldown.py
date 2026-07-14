@@ -45,6 +45,34 @@ class HelmetCooldownTests(unittest.TestCase):
         self.service.build_ai_report(1, "missing", [])
         self.assertIsNotNone(self.event())
 
+    def test_warning_includes_person_bbox_and_source_metadata(self):
+        bbox = {"x1": 10, "y1": 20, "x2": 30, "y2": 80}
+        event = self.event(detection={
+            "trackId": "t1",
+            "helmetStatus": "no_helmet",
+            "helmetConfidence": .9,
+            "helmetSource": "fresh",
+            "frameId": "frame-1",
+            "bbox": bbox,
+        })
+
+        self.assertIsNotNone(event)
+        self.assertEqual(event["bbox"], bbox)
+        self.assertEqual(event["personBbox"], bbox)
+        self.assertEqual(event["helmetSource"], "fresh")
+        self.assertEqual(event["sourceFrameId"], "frame-1")
+
+    def test_cached_no_helmet_state_does_not_emit_new_warning(self):
+        event = self.event(detection={
+            "trackId": "t1",
+            "helmetStatus": "no_helmet",
+            "helmetConfidence": .9,
+            "helmetSource": "cached",
+            "bbox": {},
+        })
+
+        self.assertIsNone(event)
+
 
 if __name__ == "__main__":
     unittest.main()

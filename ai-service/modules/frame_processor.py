@@ -62,6 +62,16 @@ class FrameProcessor:
             float(abnormal_config.get("helmetResultCacheTtlSeconds", abnormal_config.get("faceIdentityCacheSeconds", 5.0))),
         )
         self.helmet_result_cache = {}
+        self.helmet_cache_diagnostics = {
+            "activeStateCount": 0,
+            "cacheHits": 0,
+            "cacheExpiredCount": 0,
+            "statusTransitions": 0,
+            "freshDrawCount": 0,
+            "cachedDrawCount": 0,
+            "matchedFreshCount": 0,
+            "unmatchedFreshCount": 0,
+        }
         self.identity_cache = FaceIdentityCache(
             ttl_seconds=abnormal_config.get("faceIdentityCacheSeconds", 5.0),
             unknown_ttl_seconds=abnormal_config.get("faceUnknownCacheSeconds", 1.0),
@@ -84,6 +94,9 @@ class FrameProcessor:
         run_person_detection: bool = True,
         run_helmet_detection: bool = True,
         run_face_recognition: bool | None = None,
+        include_helmet: bool = True,
+        include_fall: bool = True,
+        include_zone: bool = True,
     ):
         """Process one frame into a unified AI report payload."""
         timestamp = timestamp or datetime.now(timezone.utc).astimezone().isoformat()
@@ -100,6 +113,7 @@ class FrameProcessor:
         else:
             person_results = deepcopy(person_detections or [])
 
+        run_helmet_detection = bool(include_helmet and run_helmet_detection)
         if run_helmet_detection:
             started_at = time.perf_counter()
             fresh_helmet_results = self.abnormal_service.helmet_detector.detect(
@@ -108,11 +122,13 @@ class FrameProcessor:
                 frame_id=frame_id,
             )
             timings["helmet"] = _elapsed_ms(started_at)
-            self._update_helmet_result_cache(camera_id, fresh_helmet_results)
+            self._update_helmet_result_cache(camera_id, fresh_helmet_results, person_results, frame_id)
         else:
             fresh_helmet_results = []
-        helmet_results = self._helmet_results_for_tracks(camera_id, person_results)
-        if not helmet_results and not run_helmet_detection:
+        helmet_results = self._helmet_results_for_tracks(camera_id, person_results, frame_id) if include_helmet else []
+        if include_helmet and run_helmet_detection:
+            helmet_results.extend(_unmatched_helmet_results(fresh_helmet_results))
+        elif include_helmet and not helmet_results:
             helmet_results = deepcopy(helmet_detections or [])
         self._apply_helmet_results(person_results, helmet_results)
         # Cached boxes are for drawing/rule continuity only. Treating them as fresh
@@ -134,6 +150,10 @@ class FrameProcessor:
             track_histories=self.track_histories,
             timestamp=timestamp,
             frame_shape=getattr(frame, "shape", None),
+            include_zone=include_zone,
+            include_fall=include_fall,
+            include_running=include_fall,
+            include_helmet_events=include_helmet,
         )
         behavior_ms = _elapsed_ms(started_at)
         behavior_timings = (
@@ -144,7 +164,7 @@ class FrameProcessor:
         timings["zoneRules"] = behavior_timings.get("zoneRules", behavior_ms)
         timings["fall"] = behavior_timings.get("fall", 0.0)
         report["diagnostics"] = {
-            "helmet": dict(getattr(self.abnormal_service.helmet_detector, "last_diagnostics", {}) or {}),
+            "helmet": self._helmet_diagnostics(),
             "behavior": dict(getattr(self.abnormal_service, "last_diagnostics", {}) or {}),
         }
 
@@ -216,7 +236,8 @@ class FrameProcessor:
             "person": bool(run_person_detection),
             "helmet": bool(run_helmet_detection),
             "face": bool(include_faces and run_face_recognition and self.face_service is not None),
-            "fall": True,
+            "fall": bool(include_fall),
+            "zone": bool(include_zone),
         }
         return report
 
@@ -229,6 +250,7 @@ class FrameProcessor:
         self.abnormal_service.zone_detector.reset()
         self.identity_cache.clear()
         self.helmet_result_cache.clear()
+        self.helmet_cache_diagnostics["activeStateCount"] = 0
         if hasattr(self.person_detector, "reset_tracks"):
             self.person_detector.reset_tracks()
 
@@ -331,59 +353,103 @@ class FrameProcessor:
                 if identity.get(key) not in (None, ""):
                     detection[key] = identity.get(key)
 
-    def _update_helmet_result_cache(self, camera_id, helmet_results):
+    def _update_helmet_result_cache(self, camera_id, helmet_results, person_results, frame_id=None):
         """Remember fresh helmet detections so PPE boxes persist between model runs."""
         if self.helmet_result_cache_ttl_seconds <= 0:
             self.helmet_result_cache.clear()
+            self.helmet_cache_diagnostics["activeStateCount"] = 0
             return
 
         now = self.clock()
         self._purge_helmet_result_cache(now)
-        for result in helmet_results or []:
-            track_id = result.get("trackId")
-            if track_id in (None, ""):
-                continue
-            cached = dict(result)
-            cached["_cachedAt"] = now
-            self.helmet_result_cache[self._helmet_cache_key(camera_id, track_id)] = cached
-
-    def _helmet_results_for_tracks(self, camera_id, person_results):
-        """Return cached helmet boxes for currently visible tracks."""
-        now = self.clock()
-        visible_tracks = {
-            str(item.get("trackId"))
+        people_by_track = {
+            str(item.get("trackId")): item
             for item in person_results or []
             if item.get("trackId") not in (None, "")
         }
-        self._purge_helmet_result_cache(now, visible_tracks=visible_tracks, camera_id=camera_id)
+        matched_count = 0
+        unmatched_count = 0
+        for result in helmet_results or []:
+            track_id = result.get("trackId")
+            if track_id in (None, ""):
+                unmatched_count += 1
+                continue
+            person = people_by_track.get(str(track_id))
+            if not person:
+                unmatched_count += 1
+                continue
+            matched_count += 1
+            cached = dict(result)
+            cached["_relativeBbox"] = _relative_bbox(result.get("bbox"), person.get("bbox"))
+            cached["_cachedAt"] = now
+            cached["_frameId"] = frame_id
+            cached["_trackId"] = str(track_id)
+            key = self._helmet_cache_key(camera_id, track_id)
+            previous = self.helmet_result_cache.get(key)
+            if previous and previous.get("helmetStatus") != cached.get("helmetStatus"):
+                self.helmet_cache_diagnostics["statusTransitions"] += 1
+            self.helmet_result_cache[key] = cached
+        self.helmet_cache_diagnostics["matchedFreshCount"] = matched_count
+        self.helmet_cache_diagnostics["unmatchedFreshCount"] = unmatched_count
+        self.helmet_cache_diagnostics["activeStateCount"] = len(self.helmet_result_cache)
+
+    def _helmet_results_for_tracks(self, camera_id, person_results, frame_id=None):
+        """Return cached helmet boxes for currently visible tracks."""
+        now = self.clock()
+        visible_people = {
+            str(item.get("trackId")): item
+            for item in person_results or []
+            if item.get("trackId") not in (None, "")
+        }
+        self._purge_helmet_result_cache(now)
 
         results = []
-        for track_id in visible_tracks:
+        cache_hits = 0
+        fresh_draws = 0
+        cached_draws = 0
+        for track_id, person in visible_people.items():
             cached = self.helmet_result_cache.get(self._helmet_cache_key(camera_id, track_id))
             if not cached:
                 continue
+            cache_hits += 1
             result = {
                 key: deepcopy(value)
                 for key, value in cached.items()
                 if not str(key).startswith("_")
             }
-            result["cached"] = now - float(cached.get("_cachedAt", now)) > 0.001
+            bbox = _project_relative_bbox(cached.get("_relativeBbox"), person.get("bbox"))
+            if bbox:
+                result["bbox"] = bbox
+            is_cached = cached.get("_frameId") != frame_id or now - float(cached.get("_cachedAt", now)) > 0.001
+            result["cached"] = is_cached
+            result["helmetSource"] = "cached" if is_cached else "fresh"
+            if is_cached:
+                cached_draws += 1
+            else:
+                fresh_draws += 1
             results.append(result)
+        self.helmet_cache_diagnostics["cacheHits"] = cache_hits
+        self.helmet_cache_diagnostics["freshDrawCount"] = fresh_draws
+        self.helmet_cache_diagnostics["cachedDrawCount"] = cached_draws
+        self.helmet_cache_diagnostics["activeStateCount"] = len(self.helmet_result_cache)
         return results
 
-    def _purge_helmet_result_cache(self, now, visible_tracks=None, camera_id=None):
-        visible_tracks = {str(track_id) for track_id in (visible_tracks or set())}
+    def _purge_helmet_result_cache(self, now):
+        before = len(self.helmet_result_cache)
         self.helmet_result_cache = {
             key: value
             for key, value in self.helmet_result_cache.items()
             if now - float(value.get("_cachedAt", now)) <= self.helmet_result_cache_ttl_seconds
-            and (
-                not visible_tracks
-                or camera_id is None
-                or not key.startswith(f"{camera_id}:")
-                or key.rsplit(":", 1)[-1] in visible_tracks
-            )
         }
+        expired = before - len(self.helmet_result_cache)
+        if expired:
+            self.helmet_cache_diagnostics["cacheExpiredCount"] += expired
+        self.helmet_cache_diagnostics["activeStateCount"] = len(self.helmet_result_cache)
+
+    def _helmet_diagnostics(self):
+        diagnostics = dict(getattr(self.abnormal_service.helmet_detector, "last_diagnostics", {}) or {})
+        diagnostics.update(dict(self.helmet_cache_diagnostics))
+        return diagnostics
 
     @staticmethod
     def _helmet_cache_key(camera_id, track_id):
@@ -504,6 +570,72 @@ def _helmet_priority(result):
     severity = 1 if result.get("helmetStatus") == "no_helmet" else 0
     confidence = float(result.get("helmetConfidence") or 0)
     return severity, confidence
+
+
+def _unmatched_helmet_results(helmet_results):
+    return [
+        dict(result, helmetSource="fresh", cached=False)
+        for result in helmet_results or []
+        if result.get("trackId") in (None, "")
+    ]
+
+
+def _bbox_to_xyxy(bbox):
+    if isinstance(bbox, dict):
+        values = [bbox.get("x1"), bbox.get("y1"), bbox.get("x2"), bbox.get("y2")]
+    elif isinstance(bbox, (list, tuple)) and len(bbox) == 4:
+        values = list(bbox)
+    else:
+        return None
+    try:
+        x1, y1, x2, y2 = [float(value) for value in values]
+    except (TypeError, ValueError):
+        return None
+    if x2 <= x1 or y2 <= y1:
+        return None
+    return x1, y1, x2, y2
+
+
+def _relative_bbox(child_bbox, parent_bbox):
+    child = _bbox_to_xyxy(child_bbox)
+    parent = _bbox_to_xyxy(parent_bbox)
+    if child is None or parent is None:
+        return None
+    px1, py1, px2, py2 = parent
+    width = px2 - px1
+    height = py2 - py1
+    if width <= 0 or height <= 0:
+        return None
+    x1, y1, x2, y2 = child
+    return {
+        "x1": (x1 - px1) / width,
+        "y1": (y1 - py1) / height,
+        "x2": (x2 - px1) / width,
+        "y2": (y2 - py1) / height,
+    }
+
+
+def _project_relative_bbox(relative_bbox, parent_bbox):
+    parent = _bbox_to_xyxy(parent_bbox)
+    if not isinstance(relative_bbox, dict) or parent is None:
+        return None
+    try:
+        rx1 = float(relative_bbox.get("x1"))
+        ry1 = float(relative_bbox.get("y1"))
+        rx2 = float(relative_bbox.get("x2"))
+        ry2 = float(relative_bbox.get("y2"))
+    except (TypeError, ValueError):
+        return None
+    px1, py1, px2, py2 = parent
+    width = px2 - px1
+    height = py2 - py1
+    x1 = px1 + rx1 * width
+    y1 = py1 + ry1 * height
+    x2 = px1 + rx2 * width
+    y2 = py1 + ry2 * height
+    if x2 <= x1 or y2 <= y1:
+        return None
+    return {"x1": round(x1, 2), "y1": round(y1, 2), "x2": round(x2, 2), "y2": round(y2, 2)}
 
 
 def _best_identity_by_track(face_results):

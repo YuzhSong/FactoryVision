@@ -77,6 +77,10 @@ class AbnormalBehaviorService:
         track_histories=None,
         timestamp=None,
         frame_shape=None,
+        include_zone: bool = True,
+        include_fall: bool = True,
+        include_running: bool = True,
+        include_helmet_events: bool = True,
     ):
         """Build one AI report with person detections and behavior warnings."""
         results = []
@@ -92,14 +96,17 @@ class AbnormalBehaviorService:
                 self._helmet_states[key]["lastSeenAt"] = now
 
         results.extend(person_detections)
-        zone_started_at = time.perf_counter()
-        zone_results = self.zone_detector.detect_events(
-            camera_id=camera_id,
-            detections=person_detections,
-            timestamp=timestamp,
-            frame_shape=frame_shape,
-        )
-        zone_ms = _elapsed_ms(zone_started_at)
+        zone_results = []
+        zone_ms = 0.0
+        if include_zone:
+            zone_started_at = time.perf_counter()
+            zone_results = self.zone_detector.detect_events(
+                camera_id=camera_id,
+                detections=person_detections,
+                timestamp=timestamp,
+                frame_shape=frame_shape,
+            )
+            zone_ms = _elapsed_ms(zone_started_at)
         results.extend(zone_results)
 
         fall_ms = 0.0
@@ -110,32 +117,35 @@ class AbnormalBehaviorService:
                 continue
 
             history = track_histories.get(track_id, [])
-            fall_started_at = time.perf_counter()
-            fall_result = self.fall_detector.detect(history)
-            if fall_result:
-                fall_observations.append(
-                    {
-                        "trackId": str(track_id),
-                        "state": self._fall_states.get((str(camera_id), str(track_id)), {}).get("state", "normal"),
-                        "isFall": bool(fall_result.get("isFall")),
-                        "ruleScore": fall_result.get("confidence"),
-                        "confidenceType": fall_result.get("confidenceType"),
-                        "rejectionReason": (fall_result.get("evidence") or {}).get("rejectionReason"),
-                        "evidence": fall_result.get("evidence"),
-                    }
-                )
-            fall_event = self._build_fall_result(camera_id, detection, fall_result)
-            fall_ms += _elapsed_ms(fall_started_at)
-            if fall_event:
-                results.append(fall_event)
+            if include_fall:
+                fall_started_at = time.perf_counter()
+                fall_result = self.fall_detector.detect(history)
+                if fall_result:
+                    fall_observations.append(
+                        {
+                            "trackId": str(track_id),
+                            "state": self._fall_states.get((str(camera_id), str(track_id)), {}).get("state", "normal"),
+                            "isFall": bool(fall_result.get("isFall")),
+                            "ruleScore": fall_result.get("confidence"),
+                            "confidenceType": fall_result.get("confidenceType"),
+                            "rejectionReason": (fall_result.get("evidence") or {}).get("rejectionReason"),
+                            "evidence": fall_result.get("evidence"),
+                        }
+                    )
+                fall_event = self._build_fall_result(camera_id, detection, fall_result)
+                fall_ms += _elapsed_ms(fall_started_at)
+                if fall_event:
+                    results.append(fall_event)
 
-            running_result = self.running_detector.detect(history)
-            if running_result and running_result.get("isRunning"):
-                results.append(running_result)
+            if include_running:
+                running_result = self.running_detector.detect(history)
+                if running_result and running_result.get("isRunning"):
+                    results.append(running_result)
 
-            helmet_result = self._build_helmet_result(camera_id, detection)
-            if helmet_result:
-                results.append(helmet_result)
+            if include_helmet_events:
+                helmet_result = self._build_helmet_result(camera_id, detection)
+                if helmet_result:
+                    results.append(helmet_result)
 
         self.last_diagnostics = {
             "zoneEventCount": len(zone_results),
@@ -226,6 +236,9 @@ class AbnormalBehaviorService:
         track_id = detection.get("trackId")
         if track_id in (None, "") or helmet_status == "unknown":
             return None
+        helmet_source = detection.get("helmetSource") or detection.get("helmet_source") or "fresh"
+        if helmet_source != "fresh":
+            return None
         key = (str(camera_id), str(track_id), "HELMET_WARNING")
         state = self._helmet_states.get(key)
         if helmet_status == "helmet":
@@ -235,6 +248,7 @@ class AbnormalBehaviorService:
             track_id=detection.get("trackId"),
             helmet_status=helmet_status,
             confidence=helmet_confidence,
+            bbox=detection.get("bbox"),
         )
         if warning is None:
             return None
@@ -243,6 +257,12 @@ class AbnormalBehaviorService:
             return None
         self._helmet_states[key] = {"lastReportedAt": now, "lastSeenAt": now}
         warning["cameraId"] = camera_id
+        warning["helmetSource"] = helmet_source
+        warning["helmetConfidence"] = helmet_confidence
+        if detection.get("bbox") is not None:
+            warning["personBbox"] = detection.get("bbox")
+        if detection.get("frameId") is not None:
+            warning["sourceFrameId"] = detection.get("frameId")
         return warning
 
     def _purge_helmet_states(self, now, visible_keys=None):

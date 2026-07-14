@@ -75,6 +75,9 @@ class CameraStreamControlTests(TestCase):
                 "outputUrl": "rtmp://81.70.90.222:1935/live/1_detected",
                 "playUrl": "https://webrtc.rainycode.cn:8443/live/1_detected.flv",
                 "includeFaces": True,
+                "includeHelmet": True,
+                "includeFall": True,
+                "includeZone": True,
                 "reportToBackend": True,
                 "personDetectInterval": 5,
                 "helmetDetectInterval": 8,
@@ -88,6 +91,26 @@ class CameraStreamControlTests(TestCase):
             },
         )
         self.assertTrue(response.data["data"]["running"])
+
+    @patch("apps.cameras.views.requests.request")
+    def test_camera_stream_start_applies_detection_switch_overrides(self, request_mock):
+        response_mock = MagicMock()
+        response_mock.json.return_value = {"code": 200, "message": "success", "data": {"running": True}}
+        response_mock.raise_for_status.return_value = None
+        request_mock.return_value = response_mock
+
+        response = self.client.post(
+            f"/api/cameras/{self.camera.id}/stream/start/",
+            {"includeFaces": False, "includeHelmet": False, "includeFall": False, "includeZone": False},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        _, kwargs = request_mock.call_args
+        self.assertEqual(kwargs["json"]["includeFaces"], False)
+        self.assertEqual(kwargs["json"]["includeHelmet"], False)
+        self.assertEqual(kwargs["json"]["includeFall"], False)
+        self.assertEqual(kwargs["json"]["includeZone"], False)
 
     @patch("apps.cameras.views.requests.request")
     def test_camera_stream_status_returns_current_ai_status(self, request_mock):

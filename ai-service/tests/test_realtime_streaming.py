@@ -254,6 +254,30 @@ class RealtimeStreamingTests(unittest.TestCase):
         self.assertEqual(person["helmetStatus"], "helmet")
         self.assertIn("helmet", report["modelTimingsMs"])
 
+    def test_frame_processor_detection_switches_skip_disabled_work(self):
+        processor = FrameProcessor(person_detector=_FakeDetector(), history_limit=5)
+        helmet_detector = processor.abnormal_service.helmet_detector
+        calls = []
+
+        def fake_helmet_detect(*_args, **_kwargs):
+            calls.append(True)
+            return [{"type": "HELMET_DETECTION", "trackId": "t-1", "helmetStatus": "no_helmet", "helmetConfidence": 0.9}]
+
+        helmet_detector.detect = fake_helmet_detect
+        report = processor.process_frame(
+            frame=object(),
+            include_faces=False,
+            include_helmet=False,
+            include_fall=False,
+            include_zone=False,
+        )
+
+        self.assertEqual(calls, [])
+        self.assertFalse(any(item.get("type") in {"HELMET_DETECTION", "HELMET_WARNING", "FALL_ALERT", "ZONE_WARNING"} for item in report["results"]))
+        self.assertEqual(report["modelRuns"]["helmet"], False)
+        self.assertEqual(report["modelRuns"]["fall"], False)
+        self.assertEqual(report["modelRuns"]["zone"], False)
+
     def test_frame_processor_attaches_face_identity_to_person_box(self):
         recognized = {
             "type": "FACE_RESULT",

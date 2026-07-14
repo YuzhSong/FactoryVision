@@ -210,7 +210,8 @@ def create_app() -> FastAPI:
             if _to_bool(payload.get("reportRealtimeToBackend")):
                 raise ValueError("`reportRealtimeToBackend` is no longer supported; use `reportToBackend`.")
             camera_id = payload.get("cameraId")
-            if camera_id and not isinstance(payload.get("zones"), list):
+            include_zone = _to_bool(payload.get("includeZone", Config.STREAM_INCLUDE_ZONE_DEFAULT))
+            if include_zone and camera_id and not isinstance(payload.get("zones"), list):
                 payload["zones"] = _resolve_zones({**payload, "loadZonesFromBackend": True}, camera_id) or []
             if _to_bool(payload.get("includeFaces", Config.STREAM_INCLUDE_FACES_DEFAULT)):
                 try:

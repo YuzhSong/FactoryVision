@@ -1,6 +1,6 @@
 import unittest
 
-from modules.frame_annotator import _label_for_result
+from modules.frame_annotator import _color_for_result, _label_for_result
 
 
 class FrameAnnotatorLabelTests(unittest.TestCase):
@@ -39,6 +39,23 @@ class FrameAnnotatorLabelTests(unittest.TestCase):
         self.assertEqual(label, "张三 82.3%")
         self.assertNotIn("E004", label)
         self.assertNotIn("Emp", label)
+
+
+    def test_person_box_stays_green_even_with_no_helmet_status(self):
+        color = _color_for_result({
+            "type": "PERSON_DETECTION",
+            "helmetStatus": "no_helmet",
+        })
+
+        self.assertEqual(color, (0, 255, 0))
+
+    def test_no_helmet_head_box_is_red(self):
+        color = _color_for_result({
+            "type": "HELMET_DETECTION",
+            "helmetStatus": "no_helmet",
+        })
+
+        self.assertEqual(color, (0, 0, 255))
 
 
 if __name__ == "__main__":

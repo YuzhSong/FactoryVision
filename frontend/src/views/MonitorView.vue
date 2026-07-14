@@ -18,6 +18,12 @@ const playbackStatus = ref('idle')
 const playbackMessage = ref('等待播放 AI 处理后视频流')
 const streamStatus = ref(null)
 const streamAgeSamples = ref([])
+const detectionOptions = ref({
+  includeFaces: false,
+  includeHelmet: true,
+  includeFall: true,
+  includeZone: true,
+})
 
 let player = null
 let realtimeSocket = null
@@ -179,7 +185,20 @@ function buildAiStreamPayload(camera, failedStartResponse = null) {
     || (failedStartResponse?.inputUrl ? failedStartResponse : null)
     || camera?.streamConfig
   if (!config) return null
-  return { ...config, zones: Array.isArray(config.zones) ? config.zones : [] }
+  return {
+    ...config,
+    ...streamDetectionPayload(),
+    zones: Array.isArray(config.zones) ? config.zones : [],
+  }
+}
+
+function streamDetectionPayload() {
+  return {
+    includeFaces: detectionOptions.value.includeFaces === true,
+    includeHelmet: detectionOptions.value.includeHelmet === true,
+    includeFall: detectionOptions.value.includeFall === true,
+    includeZone: detectionOptions.value.includeZone === true,
+  }
 }
 
 async function ensureProcessedStream() {
@@ -196,7 +215,7 @@ async function ensureProcessedStream() {
     return latestStatus
   }
   try {
-    const response = await camerasApi.startStream(activeCamera.value)
+    const response = await camerasApi.startStream(activeCamera.value, streamDetectionPayload())
     const runningStatus = await waitForRunning()
     if (runningStatus?.running) return runningStatus
     return response?.data || null
@@ -322,6 +341,18 @@ async function startFlvPlayback() {
   playbackStatus.value = 'connected'
   playbackMessage.value = `正在播放 ${playUrl}`
   startLiveLatencyChasing()
+}
+
+async function restartProcessedStream() {
+  if (!activeCamera.value) return
+  try {
+    playbackMessage.value = '正在应用检测开关'
+    await aiServiceApi.stopStream().catch(() => null)
+    await wait(500)
+    await startPlayback({ ensureStream: true })
+  } catch (error) {
+    ElMessage.error(error?.message || '检测开关应用失败')
+  }
 }
 
 function stopPlayback() {
@@ -497,6 +528,13 @@ onBeforeUnmount(() => {
             <span>{{ playbackMessage }}</span>
           </div>
         </div>
+        <div class="detection-switch-panel">
+          <span class="switch-caption">检测开关</span>
+          <el-switch v-model="detectionOptions.includeFaces" active-text="人脸" @change="restartProcessedStream" />
+          <el-switch v-model="detectionOptions.includeHelmet" active-text="头盔" @change="restartProcessedStream" />
+          <el-switch v-model="detectionOptions.includeFall" active-text="摔倒" @change="restartProcessedStream" />
+          <el-switch v-model="detectionOptions.includeZone" active-text="区域" @change="restartProcessedStream" />
+        </div>
       </div>
 
       <div class="panel">
@@ -600,6 +638,20 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   gap: 10px;
+}
+
+.detection-switch-panel {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 2px 0;
+  color: var(--fv-text-muted);
+}
+
+.switch-caption {
+  font-size: 13px;
+  color: var(--fv-text);
 }
 
 @media (max-width: 1180px) {

@@ -439,7 +439,7 @@ def _notify_ai_cache(path: str, payload: dict | None = None):
 
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
-def camera_stream_start_view(_request, camera_id):
+def camera_stream_start_view(request, camera_id):
     try:
         camera = Camera.objects.get(id=camera_id)
     except Camera.DoesNotExist:
@@ -451,6 +451,10 @@ def camera_stream_start_view(_request, camera_id):
         )
 
     payload = _camera_stream_payload(camera)
+    request_data = request.data if isinstance(request.data, dict) else {}
+    for key in ("includeFaces", "includeHelmet", "includeFall", "includeZone"):
+        if key in request_data:
+            payload[key] = bool(request_data[key])
     if not payload["inputUrl"]:
         return api_response(
             code=422,
