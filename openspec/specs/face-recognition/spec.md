@@ -1,119 +1,59 @@
 # Face Recognition
 
-> **Status:** ⚠️ 已更新 —— AI 服务已实现完整 InsightFace 推理管线（原 spec 称 "placeholder classes and methods"）
-
----
-
 ## Purpose
-Defines the expected behavior, constraints, and acceptance scenarios for Face Recognition in the Factory Vision system.
+
+Defines face enrollment, feature extraction, library synchronization, live matching, and cache invalidation.
+
 ## Requirements
-### Requirement: Face Recognition Service
 
-The system SHALL provide an AI-side face recognition service using InsightFace for face detection and feature extraction, with cosine similarity matching against a configurable face library. The service SHALL remain independent from the backend database implementation.
+### Requirement: Face feature extraction
 
-#### Scenario: Load face recognition model — [Status: Implemented]
+AIService SHALL extract normalized face embeddings for qualified enrollment images.
 
-- GIVEN the `FaceRecognitionService` is instantiated with model name `"buffalo_l"` (default) and model root path from `INSIGHTFACE_HOME` env var
-- WHEN `_load_model()` is called (lazy-loaded on first use)
-- THEN the InsightFace `FaceAnalysis` model SHALL be initialized with detection size `(640, 640)` and the configured provider (`"auto"` by default, resolving to CUDA or CPU)
-- AND the model SHALL be ready for face detection and feature extraction
+#### Scenario: Extract enrolled face
 
-#### Scenario: Load face library from backend or local sources — [Status: Implemented]
+- **GIVEN** Backend sends a valid face image to `POST /faces/extract`
+- **WHEN** InsightFace detects a qualified face
+- **THEN** AIService SHALL return one normalized 512-dimensional feature vector
+- **AND** SHALL reject undecodable, face-free, or low-quality images with a clear error
 
-- GIVEN a `BackendClient` is configured with a face library path
-- WHEN `load_face_library(source="backend")` is called
-- THEN the service SHALL call `BackendClient.list_face_records()` to fetch employee face data from the backend
-- AND if no face-specific data is returned, it SHALL fall back to `list_employees()` for employee items
-- AND each employee item with nested `faceFeatures` SHALL be expanded into individual `FaceRecord` entries
-- AND face records may alternatively be loaded from a local JSON file (`library_path`) or image directory (`image_dir`)
-- **Note:** Backend has no dedicated face API endpoint — the `list_employees()` fallback is the currently effective data path. A future `/face/` endpoint should be added to serve face records directly.
+### Requirement: Backend face enrollment
 
-#### Scenario: Match detected face against face library — [Status: Implemented]
+Backend SHALL persist one face record per employee angle and SHALL coordinate AIService refresh.
 
-- GIVEN a query face's normalized feature vector and a loaded face library
-- WHEN `_match(feature)` is called
-- THEN the service SHALL compute cosine similarity (`np.dot`) between the query feature and each stored `FaceRecord.feature`
-- AND SHALL return the `FaceRecord` with the highest similarity score
-- AND if the highest similarity is below `FACE_SIMILARITY_THRESHOLD` (default `0.45`), the match SHALL be discarded
+#### Scenario: Enroll one to three angles
 
-#### Scenario: Recognize faces in a frame — [Status: Implemented]
+- **GIVEN** an employee exists
+- **WHEN** Frontend submits one to three front/left/right images through `POST /api/face/enroll/`
+- **THEN** Backend SHALL extract and persist each feature and image
+- **AND** a new image for the same angle SHALL replace the old record
+- **AND** Backend SHALL notify AIService to refresh its library
 
-- GIVEN a video frame and a list of person detections (with bounding boxes)
-- WHEN `recognize(frame, person_detections, frame_id, timestamp)` is called
-- THEN the service SHALL detect all faces in the frame using InsightFace
-- AND SHALL assign each detected face to a person detection by point-containment + IoU scoring
-- AND SHALL match each assigned face against the face library
-- AND SHALL return a list of `FACE_RESULT` dicts containing `trackId`, `employeeId`, `employeeNo`, `employeeName`, `similarity`, and `bbox`
+#### Scenario: Query face slots
 
-#### Scenario: Extract face feature from an image — [Status: Implemented]
-
-- GIVEN an image (file path, base64 string, URL, or numpy array)
-- WHEN `extract_feature(image)` is called
-- THEN the service SHALL return a normalized 512-dimensional face embedding vector
-- AND the vector norm SHALL be 1.0 (L2-normalized)
-- AND supported image formats SHALL be: `.jpg`, `.jpeg`, `.png`, `.bmp`, `.webp` (`SUPPORTED_IMAGE_SUFFIXES` in `face_recognition_service.py:8`)
-- AND HTTP image loading SHALL use a timeout of `10` seconds (`face_recognition_service.py:306`)
-
-#### Scenario: Query face service status — [Status: Implemented]
-
-- GIVEN the face service is initialized
-- WHEN `GET /faces/status` is called on the AI service
-- THEN the response SHALL include model name, model loaded status, face library size, and similarity threshold
-
-#### Scenario: Reload face library — [Status: Implemented]
-
-- GIVEN the face service is running
-- WHEN `POST /faces/reload` is called
-- THEN the service SHALL reload the face library from the configured backend source
-
----
-
-### Requirement: Backend face enrollment API
-
-The face list endpoint SHALL return a three-slot object (front/left/right) with null for missing faces.
-
-#### Scenario: Query faces with all three slots
-
-- **GIVEN** employee has only front and left faces
+- **GIVEN** an employee has any subset of face angles
 - **WHEN** `GET /api/employees/{id}/faces/` is called
-- **THEN** front and left slots SHALL contain face data
-- **AND** right slot SHALL be null
+- **THEN** the response SHALL contain front, left, and right slots with null for missing angles
 
-## Purpose
-Defines the expected behavior, constraints, and acceptance scenarios for Face Recognition in the Factory Vision system.
+### Requirement: Live face recognition
 
-## Planned Features (Not Yet Implemented)
+AIService SHALL compare detected faces against the loaded employee face library.
 
-- [ ] **Backend face API:** No `/face/enroll/` or face data endpoints exist in `backend/apps/` — only a stub `faceApi.enroll()` in frontend
-- [ ] **Frontend face management UI:** No face enrollment or face library browsing page
-- [ ] **Face image persistence:** Face images are not stored or served by the backend
+#### Scenario: Match a face
 
----
+- **GIVEN** AIService has loaded the Backend face library
+- **WHEN** a detected face is assigned to a person track
+- **THEN** it SHALL compare normalized embeddings by cosine similarity
+- **AND** SHALL return employee identity only when the configured threshold is met
+- **AND** otherwise SHALL return an unknown result
 
-## Purpose
-Defines the expected behavior, constraints, and acceptance scenarios for Face Recognition in the Factory Vision system.
+### Requirement: Face library cache shall reflect mutations
 
-## Constraints
+AIService SHALL invalidate face-library and track-identity caches after relevant mutations.
 
-- The face recognition service SHALL NOT write to the database directly — it communicates with the backend only through `BackendClient`.
-- Face records (`FaceRecord`) hold `employee_id`, `employee_no`, `name`, `feature` (numpy array), and `source`.
-- The service supports multiple input sources: direct records dict, employee items list, JSON file, and image directory — with local file paths taking precedence over remote image URLs.
-- `InsightFace` library auto-downloads the `buffalo_l` model package on first run. The model cache directory is controlled by `INSIGHTFACE_HOME` env var (default: `models/insightface`).
+#### Scenario: Employee or face deletion
 
----
-
-## Purpose
-Defines the expected behavior, constraints, and acceptance scenarios for Face Recognition in the Factory Vision system.
-
-## 变更说明
-
-| 变更 | 原 spec | 新草稿 | 依据 |
-|------|---------|--------|------|
-| 替换 placeholder 描述 | "placeholder classes and methods" | 6 个具体 Scenario + 算法细节 | `face_recognition_service.py` 全部 616 行 |
-| 新增模型加载场景 | 无 | InsightFace `buffalo_l` + lazy loading | `face_recognition_service.py` L253-327 |
-| 新增余弦相似度匹配 | 无 | `np.dot` on normalized vectors, threshold 0.45 | `face_recognition_service.py` L329-344 |
-| 新增人脸库加载场景 | 无 | BackendClient + employee items fallback | `face_recognition_service.py` L50-82 |
-| 新增帧识别场景 | 无 | face detection + person assignment + matching | `face_recognition_service.py` L84-130 |
-| 新增 API 端点场景 | 无 | /faces/status, /faces/reload | `ai-service/app.py` L119-128 |
-| 保留 Constraints | 原有一条 | 扩展为 4 条具体约束 | 代码分析 |
-| 新增 Planned Features | 无 | 后端/前端人脸 API 仍为 stub | `backend/apps/` 搜索结果为空 |
+- **GIVEN** an employee or face record is removed
+- **WHEN** AIService reloads the library
+- **THEN** removed records SHALL disappear from matching data
+- **AND** short-lived track identity caches SHALL be invalidated so stale labels are not reused

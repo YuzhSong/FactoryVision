@@ -16,6 +16,7 @@
 - `DELETE /api/employees/{id}/delete/`: implemented
 - `GET /api/employees/{id}/faces/`: implemented
 - `POST /api/face/enroll/`: implemented
+- `GET /api/face/library/`: implemented
 - `DELETE /api/face/{id}/delete/`: implemented
 - `WS /ws/realtime/{cameraId}/`: implemented
 - `GET /api/cameras/`: placeholder
@@ -24,15 +25,28 @@
 - `PUT /api/cameras/{id}/`: implemented
 - `POST /api/cameras/{id}/toggle/`: implemented
 - `DELETE /api/cameras/{id}/delete/`: implemented
+- `POST /api/cameras/{id}/stream/start/`: implemented
+- `POST /api/cameras/{id}/stream/stop/`: implemented
+- `GET /api/cameras/{id}/stream/status/`: implemented
 - `GET /api/zones/`: placeholder
 - `GET /api/zones/list/`: implemented
 - `POST /api/zones/`: implemented
+- `GET/PUT/DELETE /api/zones/{id}/`: implemented
 - `GET /api/alerts/list/`: implemented
+- `GET /api/alerts/{alertId}/detail/`: implemented
 - `POST /api/alerts/{alertId}/handle/`: implemented
 - `GET /api/events/`: placeholder
+- `GET /api/events/list/`: implemented
+- `POST /api/events/{eventId}/media/`: implemented
 - `GET /api/attendance/`: placeholder
 - `GET /api/ai-results/`: placeholder
-- `POST /api/ai-results/report/`: implemented (stub)
+- `GET /api/ai/bootstrap/`: implemented
+- `POST /api/ai-results/report/`: implemented
+- `GET /api/dashboard/summary/`: implemented
+- `GET /api/reports/list/`: implemented
+- `POST /api/reports/generate/`: implemented
+- `GET /api/reports/{reportId}/`: implemented
+- `GET /api/reports/{reportId}/download/`: implemented
 - `GET /api/schema/`: implemented
 - `GET /api/docs/`: implemented
 
@@ -49,7 +63,7 @@
 - `GET /docs`: implemented
 - `GET /openapi.json`: implemented
 
-除上述 implemented / placeholder 外，本文档中设计的业务接口均为 `planned`。
+考勤记录查询仍为扩展项。本文档保留代表性请求和响应说明；完整且可执行的最新接口定义以 `/api/docs/` 和 `/api/schema/` 为准。
 
 ## 统一返回格式
 
@@ -141,13 +155,13 @@ GET /api/health/
   "data": {
     "service": "backend",
     "status": "ok",
-    "stage": "skeleton"
+    "stage": "development"
   },
   "requestId": "uuid"
 }
 ```
 
-状态说明：当前代码使用 placeholder 序列化器返回服务状态。
+状态说明：返回当前 Backend 运行状态；生产环境的具体 stage 可由部署配置决定。
 
 ## Auth 用户认证接口
 
@@ -990,7 +1004,7 @@ GET /api/events/
 | 接口说明 | 查询监控事件日志 |
 | URL | `/api/events/list/` |
 | Method | `GET` |
-| 状态 | planned |
+| 状态 | implemented |
 
 请求参数：通用分页参数，可增加 `cameraId`、`eventType`、`startTime`、`endTime`。
 
@@ -1255,7 +1269,7 @@ GET /api/ai-results/
 | 接口说明 | AI 服务向后端上报检测结果 |
 | URL | `/api/ai-results/report/` |
 | Method | `POST` |
-| 状态 | implemented (stub) |
+| 状态 | implemented |
 
 请求参数：
 
@@ -1297,7 +1311,7 @@ GET /api/ai-results/
 }
 ```
 
-当前实现说明：已实现基础字段校验和验收响应，事件生成、告警生成和数据持久化仍为 `planned`。
+当前实现说明：每个有效结果持久化为正式 `events.Event`；告警类结果同时创建关联 `Alert`。响应返回已接受/拒绝数量及 `eventIds`、`alertIds`。
 
 响应示例：
 
@@ -1306,7 +1320,7 @@ GET /api/ai-results/
   "code": 200,
   "message": "success",
   "data": {
-    "eventIds": [],
+    "eventIds": [101],
     "alertIds": [],
     "acceptedResults": 1,
     "cameraId": 1,

@@ -2,7 +2,7 @@
 
 ## 当前状态
 
-已实现 7 张业务表。开发阶段使用 SQLite，目标部署为 MySQL。`attendance_record` 表为 `planned`。
+已实现 `user`、`employee`、`face_feature`、`camera`、`zone`、`event`、`alert` 和 `monitor_report` 8 张业务表。开发阶段使用 SQLite，生产部署使用 PostgreSQL。考勤表未纳入本版本。
 
 ## ER 图
 
@@ -14,6 +14,11 @@ erDiagram
     camera ||--o{ event : records
     event ||--o| alert : triggers
     zone ||--o{ event : related_to
+    monitor_report {
+        date report_date
+        datetime period_start
+        datetime period_end
+    }
 ```
 
 ## 表关系
@@ -76,6 +81,7 @@ erDiagram
 | `location` | varchar(255) | 否 | 安装位置 |
 | `status` | varchar(32) | 否 | online / offline / disabled |
 | `enabled` | boolean | 否 | 是否启用，默认 true |
+| `include_faces` | boolean | 否 | 摄像头默认是否启用人脸检测 |
 | `created_at` | datetime | 否 | 创建时间 |
 | `updated_at` | datetime | 否 | 更新时间 |
 
@@ -131,6 +137,29 @@ erDiagram
 | `snapshot_path` | varchar(512) | 否 | 截图路径（冗余） |
 | `occurred_at` | datetime | 否 | 发生时间（冗余） |
 | `created_at` | datetime | 否 | 创建时间 |
+
+## monitor_report
+
+| 字段名 | 类型 | 是否为空 | 说明 |
+| --- | --- | --- | --- |
+| `id` | bigint | 否 | 日报 ID |
+| `report_date` | date | 否 | 报告日期 |
+| `period_label` | varchar(32) | 否 | 展示时段 |
+| `period_start` | datetime | 否 | 统计开始时间 |
+| `period_end` | datetime | 否 | 统计结束时间 |
+| `alert_count` | integer | 否 | 告警总数 |
+| `high_alert_count` | integer | 否 | 高危告警数 |
+| `pending_alert_count` | integer | 否 | 待处理告警数 |
+| `ai_summary` | text | 否 | AI 管理建议 |
+| `content` | text | 否 | 日报正文 |
+| `document_path` | varchar(512) | 否 | Word 文档相对路径 |
+| `status` | varchar(32) | 否 | pending / generating / generated / failed |
+| `error_message` | text | 否 | 生成失败信息 |
+| `generated_at` | datetime | 是 | 生成时间 |
+| `created_at` | datetime | 否 | 创建时间 |
+| `updated_at` | datetime | 否 | 更新时间 |
+
+`period_start + period_end` 具有唯一约束，重复生成同一时段时更新原记录。
 
 ## 索引建议
 

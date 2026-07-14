@@ -1,18 +1,19 @@
 # Attendance
-
 
 ## Purpose
-Defines the expected behavior, constraints, and acceptance scenarios for Attendance in the Factory Vision system.
 
+Records the explicitly deferred attendance boundary for future first-seen, leave, return, and duration statistics.
 
 ## Requirements
 
-### Requirement: Reserve Attendance Statistics Module
+### Requirement: Keep attendance outside the current delivery scope
 
-The system SHALL provide an attendance module boundary for future first-seen, leave, return, and duration statistics.
+The current release SHALL treat attendance as a deferred extension boundary.
 
-#### Scenario: Access attendance page placeholder
+#### Scenario: Inspect current version
 
-- GIVEN the project skeleton is running
-- WHEN a user opens the attendance page
-- THEN the frontend SHALL display a placeholder page for future attendance data integration
+- **GIVEN** the final project version is deployed
+- **WHEN** attendance capability is reviewed
+- **THEN** Backend MAY retain a placeholder module boundary
+- **AND** Frontend SHALL NOT advertise an unfinished attendance page in primary navigation
+- **AND** future attendance work SHALL require a new OpenSpec change

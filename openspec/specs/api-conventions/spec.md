@@ -3,14 +3,10 @@
 > **Status:** 新建 —— 统一响应格式是全项目的基础契约
 
 ---
-
 
 ## Purpose
 Defines the expected behavior, constraints, and acceptance scenarios for API Conventions in the Factory Vision system.
-
-
 ## Requirements
-
 ### Requirement: Unified API Response Format
 
 The system SHALL use a consistent JSON response envelope for all API endpoints. Every response SHALL include a status code, human-readable message, payload data, and a unique request identifier for tracing.
@@ -80,11 +76,24 @@ The system SHALL use a consistent JSON response envelope for all API endpoints. 
 - AND if the caller provides a `requestId` parameter, it SHALL be preserved in the response
 
 ---
-
+
+### Requirement: Report API conventions
+
+Report JSON APIs SHALL follow the project API response envelope and authentication conventions.
+
+#### Scenario: Authenticated report JSON response
+
+- WHEN an authenticated user calls a report JSON endpoint
+- THEN the response SHALL use `code`, `message`, `data`, and `requestId`
+- AND list endpoints SHALL accept `page` and `pageSize`
+
+#### Scenario: Unauthenticated report request
+
+- WHEN a user without a valid Bearer token calls a report endpoint
+- THEN protected endpoints SHALL reject the request with an authentication error
 
 ## Purpose
 Defines the expected behavior, constraints, and acceptance scenarios for API Conventions in the Factory Vision system.
-
 
 ## Response Code Conventions
 
@@ -97,11 +106,9 @@ Defines the expected behavior, constraints, and acceptance scenarios for API Con
 | 409 | Conflict | Duplicate `employeeNo` |
 
 ---
-
 
 ## Purpose
 Defines the expected behavior, constraints, and acceptance scenarios for API Conventions in the Factory Vision system.
-
 
 ## Constraints
 
@@ -110,11 +117,9 @@ Defines the expected behavior, constraints, and acceptance scenarios for API Con
 - `custom_exception_handler` is registered in `REST_FRAMEWORK["EXCEPTION_HANDLER"]` in `settings.py` and applies globally to all DRF views.
 
 ---
-
 
 ## Purpose
 Defines the expected behavior, constraints, and acceptance scenarios for API Conventions in the Factory Vision system.
-
 
 ## 变更说明
 

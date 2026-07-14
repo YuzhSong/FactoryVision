@@ -1,116 +1,94 @@
 # AI Results Reporting
 
-> **Status:** 新建 —— 基于已实现的 AI 上报端点
-
----
-
-
 ## Purpose
-Defines the expected behavior, constraints, and acceptance scenarios for AI Results Reporting in the Factory Vision system.
 
+Defines how AIService reports detections, persists formal events, applies event policies, and attaches replay evidence without blocking real-time processing.
 
 ## Requirements
 
-### Requirement: AI Detection Result Reporting
+### Requirement: AI detection result reporting
 
-The system SHALL provide a backend endpoint for the AI service to report detection results. The endpoint SHALL validate the payload structure and return acceptance confirmation.
+The Backend SHALL validate AI reports and persist each accepted result as a formal `events.Event`. Alert-class results SHALL create an `Alert` linked through `Alert.event`; no `AIEvent` compatibility model SHALL be used.
 
-#### Scenario: Report AI detection results — [Status: Implemented]
+#### Scenario: Report detection results
 
-- GIVEN the AI service has processed a video frame and produced detection results
-- WHEN `POST /api/ai-results/report/` is called with a valid JSON payload
-- THEN the backend SHALL validate required fields:
-  - `cameraId`: integer >= 1
-  - `frameId`: string (no length/non-empty constraint, only the type is validated)
-  - `timestamp`: valid ISO 8601 datetime string
-  - `results`: list of result objects (may be empty — `allow_empty=True`)
-- AND upon success SHALL return `{"code": 200, "data": {"acceptedResults": <int>, "eventIds": [], "alertIds": [], "cameraId": <int>, "frameId": "<str>"}}`
-- **Note:** Results are validated and accepted but NOT persisted to the database (no AI result models exist yet)
+- **GIVEN** AIService produced a frame report
+- **WHEN** it calls `POST /api/ai-results/report/` with `cameraId`, `timestamp`, and `results`
+- **THEN** Backend SHALL validate the camera and result payloads
+- **AND** SHALL return accepted/rejected counts, `eventIds`, `alertIds`, `cameraId`, and `frameId`
+- **AND** SHALL NOT return AIEvent identifiers
 
-#### Scenario: Reject invalid AI report — [Status: Implemented]
+#### Scenario: Person observation does not create an alert
 
-- GIVEN an invalid payload (missing required field, wrong type, etc.)
-- WHEN `POST /api/ai-results/report/` is called
-- THEN the backend SHALL return `{"code": 400, "message": "<validation error details>"}`
+- **GIVEN** an accepted result is a non-alert person observation
+- **WHEN** Backend persists it
+- **THEN** one `Event` SHALL be created
+- **AND** no `Alert` SHALL be created
 
-#### Scenario: AI service reports results via BackendClient — [Status: Implemented]
+### Requirement: AI events shall be deduplicated by event policy
 
-- GIVEN the AI service `FrameProcessor` has built an AI report payload
-- WHEN `BackendClient.report_ai_results(payload)` is called
-- THEN it SHALL POST the payload to `{BACKEND_API_BASE_URL}/ai-results/report/`
-- AND SHALL raise an HTTPError on non-2xx responses
-- AND the HTTP request SHALL use a timeout of `BACKEND_TIMEOUT_SECONDS` (default `5` seconds)
+Actionable results SHALL be accepted at most once per relevant camera, region, track, event type, and cooldown window.
 
-#### Scenario: System health check — [Status: Implemented]
+#### Scenario: Region intrusion policy
 
-- GIVEN the backend is running
-- WHEN `GET /api/health/` is called
-- THEN the response SHALL return service status information
+- **GIVEN** the same region intrusion was accepted inside its cooldown window
+- **WHEN** a duplicate is reported
+- **THEN** the duplicate SHALL be rejected
+- **AND** accepted intrusion events SHALL default to medium severity
 
-#### Scenario: AI results module placeholder — [Status: Implemented]
+#### Scenario: Region dwell policy
 
-- GIVEN the backend is running
-- WHEN `GET /api/ai-results/` is called
-- THEN the response SHALL return `{"code": 200, "data": {"module": "ai_results", "status": "placeholder"}}`
+- **GIVEN** the same region dwell was accepted inside its longer cooldown window
+- **WHEN** a duplicate is reported
+- **THEN** the duplicate SHALL be rejected
+- **AND** accepted dwell events SHALL default to high severity
 
----
-
+### Requirement: Report replay evidence
 
-## Purpose
-Defines the expected behavior, constraints, and acceptance scenarios for AI Results Reporting in the Factory Vision system.
+Actionable events SHALL include bounded evidence when available.
 
+#### Scenario: Preserve trajectory and context
 
-## AI Result Types (Produced by AI Service)
+- **GIVEN** AIService has recent track, region, bbox, or trigger data
+- **WHEN** an actionable result is reported
+- **THEN** evidence SHALL be bounded and stored in `Event.payload`
+- **AND** raw frame image data SHALL NOT be embedded in the JSON payload
 
-The `results` list in the report payload may contain the following detection types:
+### Requirement: Upload event replay media
 
-| Type | Produced By | Key Fields |
-|------|------------|------------|
-| `PERSON_DETECTION` | `PersonDetector` | `trackId`, `bbox`, `centerPoint`, `footPoint`, `confidence` |
-| `FACE_RESULT` | `FaceRecognitionService` | `trackId`, `employeeId`, `employeeNo`, `employeeName`, `similarity`, `bbox` |
-| `FALL_ALERT` | `FallDetector` | `trackId`, `isFall`, `ratio` |
-| `RUNNING_ALERT` | `RunningDetector` | `trackId`, `isRunning`, `speed` |
-| `ZONE_WARNING` | `ZoneDetector` | `trackId`, `zoneId`, `isInside`, `distance` |
-| `HELMET_WARNING` | `HelmetDetector` (placeholder) | `trackId`, `helmetStatus`, `confidence` |
+AIService SHALL upload completed keyframes and clips after Backend accepts the event.
 
----
-
+#### Scenario: Upload media
 
-## Purpose
-Defines the expected behavior, constraints, and acceptance scenarios for AI Results Reporting in the Factory Vision system.
+- **GIVEN** a formal Event exists
+- **WHEN** AIService posts multipart data to `POST /api/events/{eventId}/media/`
+- **THEN** Backend SHALL save the files and update `Event.payload.media` with browser-accessible URLs
+- **AND** SHALL synchronize the alert snapshot path when a keyframe is uploaded
 
+#### Scenario: Keep media work off the frame path
 
-## Planned Features (Not Yet Implemented)
+- **GIVEN** media encoding or upload is slow or fails
+- **WHEN** AIService is processing live video
+- **THEN** media work SHALL run through a bounded background queue
+- **AND** SHALL NOT block frame processing or invalidate the accepted event
 
-- [ ] **Persist AI results:** No database models exist for storing detection events or alerts
-- [ ] **Event/alert aggregation:** The report endpoint returns empty `eventIds` and `alertIds` arrays
-- [ ] **Frontend real-time display:** `MonitorView.vue` uses hardcoded placeholder events, not live AI results
+### Requirement: Event replay clips shall be browser playable
 
----
-
+AIService SHALL encode replay clips in a browser-playable format when FFmpeg is available.
 
-## Purpose
-Defines the expected behavior, constraints, and acceptance scenarios for AI Results Reporting in the Factory Vision system.
+#### Scenario: Generate replay clip
 
+- **GIVEN** FFmpeg is available
+- **WHEN** an event clip is finalized
+- **THEN** it SHALL use H.264 MP4 with yuv420p and browser-oriented metadata
+- **AND** failures SHALL fall back to keyframe or manifest evidence
 
-## Constraints
+### Requirement: Runtime media shall not be committed
 
-- The AI service SHALL NOT write to the database directly — it SHALL always POST to `/api/ai-results/report/`.
-- The backend currently accepts and validates reports but does not persist them — models.py is empty.
-- Report payloads are synchronous HTTP POST requests. No message queue or async processing is used.
+Generated runtime media SHALL remain outside version control.
 
----
-
+#### Scenario: Inspect repository changes
 
-## Purpose
-Defines the expected behavior, constraints, and acceptance scenarios for AI Results Reporting in the Factory Vision system.
-
-
-## 变更说明
-
-| 说明 |
-|------|
-| 全新 spec，基于 `backend/apps/ai_results/views.py`, `serializers.py`, `urls.py`, `tests.py` (2 tests) |
-| 基于 `ai-service/modules/backend_client.py` L63-73 (`report_ai_results()` 方法) |
-| 基于 `ai-service/modules/abnormal_behavior_service.py` 中的 payload 构建逻辑 |
-| Result types 表基于 5 个 detector 的输出格式总结 |
+- **GIVEN** keyframes, clips, manifests, or fallback frames were generated
+- **WHEN** Git status is inspected
+- **THEN** those runtime artifacts SHALL remain ignored

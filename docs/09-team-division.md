@@ -20,7 +20,7 @@
 | 主要职责 | 人脸录入、人脸特征提取、人脸库加载、员工识别、陌生人判断 |
 | 交付物 | 人脸识别模块、输入输出格式、模型依赖说明、识别测试用例 |
 | 对接对象 | 后端负责人、前端负责人、成员 1 |
-| 验收标准 | 可输出 employeeId、similarity、matched 状态，陌生人可触发 planned 告警流程 |
+| 验收标准 | 可输出 employeeId、similarity、matched 状态，陌生人可触发事件和告警流程 |
 
 ## 成员 3：AI 算法负责人-异常行为检测
 
@@ -36,7 +36,7 @@
 | 项 | 内容 |
 | --- | --- |
 | 主要职责 | Django API、数据库模型、认证权限、事件日志、告警中心、AI 上报入口 |
-| 交付物 | REST API、WebSocket planned 实现、数据库 migration、Swagger 文档 |
+| 交付物 | REST API、WebSocket 实现、数据库 migration、Swagger 文档 |
 | 对接对象 | 前端负责人、AI 算法负责人、测试部署负责人 |
 | 验收标准 | API 符合统一返回格式，AI 上报能生成事件和告警，前端不需要直连数据库 |
 

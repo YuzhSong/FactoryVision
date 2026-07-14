@@ -172,7 +172,7 @@ python manage.py test apps.ai_results apps.events
 - `backend/apps/ai_results/tests.py`
 - `backend/apps/ai_results/migrations/0002_alert_system_event.py`
 - `openspec/changes/consolidate-ai-events-into-events/`
-- `docs/event-model-migration-report.md`
+- `docs/reports/event-model-migration-report.md`
 
 ## 下一步建议
 

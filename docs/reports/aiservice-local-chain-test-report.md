@@ -169,7 +169,7 @@ POST /api/realtime/frame-results/
 - `ai-service/tests/test_app_process_stream.py`
 
 文档：
-- `docs/aiservice-local-chain-test-report.md`
+- `docs/reports/aiservice-local-chain-test-report.md`
 
 本地运行依赖文件：
 - `ai-service/models/helmet/helmet.pt`

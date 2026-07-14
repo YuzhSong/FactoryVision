@@ -1,178 +1,101 @@
 # 部署与 CI/CD
 
-## 当前状态
+## 部署边界
 
-当前项目处于基础框架阶段。`docker-compose.yml` 已提供三个服务的容器启动参考，`Jenkinsfile` 已包含 Checkout、Backend Check、Frontend Build、AI Service Check 阶段。业务服务部署、视频流服务和制品归档仍为 `planned`。
+当前部署分为两部分：
 
-## 本地启动方式
+- 云端：PostgreSQL、Django/Daphne Backend、Nginx Frontend，由 Jenkins 和 `deploy/docker-compose.prod.yml` 部署。
+- AI 主机：AIService、CUDA/模型、OpenCV 和 FFmpeg，使用仓库 Python 3.11 环境独立运行并连接云端 Backend/SRS。
 
-### 后端
+SRS 作为独立视频基础设施运行，不由当前生产 Compose 创建。
 
-```powershell
-cd backend
-py -3.14 -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install --upgrade pip
-pip install -r requirements.txt
-python manage.py migrate
-python manage.py runserver
-```
+## 本地环境
 
-访问地址：
-
-- `http://127.0.0.1:8000/api/health/`
-- `http://127.0.0.1:8000/api/docs/`
-
-### 前端
-
-```powershell
-cd frontend
-npm install
-npm run dev
-```
-
-访问地址：
-
-- `http://127.0.0.1:5173/`
-
-### AI 服务
-
-```powershell
-cd ai-service
-py -3.14 -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install --upgrade pip
-pip install -r requirements.txt
-uvicorn app:app --host 0.0.0.0 --port 9000 --reload
-```
-
-访问地址：
-
-- `http://127.0.0.1:9000/health`
-- `http://127.0.0.1:9000/docs`
-
-## 数据库初始化
-
-开发阶段默认使用 SQLite。
-
-```powershell
-cd backend
-python manage.py migrate
-```
-
-目标部署使用 MySQL 时，需要配置后端环境变量：
-
-| 变量 | 说明 |
-| --- | --- |
-| `DB_ENGINE` | Django 数据库引擎 |
-| `DB_NAME` | 数据库名 |
-| `DB_USER` | 数据库用户 |
-| `DB_PASSWORD` | 数据库密码 |
-| `DB_HOST` | 数据库地址 |
-| `DB_PORT` | 数据库端口 |
-
-业务表当前为 `planned`，后续实现模型后需要提交 migration。
-
-## SRS 视频流服务
-
-视频流服务用于接入摄像头、手机或 OBS 的 RTMP 原始流，并向前端和 AI 服务分发可消费的视频地址。当前演示环境使用 SRS。
-
-推荐职责：
-
-1. 接入采集端原始 RTMP 流。
-2. 转换为前端可播放的 WebRTC 地址。
-3. 为 AI 服务保留稳定的 RTMP 拉流地址。
-4. 提供摄像头在线状态检查能力。
-
-当前演示流地址：
-
-| 用途 | 地址 |
-| --- | --- |
-| 手机推原始流 | `rtmp://81.70.90.222:1935/live/1` |
-| AI 输出带框流 | `rtmp://81.70.90.222:1935/live/1_detected` |
-| 前端播放带框流 | `webrtc://webrtc.rainycode.cn:8443/live/1_detected` |
-
-SRS 云端端口包括 `1935/tcp`、`8443/tcp`、`8000/udp`、`1985/tcp` 和 `8080/tcp`。AI Service 需要可用的 `ffmpeg` 可执行文件以回推带框视频流。
-
-## Docker Compose 参考
-
-当前 `docker-compose.yml` 使用：
-
-| 服务 | 镜像 | 端口 |
+| 服务 | 固定运行时 | 默认端口 |
 | --- | --- | --- |
-| backend | `python:3.14-slim` | `8000` |
-| frontend | `node:24-alpine` | `5173` |
-| ai-service | `python:3.14-slim` | `9000` |
+| Backend | `backend/.venv/Scripts/python.exe` | 8000 |
+| AIService | `ai-service/.venv/Scripts/python.exe`，Python 3.11 | 9000 |
+| Frontend | 项目 Node/npm | 5173 |
 
-`ai-service` 容器启动时会安装 `ffmpeg`，用于将 AI 处理后的 OpenCV 帧重新编码并推送到 SRS RTMP 输出流。生产部署建议改为自定义镜像，把 `ffmpeg` 固化到镜像层，避免每次启动重复安装。
+启动完整本地栈：
 
-## Jenkins Pipeline 阶段
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\check-python-env.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\start-local-dev.ps1
+```
+
+停止脚本管理的进程：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\stop-local-dev.ps1
+```
+
+不要为 AIService 创建其他虚拟环境，不要使用系统 Python 或 Python 3.14。
+
+## 数据库
+
+本地默认使用 `backend/db.sqlite3`：
+
+```powershell
+backend\.venv\Scripts\python.exe backend\manage.py migrate
+backend\.venv\Scripts\python.exe backend\manage.py seed_dev_data
+```
+
+生产使用 PostgreSQL 16，并通过 `deploy/.env.prod` 注入数据库、Django、域名和跨域配置。模板见 `deploy/.env.prod.example`。生产密钥和密码不得提交仓库。
+
+## 视频流
+
+典型演示链路：
+
+| 用途 | 示例 |
+| --- | --- |
+| 原始 RTMP | `rtmp://<srs-host>:1935/live/1` |
+| AI 带框 RTMP | `rtmp://<srs-host>:1935/live/1_detected` |
+| WebRTC/HTTP-FLV | 由摄像头配置和前端环境变量提供 |
+
+AIService 主机必须能访问 SRS RTMP、Backend HTTPS API，并提供可执行的 `ffmpeg`。前端浏览器需要能访问 Backend、WebSocket 以及 SRS 播放端口。
+
+## Jenkins Pipeline
 
 ```mermaid
 flowchart LR
-    Checkout["Checkout"] --> Backend["Backend Check"]
-    Backend --> Frontend["Frontend Build"]
-    Frontend --> AI["AI Service Check"]
-    AI --> Archive["Archive Artifacts"]
+    Checkout["Checkout"] --> Validate["Validate cloud-side code"]
+    Validate --> Build["Build production images"]
+    Build --> Deploy["Deploy cloud stack"]
+    Deploy --> Health["Health check"]
+    Health --> Cleanup["Cleanup dangling images"]
 ```
 
-### Checkout
+流水线执行以下工作：
 
-拉取仓库代码，确保工作区为本次构建对应提交。
+1. 校验 `deploy/.env.prod` 与生产 Compose 配置。
+2. 执行前端 `npm ci` 和 `npm run build`。
+3. 执行 Backend `manage.py check`。
+4. 构建 Frontend、Backend 生产镜像。
+5. 启动/更新 PostgreSQL、Backend、Frontend。
+6. 在 Backend 容器内执行 migration 和 collectstatic。
+7. 检查 Compose 服务及 HTTP 健康状态。
+8. 清理 dangling images。
 
-### Backend Check
+AIService 不在云端流水线构建或重启，避免覆盖本地 GPU、模型和流配置。
 
-当前脚本：
+## 生产健康检查
 
-```sh
-cd backend
-python -m pip install -r requirements.txt
-python manage.py check
-```
+- Frontend：站点首页返回 2xx。
+- Backend：`/api/health/` 返回健康状态。
+- Swagger：`/api/docs/` 可访问（是否对公网开放按部署策略决定）。
+- Database：PostgreSQL `pg_isready` 通过。
+- AIService：本地主机 `/health` 与 `/streams/status` 正常。
+- 视频：SRS 同时存在原始流和带框流，浏览器 WebRTC/HTTP-FLV 可播放。
 
-建议后续增加：
+## 回滚与排查
 
-```sh
-python manage.py test
-```
+生产部署、数据库备份、回滚命令与 Nginx 配置说明见 [生产部署指南](guides/production-deployment.md)。常见排查顺序：
 
-### Frontend Build
+1. 确认 Backend 和 Frontend 容器健康。
+2. 确认浏览器 API/WebSocket 无跨域或证书错误。
+3. 确认手机原始 RTMP 持续存在。
+4. 确认 AIService `/streams/status` 没有输入断流或 writer 错误。
+5. 确认 SRS 带框流存在以及 WebRTC/HTTP-FLV 地址匹配。
 
-当前脚本：
-
-```sh
-cd frontend
-npm install
-npm run build
-```
-
-### AI Service Check
-
-当前脚本：
-
-```sh
-cd ai-service
-python -m pip install -r requirements.txt
-python -m compileall .
-```
-
-### Archive Artifacts
-
-当前 `Jenkinsfile` 未实现归档阶段，状态为 `planned`。建议归档：
-
-1. 前端 `dist/`。
-2. 后端检查日志。
-3. AI 服务检查日志。
-4. 测试报告。
-
-## 常见问题排查
-
-| 问题 | 原因 | 处理方式 |
-| --- | --- | --- |
-| 根目录执行 `pip install -r requirements.txt` 失败 | 根目录没有通用 requirements 文件 | 进入 `backend` 或 `ai-service` 目录执行 |
-| Django 无法导入 | 未激活虚拟环境或依赖未安装 | 激活 `.venv` 后重新安装依赖 |
-| Django 依赖安装失败 | Python 版本过低 | 使用 Python 3.12+，本地验证版本为 3.14 |
-| 前端启动失败 | Node 或 npm 版本不匹配 | 使用 Node 24 / npm 11 或兼容版本 |
-| AI 服务健康检查失败 | FastAPI 或 uvicorn 依赖未安装，或端口被占用 | 安装依赖并检查 9000 端口 |
-| 视频流无法播放 | SRS 未收到原始流或带框流，播放地址不可用 | 检查 SRS 端口、RTMP 推流、AI 回推和 WebRTC 播放地址 |
-| Jenkins 构建失败 | 构建机缺少 Python、Node 或网络依赖 | 固定构建环境并缓存依赖 |
+根目录 `docker-compose.yml` 仅作通用开发参考，其中 AIService 容器不包含已验证的本地 CUDA/Python 3.11 组合，不能替代推荐启动脚本。
