@@ -17,6 +17,16 @@ const draftPoints = ref([])
 const draggingPointIndex = ref(null)
 const editingZoneId = ref(null)
 const playbackStatus = ref('idle')
+const playbackMode = ref('idle')
+const playbackStats = ref({
+  decodedFps: 0,
+  droppedFrames: 0,
+  packetsLost: 0,
+  jitterMs: 0,
+  rttMs: 0,
+  transport: '-',
+  freezes: 0,
+})
 const playbackMessage = ref('等待处理后视频流')
 const switchingZoneId = ref(null)
 const videoLayout = reactive({ left: 0, top: 0, width: 0, height: 0 })
@@ -25,6 +35,18 @@ let player = null
 let sdkPromise = null
 let resizeObserver = null
 let playbackLatencyTimer = null
+let playbackStatsTimer = null
+let playbackWatchdogTimer = null
+let lastDecodedFrames = 0
+let lastDecodedAt = 0
+let lastDecodedProgressAt = 0
+let watchdogRestarting = false
+
+const FLV_MAX_LATENCY_SECONDS = 0.9
+const FLV_MIN_REMAIN_SECONDS = 0.2
+const FLV_CHASE_TRIGGER_SECONDS = 0.9
+const FLV_CHASE_TARGET_SECONDS = 0.18
+const WEBRTC_JITTER_BUFFER_TARGET_SECONDS = 0.08
 
 const zoneForm = reactive({
   name: '',
@@ -60,6 +82,15 @@ const detectedFlvUrl = computed(() => {
   if (!url || !url.startsWith('webrtc://')) return url
   return url.replace('webrtc://', 'https://').replace(/\/([^/?]+)(\?.*)?$/, '/$1.flv')
 })
+
+const playbackHudMetrics = computed(() => ({
+  mode: playbackMode.value === 'webrtc' ? 'WebRTC' : (playbackMode.value === 'flv' ? 'HTTP-FLV' : '-'),
+  fps: playbackStats.value.decodedFps,
+  lost: playbackStats.value.packetsLost,
+  jitter: playbackStats.value.jitterMs,
+  rtt: playbackStats.value.rttMs,
+  transport: playbackStats.value.transport || '-',
+}))
 
 const polygonPoints = computed(() => draftPoints.value
   .map((point) => `${point.x * 100},${point.y * 100}`)
@@ -222,8 +253,139 @@ const ensureProcessedStream = async () => {
   }
 }
 
+const resetPlaybackStats = () => {
+  playbackStats.value = {
+    decodedFps: 0,
+    droppedFrames: 0,
+    packetsLost: 0,
+    jitterMs: 0,
+    rttMs: 0,
+    transport: '-',
+    freezes: 0,
+  }
+  lastDecodedFrames = 0
+  lastDecodedAt = 0
+  lastDecodedProgressAt = 0
+  watchdogRestarting = false
+}
+
+const getPeerConnection = () => player?.pc || player?.peerConnection || null
+
+const applyReceiverLowLatencyHints = () => {
+  const pc = getPeerConnection()
+  if (!pc?.getReceivers) return
+  pc.getReceivers()
+    .filter((receiver) => receiver.track?.kind === 'video')
+    .forEach((receiver) => {
+      if ('jitterBufferTarget' in receiver) {
+        try {
+          receiver.jitterBufferTarget = WEBRTC_JITTER_BUFFER_TARGET_SECONDS
+        } catch (error) {
+          // Browser support is partial; unsupported receivers should not break playback.
+        }
+      }
+    })
+}
+
+const collectWebRtcStats = async () => {
+  const pc = getPeerConnection()
+  if (!pc?.getStats) return
+  const reports = await pc.getStats()
+  let inboundVideo = null
+  let selectedPair = null
+  let localCandidate = null
+  let remoteCandidate = null
+
+  reports.forEach((report) => {
+    if (report.type === 'inbound-rtp' && (report.kind === 'video' || report.mediaType === 'video')) {
+      inboundVideo = report
+    }
+    if (report.type === 'candidate-pair' && (report.selected || report.nominated)) {
+      selectedPair = report
+    }
+  })
+
+  if (selectedPair) {
+    localCandidate = reports.get(selectedPair.localCandidateId)
+    remoteCandidate = reports.get(selectedPair.remoteCandidateId)
+  }
+
+  const now = performance.now()
+  const decoded = Number(inboundVideo?.framesDecoded) || 0
+  const elapsedSeconds = lastDecodedAt ? (now - lastDecodedAt) / 1000 : 0
+  const decodedFps = elapsedSeconds > 0 ? Math.max(0, Math.round((decoded - lastDecodedFrames) / elapsedSeconds)) : 0
+  if (decoded > lastDecodedFrames) {
+    lastDecodedProgressAt = now
+  }
+  lastDecodedFrames = decoded
+  lastDecodedAt = now
+
+  const transport = [
+    localCandidate?.protocol || '',
+    localCandidate?.candidateType || '',
+    remoteCandidate?.candidateType ? `to-${remoteCandidate.candidateType}` : '',
+  ].filter(Boolean).join('/')
+
+  playbackStats.value = {
+    decodedFps,
+    droppedFrames: Number(inboundVideo?.framesDropped) || 0,
+    packetsLost: Number(inboundVideo?.packetsLost) || 0,
+    jitterMs: Math.round((Number(inboundVideo?.jitter) || 0) * 1000),
+    rttMs: Math.round((Number(selectedPair?.currentRoundTripTime) || 0) * 1000),
+    transport: transport || '-',
+    freezes: Number(inboundVideo?.freezeCount) || 0,
+  }
+}
+
+const startWebRtcStatsPolling = () => {
+  stopWebRtcStatsPolling()
+  playbackStatsTimer = window.setInterval(() => {
+    collectWebRtcStats().catch(() => null)
+  }, 1000)
+}
+
+const stopWebRtcStatsPolling = () => {
+  if (playbackStatsTimer) {
+    window.clearInterval(playbackStatsTimer)
+    playbackStatsTimer = null
+  }
+}
+
+const startPlaybackWatchdog = () => {
+  stopPlaybackWatchdog()
+  playbackWatchdogTimer = window.setInterval(async () => {
+    if (playbackMode.value !== 'webrtc' || playbackStatus.value !== 'connected' || watchdogRestarting) return
+    const video = videoRef.value
+    const pc = getPeerConnection()
+    const iceFailed = ['failed', 'disconnected', 'closed'].includes(pc?.iceConnectionState)
+    const stalled = video && video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA
+    const noDecodedFrames = lastDecodedProgressAt > 0 && performance.now() - lastDecodedProgressAt > 2500
+    if (!iceFailed && !stalled && !noDecodedFrames) return
+
+    watchdogRestarting = true
+    playbackMessage.value = 'WebRTC stalled, reconnecting...'
+    try {
+      await startPlayback({ ensureStream: false, allowFlvFallback: false })
+    } catch (error) {
+      playbackStatus.value = 'error'
+      playbackMessage.value = error.message
+    } finally {
+      watchdogRestarting = false
+    }
+  }, 2000)
+}
+
+const stopPlaybackWatchdog = () => {
+  if (playbackWatchdogTimer) {
+    window.clearInterval(playbackWatchdogTimer)
+    playbackWatchdogTimer = null
+  }
+}
+
 const stopPlayback = () => {
   stopLiveLatencyChasing()
+  stopWebRtcStatsPolling()
+  stopPlaybackWatchdog()
   player?.close?.()
   player?.destroy?.()
   player = null
@@ -231,6 +393,7 @@ const stopPlayback = () => {
     videoRef.value.srcObject = null
     videoRef.value.removeAttribute('src')
   }
+  resetPlaybackStats()
 }
 
 const startLiveLatencyChasing = () => {
@@ -240,8 +403,8 @@ const startLiveLatencyChasing = () => {
     if (!video || !video.buffered || video.buffered.length === 0) return
     const end = video.buffered.end(video.buffered.length - 1)
     const lag = end - video.currentTime
-    if (Number.isFinite(lag) && lag > 2) {
-      video.currentTime = Math.max(0, end - 0.35)
+    if (Number.isFinite(lag) && lag > FLV_CHASE_TRIGGER_SECONDS) {
+      video.currentTime = Math.max(0, end - FLV_CHASE_TARGET_SECONDS)
     }
   }, 1000)
 }
@@ -262,21 +425,29 @@ const startRtcPlayback = async () => {
   }
   const playUrl = normalizeSrsWebRtcUrl(detectedRtcUrl.value)
   await player.play(playUrl)
+  applyReceiverLowLatencyHints()
+  lastDecodedProgressAt = performance.now()
   playbackStatus.value = 'connected'
+  playbackMode.value = 'webrtc'
+  startWebRtcStatsPolling()
+  startPlaybackWatchdog()
+  playbackMessage.value = `WebRTC playing ${playUrl}`
   playbackMessage.value = `姝ｅ湪鎾斁 ${playUrl}`
   window.setTimeout(updateVideoLayout, 300)
 }
 
 const startPlayback = async (options = {}) => {
-  const { ensureStream = false } = options
+  const { ensureStream = false, allowFlvFallback = false } = options
   stopPlayback()
   const playUrl = detectedFlvUrl.value
   if (!playUrl && !detectedRtcUrl.value) {
     playbackStatus.value = 'idle'
+    playbackMode.value = 'idle'
     playbackMessage.value = '当前摄像头未配置处理后播放地址'
     return
   }
   playbackStatus.value = 'connecting'
+  playbackMode.value = detectedRtcUrl.value ? 'webrtc' : 'flv'
   playbackMessage.value = ensureStream ? '正在启动并连接处理后视频流' : '正在连接处理后视频流'
   try {
     if (ensureStream) {
@@ -287,6 +458,9 @@ const startPlayback = async (options = {}) => {
         await startRtcPlayback()
         return
       } catch (rtcError) {
+        if (!allowFlvFallback) {
+          throw new Error(`WebRTC playback failed: ${rtcError.message}`)
+        }
         playbackMessage.value = `WebRTC failed, falling back to HTTP-FLV: ${rtcError.message}`
       }
     }
@@ -299,13 +473,14 @@ const startPlayback = async (options = {}) => {
       isLive: true,
       enableStashBuffer: false,
       liveBufferLatencyChasing: true,
-      liveBufferLatencyMaxLatency: 2,
-      liveBufferLatencyMinRemain: 0.5,
+      liveBufferLatencyMaxLatency: FLV_MAX_LATENCY_SECONDS,
+      liveBufferLatencyMinRemain: FLV_MIN_REMAIN_SECONDS,
     })
     player.attachMediaElement(videoRef.value)
     player.load()
     await withTimeout(player.play(), 8000, '处理后视频流连接超时，请检查 SRS 或 processedStreamUrl')
     playbackStatus.value = 'connected'
+    playbackMode.value = 'flv'
     playbackMessage.value = `正在播放 ${playUrl}`
     startLiveLatencyChasing()
   } catch (error) {
@@ -547,6 +722,7 @@ onBeforeUnmount(() => {
         </el-select>
         <el-button @click="useExamplePolygon">示例区域</el-button>
         <el-button @click="startPlayback({ ensureStream: true })">重连视频</el-button>
+        <el-button @click="startPlayback({ allowFlvFallback: true })">FLV 兼容</el-button>
         <el-button :disabled="draftPoints.length === 0" @click="undoDraftPoint">撤销点位</el-button>
         <el-button :disabled="draftPoints.length === 0" @click="clearDraftPoints">清空</el-button>
         <el-button type="primary" :loading="savingZone" :disabled="!canPreviewPolygon" @click="saveZone">保存区域</el-button>
@@ -582,6 +758,9 @@ onBeforeUnmount(() => {
           {{ selectedCamera?.name || '请选择摄像头' }} / 点击画面添加点位 / 拖动蓝色点调整
         </span>
         <div class="zone-video-meta">
+          <span class="zone-playback-stats">
+            {{ playbackHudMetrics.mode }} / fps {{ playbackHudMetrics.fps }} / lost {{ playbackHudMetrics.lost }} / jitter {{ playbackHudMetrics.jitter }}ms / rtt {{ playbackHudMetrics.rtt }}ms / {{ playbackHudMetrics.transport }}
+          </span>
           <strong>{{ selectedCamera?.location || '摄像头位置待接入' }}</strong>
           <span>{{ playbackMessage }}</span>
         </div>

@@ -15,6 +15,16 @@ const realtimeEvents = ref([])
 const realtimeStatus = ref('idle')
 const videoRef = ref(null)
 const playbackStatus = ref('idle')
+const playbackMode = ref('idle')
+const playbackStats = ref({
+  decodedFps: 0,
+  droppedFrames: 0,
+  packetsLost: 0,
+  jitterMs: 0,
+  rttMs: 0,
+  transport: '-',
+  freezes: 0,
+})
 const playbackMessage = ref('等待播放 AI 处理后视频流')
 const streamStatus = ref(null)
 const streamAgeSamples = ref([])
@@ -30,6 +40,18 @@ let realtimeSocket = null
 let sdkPromise = null
 let streamStatusTimer = null
 let playbackLatencyTimer = null
+let playbackStatsTimer = null
+let playbackWatchdogTimer = null
+let lastDecodedFrames = 0
+let lastDecodedAt = 0
+let lastDecodedProgressAt = 0
+let watchdogRestarting = false
+
+const FLV_MAX_LATENCY_SECONDS = 0.9
+const FLV_MIN_REMAIN_SECONDS = 0.2
+const FLV_CHASE_TRIGGER_SECONDS = 0.9
+const FLV_CHASE_TARGET_SECONDS = 0.18
+const WEBRTC_JITTER_BUFFER_TARGET_SECONDS = 0.08
 
 function syncHeaderStatus() {
   if (typeof window === 'undefined') return
@@ -104,6 +126,15 @@ const streamHudMetrics = computed(() => {
     : (Number.isFinite(localAverage) ? Math.round(localAverage) : 0)
   return { dropped, age }
 })
+
+const playbackHudMetrics = computed(() => ({
+  mode: playbackMode.value === 'webrtc' ? 'WebRTC' : (playbackMode.value === 'flv' ? 'HTTP-FLV' : '-'),
+  fps: playbackStats.value.decodedFps,
+  lost: playbackStats.value.packetsLost,
+  jitter: playbackStats.value.jitterMs,
+  rtt: playbackStats.value.rttMs,
+  transport: playbackStats.value.transport || '-',
+}))
 
 function normalizeSrsWebRtcUrl(url) {
   if (!url || !url.startsWith('webrtc://')) {
@@ -269,15 +300,148 @@ function stopStreamStatusPolling() {
   }
 }
 
+function resetPlaybackStats() {
+  playbackStats.value = {
+    decodedFps: 0,
+    droppedFrames: 0,
+    packetsLost: 0,
+    jitterMs: 0,
+    rttMs: 0,
+    transport: '-',
+    freezes: 0,
+  }
+  lastDecodedFrames = 0
+  lastDecodedAt = 0
+  lastDecodedProgressAt = 0
+  watchdogRestarting = false
+}
+
+function getPeerConnection() {
+  return player?.pc || player?.peerConnection || null
+}
+
+function applyReceiverLowLatencyHints() {
+  const pc = getPeerConnection()
+  if (!pc?.getReceivers) return
+  pc.getReceivers()
+    .filter((receiver) => receiver.track?.kind === 'video')
+    .forEach((receiver) => {
+      if ('jitterBufferTarget' in receiver) {
+        try {
+          receiver.jitterBufferTarget = WEBRTC_JITTER_BUFFER_TARGET_SECONDS
+        } catch (error) {
+          // Browser support is partial; unsupported receivers should not break playback.
+        }
+      }
+    })
+}
+
+async function collectWebRtcStats() {
+  const pc = getPeerConnection()
+  if (!pc?.getStats) return
+  const reports = await pc.getStats()
+  let inboundVideo = null
+  let selectedPair = null
+  let localCandidate = null
+  let remoteCandidate = null
+
+  reports.forEach((report) => {
+    if (report.type === 'inbound-rtp' && (report.kind === 'video' || report.mediaType === 'video')) {
+      inboundVideo = report
+    }
+    if (report.type === 'candidate-pair' && (report.selected || report.nominated)) {
+      selectedPair = report
+    }
+  })
+
+  if (selectedPair) {
+    localCandidate = reports.get(selectedPair.localCandidateId)
+    remoteCandidate = reports.get(selectedPair.remoteCandidateId)
+  }
+
+  const now = performance.now()
+  const decoded = Number(inboundVideo?.framesDecoded) || 0
+  const elapsedSeconds = lastDecodedAt ? (now - lastDecodedAt) / 1000 : 0
+  const decodedFps = elapsedSeconds > 0 ? Math.max(0, Math.round((decoded - lastDecodedFrames) / elapsedSeconds)) : 0
+  if (decoded > lastDecodedFrames) {
+    lastDecodedProgressAt = now
+  }
+  lastDecodedFrames = decoded
+  lastDecodedAt = now
+
+  const transport = [
+    localCandidate?.protocol || '',
+    localCandidate?.candidateType || '',
+    remoteCandidate?.candidateType ? `to-${remoteCandidate.candidateType}` : '',
+  ].filter(Boolean).join('/')
+
+  playbackStats.value = {
+    decodedFps,
+    droppedFrames: Number(inboundVideo?.framesDropped) || 0,
+    packetsLost: Number(inboundVideo?.packetsLost) || 0,
+    jitterMs: Math.round((Number(inboundVideo?.jitter) || 0) * 1000),
+    rttMs: Math.round((Number(selectedPair?.currentRoundTripTime) || 0) * 1000),
+    transport: transport || '-',
+    freezes: Number(inboundVideo?.freezeCount) || 0,
+  }
+}
+
+function startWebRtcStatsPolling() {
+  stopWebRtcStatsPolling()
+  playbackStatsTimer = window.setInterval(() => {
+    collectWebRtcStats().catch(() => null)
+  }, 1000)
+}
+
+function stopWebRtcStatsPolling() {
+  if (playbackStatsTimer) {
+    window.clearInterval(playbackStatsTimer)
+    playbackStatsTimer = null
+  }
+}
+
+function startPlaybackWatchdog() {
+  stopPlaybackWatchdog()
+  playbackWatchdogTimer = window.setInterval(async () => {
+    if (playbackMode.value !== 'webrtc' || playbackStatus.value !== 'connected' || watchdogRestarting) return
+    const video = videoRef.value
+    const pc = getPeerConnection()
+    const iceFailed = ['failed', 'disconnected', 'closed'].includes(pc?.iceConnectionState)
+    const stalled = video && video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA
+    const noDecodedFrames = lastDecodedProgressAt > 0 && performance.now() - lastDecodedProgressAt > 2500
+    if (!iceFailed && !stalled && !noDecodedFrames) return
+
+    watchdogRestarting = true
+    playbackMessage.value = 'WebRTC stalled, reconnecting...'
+    try {
+      await startPlayback({ ensureStream: false, allowFlvFallback: false })
+    } catch (error) {
+      playbackStatus.value = 'error'
+      playbackMessage.value = error.message
+    } finally {
+      watchdogRestarting = false
+    }
+  }, 2000)
+}
+
+function stopPlaybackWatchdog() {
+  if (playbackWatchdogTimer) {
+    window.clearInterval(playbackWatchdogTimer)
+    playbackWatchdogTimer = null
+  }
+}
+
 async function startPlayback(options = {}) {
-  const { ensureStream = false } = options
+  const { ensureStream = false, allowFlvFallback = false } = options
   stopPlayback()
   if (!detectedPlayUrl.value && !detectedRtcUrl.value) {
     playbackStatus.value = 'idle'
+    playbackMode.value = 'idle'
     playbackMessage.value = '当前摄像头未配置可播放地址'
     return
   }
   playbackStatus.value = 'connecting'
+  playbackMode.value = detectedRtcUrl.value ? 'webrtc' : 'flv'
   playbackMessage.value = ensureStream ? '正在启动并连接 AI 处理后视频流' : '正在连接 AI 处理后视频流'
 
   try {
@@ -290,6 +454,9 @@ async function startPlayback(options = {}) {
         await startRtcPlayback()
         return
       } catch (rtcError) {
+        if (!allowFlvFallback) {
+          throw new Error(`WebRTC playback failed: ${rtcError.message}`)
+        }
         playbackMessage.value = `WebRTC 连接失败，切换 HTTP-FLV：${rtcError.message}`
       }
     }
@@ -310,7 +477,13 @@ async function startRtcPlayback() {
     }
     const playUrl = normalizeSrsWebRtcUrl(detectedRtcUrl.value)
     await player.play(playUrl)
+    applyReceiverLowLatencyHints()
+    lastDecodedProgressAt = performance.now()
     playbackStatus.value = 'connected'
+    playbackMode.value = 'webrtc'
+    startWebRtcStatsPolling()
+    startPlaybackWatchdog()
+    playbackMessage.value = `WebRTC playing ${playUrl}`
     playbackMessage.value = `正在播放 ${playUrl}`
 }
 
@@ -327,8 +500,8 @@ async function startFlvPlayback() {
     isLive: true,
     enableStashBuffer: false,
     liveBufferLatencyChasing: true,
-    liveBufferLatencyMaxLatency: 2,
-    liveBufferLatencyMinRemain: 0.5,
+    liveBufferLatencyMaxLatency: FLV_MAX_LATENCY_SECONDS,
+    liveBufferLatencyMinRemain: FLV_MIN_REMAIN_SECONDS,
   })
 
   if (videoRef.value) {
@@ -339,6 +512,7 @@ async function startFlvPlayback() {
   player.load()
   await player.play()
   playbackStatus.value = 'connected'
+  playbackMode.value = 'flv'
   playbackMessage.value = `正在播放 ${playUrl}`
   startLiveLatencyChasing()
 }
@@ -357,6 +531,8 @@ async function restartProcessedStream() {
 
 function stopPlayback() {
   stopLiveLatencyChasing()
+  stopWebRtcStatsPolling()
+  stopPlaybackWatchdog()
   if (player && typeof player.close === 'function') {
     player.close()
   }
@@ -368,6 +544,7 @@ function stopPlayback() {
     videoRef.value.srcObject = null
     videoRef.value.removeAttribute('src')
   }
+  resetPlaybackStats()
 }
 
 function startLiveLatencyChasing() {
@@ -377,8 +554,8 @@ function startLiveLatencyChasing() {
     if (!video || !video.buffered || video.buffered.length === 0) return
     const end = video.buffered.end(video.buffered.length - 1)
     const lag = end - video.currentTime
-    if (Number.isFinite(lag) && lag > 2) {
-      video.currentTime = Math.max(0, end - 0.35)
+    if (Number.isFinite(lag) && lag > FLV_CHASE_TRIGGER_SECONDS) {
+      video.currentTime = Math.max(0, end - FLV_CHASE_TARGET_SECONDS)
     }
   }, 1000)
 }
@@ -514,12 +691,19 @@ onBeforeUnmount(() => {
       <div class="panel monitor-center">
         <SectionHeader title="AI 处理后视频">
           <div class="stream-actions">
+            <el-button size="small" plain @click="startPlayback({ allowFlvFallback: true })">FLV 兼容</el-button>
             <el-button size="small" type="primary" @click="startPlayback({ ensureStream: true })">重连</el-button>
           </div>
         </SectionHeader>
         <div class="monitor-screen stream-player" :class="playbackStatus">
           <video ref="videoRef" autoplay playsinline controls muted />
           <div class="stream-head">
+            <span>{{ playbackHudMetrics.mode }}</span>
+            <span>fps {{ playbackHudMetrics.fps }}</span>
+            <span>lost {{ playbackHudMetrics.lost }}</span>
+            <span>jitter {{ playbackHudMetrics.jitter }}ms</span>
+            <span>rtt {{ playbackHudMetrics.rtt }}ms</span>
+            <span>{{ playbackHudMetrics.transport }}</span>
             <span>drop {{ streamHudMetrics.dropped }}</span>
             <span>age {{ streamHudMetrics.age }}ms</span>
           </div>

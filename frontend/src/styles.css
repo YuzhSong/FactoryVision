@@ -417,8 +417,9 @@ body {
 .stream-head {
   top: 14px;
   left: 14px;
+  flex-wrap: wrap;
   gap: 6px;
-  max-width: min(220px, calc(100% - 32px));
+  max-width: min(520px, calc(100% - 32px));
   padding: 4px 7px;
   border-radius: 6px;
   font-size: 11px;
@@ -565,6 +566,12 @@ body {
   color: rgba(219, 234, 254, 0.62);
   font-family: ui-monospace, "Fira Code", Consolas, monospace;
   overflow-wrap: anywhere;
+}
+
+.zone-playback-stats {
+  display: block;
+  font-size: 11px;
+  color: #bfdbfe;
 }
 
 .zone-editor-layer {
