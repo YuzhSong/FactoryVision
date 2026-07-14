@@ -177,6 +177,19 @@ class RealtimeStreamingTests(unittest.TestCase):
 
         self.assertEqual(service.status()["dropped_frames"], 2)
 
+    def test_stale_snapshot_drop_advances_processed_sequence(self):
+        service = ProcessedStreamService(frame_processor=None, max_frame_age_ms=1500)
+        packet = type("Packet", (), {"frame_id": "frame-stale"})()
+        snapshot = LatestFrameSnapshot(packet=packet, sequence=3, captured_at=0)
+
+        service._drop_stale_snapshot(snapshot, frame_age_ms=2500)
+
+        status = service.status()
+        self.assertEqual(status["dropped_frames"], 1)
+        self.assertEqual(status["stale_frame_drops"], 1)
+        self.assertEqual(status["latest_frame_age_ms"], 2500)
+        self.assertEqual(service._processed_sequence, 3)
+
     def test_detect_interval_skips_intermediate_frames(self):
         service = ProcessedStreamService(frame_processor=None, detect_interval=5)
 
@@ -240,6 +253,37 @@ class RealtimeStreamingTests(unittest.TestCase):
         person = next(item for item in report["results"] if item.get("type") == "PERSON_DETECTION")
         self.assertEqual(person["helmetStatus"], "helmet")
         self.assertIn("helmet", report["modelTimingsMs"])
+
+    def test_frame_processor_attaches_face_identity_to_person_box(self):
+        recognized = {
+            "type": "FACE_RESULT",
+            "trackId": "t-1",
+            "matched": True,
+            "employeeId": 1,
+            "employeeNo": "E001",
+            "name": "syz",
+            "similarity": 0.9,
+            "faceBox": {"x1": 10, "y1": 10, "x2": 50, "y2": 50},
+        }
+        processor = FrameProcessor(
+            person_detector=_FakeDetector(),
+            face_service=_SequencedFaceService([[recognized]]),
+        )
+
+        report = processor.process_frame(
+            frame=object(),
+            camera_id=1,
+            frame_id="frame-face",
+            timestamp="2026-07-08T03:00:00+08:00",
+            include_faces=True,
+            frame_index=1,
+            fps=10,
+        )
+
+        person = next(item for item in report["results"] if item.get("type") == "PERSON_DETECTION")
+        self.assertEqual(person["name"], "syz")
+        self.assertEqual(person["employeeName"], "syz")
+        self.assertEqual(person["similarity"], 0.9)
 
     def test_processed_stream_attaches_event_media_before_backend_report(self):
         backend = _FakeBackendClient()

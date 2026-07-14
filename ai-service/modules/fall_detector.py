@@ -251,8 +251,13 @@ class FallDetector:
         max_height_drop = max(height_drops, default=0.0)
         max_center_drop = max(center_drops, default=0.0)
         elapsed = _elapsed_seconds(baseline.get("timestamp"), recent[-1].get("timestamp"))
-        has_sustained_low = max_height_drop >= self.sustained_low_drop_ratio or max_center_drop >= self.min_center_drop_ratio
-        very_low = max_height_drop >= self.sustained_low_drop_ratio and any(
+        latest_score = frame_scores[-1] if frame_scores else {}
+        latest_ratio = float(latest_score.get("ratio") or 0.0)
+        has_downward_motion = max_center_drop >= self.min_center_drop_ratio
+        has_low_height = max_height_drop >= self.sustained_low_drop_ratio
+        has_horizontal_posture = latest_ratio >= self.ratio_threshold
+        has_sustained_low = has_downward_motion or (has_low_height and has_horizontal_posture)
+        very_low = has_downward_motion and has_low_height and any(
             (bbox[3] - bbox[1]) <= base_height * self.very_low_height_ratio
             for _entry, bbox in valid_entries
         )
@@ -270,6 +275,8 @@ class FallDetector:
             "lowPostureFrames": low_count,
             "maxHeightDropRatio": round(max_height_drop, 4),
             "maxCenterDropRatio": round(max_center_drop, 4),
+            "hasDownwardMotion": has_downward_motion,
+            "hasHorizontalPosture": has_horizontal_posture,
             "elapsedSeconds": round(elapsed, 4) if elapsed is not None else None,
             "triggerReasons": reasons,
         }

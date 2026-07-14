@@ -143,7 +143,21 @@ def _label_for_result(result: dict):
     employee_id = result.get("employeeId")
     employee_no = result.get("employeeNo")
 
-    parts = ["Person" if result_type == "PERSON_DETECTION" else result_type.replace("_", " ")]
+    if result_type == "PERSON_DETECTION":
+        display_name = result.get("name") or result.get("employeeName")
+        parts = ["Person"]
+        if display_name and display_name != "Unknown":
+            parts.append(str(display_name))
+        elif track_id:
+            parts.append(str(track_id))
+        if confidence is not None:
+            try:
+                parts.append(f"{float(confidence):.2f}")
+            except (TypeError, ValueError):
+                pass
+        return " ".join(parts)
+
+    parts = [result_type.replace("_", " ")]
     if track_id:
         parts.append(str(track_id))
     if employee_no not in (None, ""):
@@ -155,8 +169,6 @@ def _label_for_result(result: dict):
             parts.append(f"{float(confidence):.2f}")
         except (TypeError, ValueError):
             pass
-    if result_type == "PERSON_DETECTION":
-        parts.append(_helmet_label(helmet_status))
     return " ".join(parts)
 
 

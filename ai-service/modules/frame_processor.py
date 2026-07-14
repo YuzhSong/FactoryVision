@@ -193,6 +193,8 @@ class FrameProcessor:
                 timestamp=timestamp,
             )
 
+        self._apply_face_identity_results(person_results, face_results)
+
         non_person_results = [
             result
             for result in report["results"]
@@ -312,6 +314,22 @@ class FrameProcessor:
             detection["helmetStatus"] = helmet.get("helmetStatus")
             detection["helmetConfidence"] = helmet.get("helmetConfidence")
             detection["helmetClassName"] = helmet.get("className")
+
+    def _apply_face_identity_results(self, person_results, face_results):
+        """Attach the best recognized employee name to the matching person box."""
+        identity_by_track = _best_identity_by_track(face_results)
+        for detection in person_results or []:
+            identity = identity_by_track.get(str(detection.get("trackId")))
+            if not identity:
+                continue
+            display_name = identity.get("name") or identity.get("employeeName")
+            if not display_name or display_name == "Unknown":
+                continue
+            detection["name"] = display_name
+            detection["employeeName"] = display_name
+            for key in ("employeeId", "employeeNo", "similarity", "threshold"):
+                if identity.get(key) not in (None, ""):
+                    detection[key] = identity.get(key)
 
     def _update_helmet_result_cache(self, camera_id, helmet_results):
         """Remember fresh helmet detections so PPE boxes persist between model runs."""
@@ -486,6 +504,30 @@ def _helmet_priority(result):
     severity = 1 if result.get("helmetStatus") == "no_helmet" else 0
     confidence = float(result.get("helmetConfidence") or 0)
     return severity, confidence
+
+
+def _best_identity_by_track(face_results):
+    """Pick the strongest matched face identity for each person track."""
+    best_by_track = {}
+    for result in face_results or []:
+        if result.get("matched") is not True:
+            continue
+        track_id = result.get("trackId")
+        if track_id in (None, ""):
+            continue
+        current = best_by_track.get(str(track_id))
+        if current is None or _identity_confidence(result) > _identity_confidence(current):
+            best_by_track[str(track_id)] = result
+    return best_by_track
+
+
+def _identity_confidence(result):
+    for key in ("confidence", "similarity"):
+        try:
+            return float(result.get(key))
+        except (TypeError, ValueError):
+            continue
+    return 0.0
 
 
 def _elapsed_ms(started_at):

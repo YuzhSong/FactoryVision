@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import os
 import time
 
 
@@ -91,11 +92,34 @@ class StreamReader:
             ) from exc
 
         source = _coerce_source(stream_url)
-        capture = cv2.VideoCapture(source)
+        capture = self._video_capture(cv2, source, low_latency=True)
+        if not capture.isOpened() and isinstance(source, str) and "://" in source:
+            capture.release()
+            capture = self._video_capture(cv2, source, low_latency=False)
         if not capture.isOpened():
             capture.release()
             raise RuntimeError(f"Unable to open video stream: {stream_url}")
+        try:
+            capture.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        except Exception:
+            pass
         return capture
+
+    def _video_capture(self, cv2, source, low_latency: bool):
+        previous_options = os.environ.get("OPENCV_FFMPEG_CAPTURE_OPTIONS")
+        try:
+            if low_latency and isinstance(source, str) and "://" in source:
+                os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = (
+                    "fflags;nobuffer|flags;low_delay|probesize;32|analyzeduration;0"
+                )
+            elif previous_options is None:
+                os.environ.pop("OPENCV_FFMPEG_CAPTURE_OPTIONS", None)
+            return cv2.VideoCapture(source)
+        finally:
+            if previous_options is None:
+                os.environ.pop("OPENCV_FFMPEG_CAPTURE_OPTIONS", None)
+            else:
+                os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = previous_options
 
     def _reconnect(self):
         """Reconnect to the configured stream_url."""

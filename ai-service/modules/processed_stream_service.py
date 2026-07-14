@@ -36,6 +36,7 @@ class StreamTaskStatus:
     last_error: str | None = None
     captured_frames: int = 0
     dropped_frames: int = 0
+    stale_frame_drops: int = 0
     capture_fps: float = 0.0
     process_fps: float = 0.0
     process_time_ms: float = 0.0
@@ -113,6 +114,7 @@ class ProcessedStreamService:
         event_media_cooldown_seconds: float = Config.EVENT_MEDIA_COOLDOWN_SECONDS,
         event_report_queue_size: int = Config.EVENT_REPORT_QUEUE_SIZE,
         zone_refresh_interval_seconds: float = Config.ZONE_REFRESH_INTERVAL_SECONDS,
+        max_frame_age_ms: float = Config.STREAM_MAX_FRAME_AGE_MS,
     ):
         self.frame_processor = frame_processor
         self.backend_client = backend_client
@@ -159,6 +161,7 @@ class ProcessedStreamService:
         self._event_report_queue = queue.Queue(maxsize=max(1, int(event_report_queue_size or 1)))
         self._event_media_upload_queue = queue.Queue(maxsize=2)
         self.zone_refresh_interval_seconds = max(1.0, float(zone_refresh_interval_seconds or 1))
+        self.max_frame_age_ms = max(0.0, float(max_frame_age_ms or 0.0))
         self._event_report_stop = threading.Event()
         self._event_report_lock = threading.Lock()
         self._report_thread = None
@@ -258,6 +261,7 @@ class ProcessedStreamService:
             "faceDetectInterval": _positive_int(payload.get("faceDetectInterval"), self.face_detect_interval),
             "faceDetectOffset": _non_negative_int(payload.get("faceDetectOffset"), self.face_detect_offset),
             "zoneRefreshIntervalSeconds": _positive_float(payload.get("zoneRefreshIntervalSeconds"), self.zone_refresh_interval_seconds),
+            "maxFrameAgeMs": _non_negative_float(payload.get("maxFrameAgeMs"), self.max_frame_age_ms),
             "reconnectAttempts": _positive_int(payload.get("reconnectAttempts"), self.reconnect_attempts),
             "reconnectDelaySeconds": _positive_float(payload.get("reconnectDelaySeconds"), self.reconnect_delay_seconds),
         }
@@ -417,6 +421,11 @@ class ProcessedStreamService:
 
             snapshot = self._wait_for_latest_frame(timeout=1)
             if snapshot is None:
+                continue
+            max_frame_age_ms = float(run_config.get("maxFrameAgeMs") or 0)
+            frame_age_before_process_ms = (time.monotonic() - snapshot.captured_at) * 1000
+            if max_frame_age_ms > 0 and frame_age_before_process_ms > max_frame_age_ms:
+                self._drop_stale_snapshot(snapshot, frame_age_before_process_ms)
                 continue
 
             started_at = time.monotonic()
@@ -759,6 +768,24 @@ class ProcessedStreamService:
             self._frame_age_samples.append((time.monotonic(), float(frame_age_ms)))
         self._record_timing("overall", process_time_ms)
 
+    def _drop_stale_snapshot(self, snapshot: LatestFrameSnapshot, frame_age_ms: float):
+        """Discard a stale captured frame so detection stays close to live video."""
+        with self._frame_condition:
+            self._processed_sequence = max(self._processed_sequence, snapshot.sequence)
+        with self._lock:
+            self._status.dropped_frames += 1
+            self._status.stale_frame_drops += 1
+            self._status.last_frame_id = snapshot.packet.frame_id
+            self._status.latest_frame_age_ms = round(frame_age_ms, 2)
+            self._frame_age_samples.append((time.monotonic(), float(frame_age_ms)))
+        logger.debug(
+            "drop stale frame frame_id=%s sequence=%s age_ms=%.2f max_age_ms=%.2f",
+            snapshot.packet.frame_id,
+            snapshot.sequence,
+            frame_age_ms,
+            self.max_frame_age_ms,
+        )
+
     def _record_event_media(self, output_frame, packet, report):
         if self.event_media_recorder is None:
             return []
@@ -1008,6 +1035,13 @@ def _positive_float(value, default: float) -> float:
         return max(0.01, float(value))
     except (TypeError, ValueError):
         return max(0.01, float(default))
+
+
+def _non_negative_float(value, default: float) -> float:
+    try:
+        return max(0.0, float(value))
+    except (TypeError, ValueError):
+        return max(0.0, float(default))
 
 
 def _region_event_keys(report):

@@ -197,6 +197,30 @@ class FallDetectorTests(unittest.TestCase):
         self.assertLess(result["evidence"]["latestRatio"], 1.2)
         self.assertIn("very_low_posture", result["evidence"]["triggerReasons"])
 
+    def test_partial_upper_body_box_does_not_trigger_sustained_low_posture(self):
+        detector = FallDetector(ratio_threshold=1.2, confirm_frames=5)
+
+        result = detector.detect(
+            _history(
+                [
+                    {"bbox": [386.0, 48.0, 450.5, 154.62]},
+                    {"bbox": [386.25, 46.16, 452.25, 153.38]},
+                    {"bbox": [384.0, 47.12, 458.0, 156.0]},
+                    {"bbox": [382.0, 47.53, 469.0, 152.0]},
+                    {"bbox": [360.0, 46.62, 483.0, 237.12]},
+                    {"bbox": [338.75, 47.0, 498.75, 152.62]},
+                    {"bbox": [345.0, 47.22, 496.0, 154.25]},
+                    {"bbox": [337.25, 47.25, 500.25, 154.25]},
+                    {"bbox": [360.5, 45.75, 488.0, 152.25]},
+                    {"bbox": [393.0, 46.0, 470.0, 148.0]},
+                ]
+            )
+        )
+
+        self.assertFalse(result["isFall"])
+        self.assertEqual(result["evidence"]["rejectionReason"], "not_consecutive")
+        self.assertFalse(result["evidence"]["sustainedLowPosture"]["hasDownwardMotion"])
+
 
 class _Clock:
     now = 0.0

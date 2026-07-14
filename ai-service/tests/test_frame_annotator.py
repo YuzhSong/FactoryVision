@@ -4,6 +4,29 @@ from modules.frame_annotator import _label_for_result
 
 
 class FrameAnnotatorLabelTests(unittest.TestCase):
+    def test_person_label_prefers_name_and_confidence(self):
+        label = _label_for_result({
+            "type": "PERSON_DETECTION",
+            "trackId": "t-12",
+            "name": "syz",
+            "confidence": 0.901,
+            "helmetStatus": "unknown",
+        })
+
+        self.assertEqual(label, "Person syz 0.90")
+        self.assertNotIn("t-12", label)
+        self.assertNotIn("Unknown", label)
+
+    def test_person_label_falls_back_to_track_id(self):
+        label = _label_for_result({
+            "type": "PERSON_DETECTION",
+            "trackId": "t-12",
+            "confidence": 0.901,
+            "helmetStatus": "unknown",
+        })
+
+        self.assertEqual(label, "Person t-12 0.90")
+
     def test_face_label_uses_name_and_confidence_only(self):
         label = _label_for_result({
             "type": "FACE_RESULT",
