@@ -70,11 +70,17 @@ export const employeesApi = {
   remove(employeeId) {
     return http.delete(`/employees/${employeeId}/delete/`)
   },
+  faces(employeeId) {
+    return http.get(`/employees/${employeeId}/faces/`)
+  },
 }
 
 export const faceApi = {
   enroll(data) {
     return http.post('/face/enroll/', data)
+  },
+  remove(faceId) {
+    return http.delete(`/face/${faceId}/delete/`)
   },
 }
 
@@ -153,6 +159,21 @@ export const attendanceApi = {
   },
   records(params = {}) {
     return http.get('/attendance/records/', { params })
+  },
+}
+
+export const reportsApi = {
+  list(params = {}) {
+    return http.get('/reports/list/', { params })
+  },
+  detail(reportId) {
+    return http.get(`/reports/${reportId}/`)
+  },
+  generate(data = {}) {
+    return http.post('/reports/generate/', data)
+  },
+  download(reportId) {
+    return http.get(`/reports/${reportId}/download/`, { responseType: 'blob' })
   },
 }
 
