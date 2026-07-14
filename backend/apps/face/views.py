@@ -152,7 +152,7 @@ def face_library_view(request):
 
 @extend_schema(
     summary="人脸录入",
-    description="批量录入 3 张人脸图片（正脸/左脸/右脸），全部通过才写入数据库。该接口需要 Bearer JWT 认证。",
+    description="录入 1~3 张人脸图片（正脸/左脸/右脸）。同一 faceType 重新录入会自动替换旧记录。该接口需要 Bearer JWT 认证。",
     request=FaceEnrollSerializer,
     responses={
         200: None,
@@ -169,7 +169,6 @@ def face_library_view(request):
                 "faces": [
                     {"imageBase64": "data:image/jpeg;base64,...", "faceType": "front"},
                     {"imageBase64": "data:image/jpeg;base64,...", "faceType": "left"},
-                    {"imageBase64": "data:image/jpeg;base64,...", "faceType": "right"},
                 ],
             },
             request_only=True,
@@ -183,7 +182,6 @@ def face_library_view(request):
                     "results": [
                         {"faceType": "front", "faceFeatureId": 1},
                         {"faceType": "left", "faceFeatureId": 2},
-                        {"faceType": "right", "faceFeatureId": 3},
                     ]
                 },
                 "requestId": "uuid",
@@ -265,6 +263,13 @@ def face_enroll_view(request):
             for item in faces_data:
                 face_type = item["faceType"]
                 image_b64 = item["imageBase64"]
+
+                # 替换同 faceType 旧记录：删旧行 + 清旧图片
+                old = FaceFeature.objects.filter(employee_id=employee_id, face_type=face_type).first()
+                if old is not None:
+                    if old.image_path:
+                        (FACE_MEDIA_ROOT / old.image_path.replace("faces/", "")).unlink(missing_ok=True)
+                    old.delete()
 
                 # Extract and validate before writing either the image or database record.
                 try:

@@ -490,7 +490,7 @@ GET /api/employees/list/?page=1&pageSize=20&keyword=张&department=生产部&sta
 
 | 项 | 内容 |
 | --- | --- |
-| 接口说明 | 查看指定员工的所有已录入人脸 |
+| 接口说明 | 返回员工三槽位人脸（front/left/right），未录入为 null |
 | URL | `/api/employees/{id}/faces/` |
 | Method | `GET` |
 | 状态 | implemented |
@@ -502,9 +502,11 @@ GET /api/employees/list/?page=1&pageSize=20&keyword=张&department=生产部&sta
 ```json
 {
   "code": 200,
-  "data": [
-    {"id": 1, "faceType": "front", "imageUrl": "http://127.0.0.1:8000/media/faces/3/3_front.jpg", "createdAt": "2026-07-12T10:00:00+08:00"},
-    {"id": 2, "faceType": "left",  "imageUrl": "http://127.0.0.1:8000/media/faces/3/3_left.jpg",  "createdAt": "2026-07-12T10:00:01+08:00"}
+  "data": {
+    "front": {"faceFeatureId": 1, "imageUrl": "http://127.0.0.1:8000/media/faces/3/3_front.jpg", "createdAt": "2026-07-12T10:00:00+08:00"},
+    "left":  {"faceFeatureId": 2, "imageUrl": "http://127.0.0.1:8000/media/faces/3/3_left.jpg",  "createdAt": "2026-07-12T10:00:01+08:00"},
+    "right": null
+  }
   ]
 }
 ```
@@ -515,7 +517,7 @@ GET /api/employees/list/?page=1&pageSize=20&keyword=张&department=生产部&sta
 
 | 项 | 内容 |
 | --- | --- |
-| 接口说明 | 为员工批量录入人脸图片（必须 3 张，正脸/左脸/右脸各一张）并生成特征 |
+| 接口说明 | 录入 1~3 张人脸图片（正脸/左脸/右脸）。同一 faceType 重新录入会自动替换旧记录。 |
 | URL | `/api/face/enroll/` |
 | Method | `POST` |
 | 状态 | implemented |
@@ -525,7 +527,7 @@ GET /api/employees/list/?page=1&pageSize=20&keyword=张&department=生产部&sta
 | 参数 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
 | `employeeId` | number | 是 | 员工 ID |
-| `faces` | array | 是 | 人脸图片数组，必须包含 3 项，faceType 分别为 front、left、right |
+| `faces` | array | 是 | 1~3 张，faceType 不可重复 |
 
 `faces` 数组每项的字段：
 
@@ -541,8 +543,7 @@ GET /api/employees/list/?page=1&pageSize=20&keyword=张&department=生产部&sta
   "employeeId": 1,
   "faces": [
     {"imageBase64": "data:image/jpeg;base64,...", "faceType": "front"},
-    {"imageBase64": "data:image/jpeg;base64,...", "faceType": "left"},
-    {"imageBase64": "data:image/jpeg;base64,...", "faceType": "right"}
+    {"imageBase64": "data:image/jpeg;base64,...", "faceType": "left"}
   ]
 }
 ```
@@ -556,8 +557,7 @@ GET /api/employees/list/?page=1&pageSize=20&keyword=张&department=生产部&sta
   "data": {
     "results": [
       {"faceType": "front", "faceFeatureId": 1},
-      {"faceType": "left",  "faceFeatureId": 2},
-      {"faceType": "right", "faceFeatureId": 3}
+      {"faceType": "left",  "faceFeatureId": 2}
     ]
   },
   "requestId": "uuid"

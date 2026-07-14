@@ -379,10 +379,11 @@ def employee_delete_view(request, employee_id):
             value={
                 "code": 200,
                 "message": "success",
-                "data": [
-                    {"id": 1, "faceType": "front", "imagePath": "faces/3/3_front_abc.jpg", "createdAt": "2026-07-12T10:00:00+08:00"},
-                    {"id": 2, "faceType": "left", "imagePath": "faces/3/3_left_abc.jpg", "createdAt": "2026-07-12T10:00:01+08:00"},
-                ],
+                "data": {
+                    "front": {"faceFeatureId": 1, "imageUrl": "http://127.0.0.1:8000/media/faces/3/3_front.jpg", "createdAt": "2026-07-12T10:00:00+08:00"},
+                    "left":  {"faceFeatureId": 2, "imageUrl": "http://127.0.0.1:8000/media/faces/3/3_left.jpg",  "createdAt": "2026-07-12T10:00:01+08:00"},
+                    "right": None,
+                },
                 "requestId": "uuid",
             },
             response_only=True,
@@ -401,21 +402,23 @@ def employee_face_list_view(request, employee_id):
             status=status.HTTP_404_NOT_FOUND,
         )
 
-    faces = Employee.objects.get(id=employee_id).face_features.all()
-    items = [
-        {
-            "id": f.id,
-            "faceType": f.face_type,
+    faces = {
+        f.face_type: {
+            "faceFeatureId": f.id,
             "imageUrl": request.build_absolute_uri(settings.MEDIA_URL + f.image_path.replace("\\", "/")) if f.image_path else None,
             "createdAt": f.created_at.isoformat(),
         }
-        for f in faces
-    ]
+        for f in Employee.objects.get(id=employee_id).face_features.all()
+    }
 
     return api_response(
         code=200,
         message="success",
-        data=items,
+        data={
+            "front": faces.get("front"),
+            "left": faces.get("left"),
+            "right": faces.get("right"),
+        },
     )
 
 
