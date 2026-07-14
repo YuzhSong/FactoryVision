@@ -1,0 +1,3396 @@
+{
+    "openapi": "3.0.3",
+    "info": {
+        "title": "Smart Factory Vision API",
+        "version": "0.1.0",
+        "description": "API skeleton for Smart Factory Real-time Video Analysis and Safety Monitoring System."
+    },
+    "paths": {
+        "/api/ai-results/": {
+            "get": {
+                "operationId": "api_ai_results_retrieve",
+                "description": "返回 AI 结果模块当前占位状态，用于确认路由和模块边界存在。",
+                "summary": "AI 结果模块占位接口",
+                "tags": [
+                    "api"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    },
+                    {}
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/AIResultPlaceholder"
+                                },
+                                "examples": {
+                                    "AIResultsPlaceholder": {
+                                        "value": {
+                                            "code": 200,
+                                            "message": "AI results module placeholder",
+                                            "data": {
+                                                "module": "ai_results",
+                                                "status": "placeholder"
+                                            },
+                                            "requestId": "uuid"
+                                        },
+                                        "summary": "AI results placeholder"
+                                    }
+                                }
+                            }
+                        },
+                        "description": ""
+                    }
+                }
+            }
+        },
+        "/api/ai-results/report/": {
+            "post": {
+                "operationId": "api_ai_results_report_create",
+                "description": "AI 服务向后端上报单帧检测结果。当前接口校验 payload，并返回已接收结果数量。",
+                "summary": "上报 AI 分析结果",
+                "tags": [
+                    "api"
+                ],
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/AIResultReport"
+                            },
+                            "examples": {
+                                "AIReportRequest": {
+                                    "value": {
+                                        "cameraId": 1,
+                                        "frameId": "frame-001",
+                                        "timestamp": "2026-07-08T10:00:00+08:00",
+                                        "results": [
+                                            {
+                                                "type": "PERSON_DETECTION",
+                                                "trackId": "t-1",
+                                                "bbox": {
+                                                    "x": 120,
+                                                    "y": 80,
+                                                    "w": 180,
+                                                    "h": 320
+                                                }
+                                            }
+                                        ]
+                                    },
+                                    "summary": "AI report request"
+                                }
+                            }
+                        },
+                        "application/x-www-form-urlencoded": {
+                            "schema": {
+                                "$ref": "#/components/schemas/AIResultReport"
+                            }
+                        },
+                        "multipart/form-data": {
+                            "schema": {
+                                "$ref": "#/components/schemas/AIResultReport"
+                            }
+                        }
+                    },
+                    "required": true
+                },
+                "security": [
+                    {
+                        "jwtAuth": []
+                    },
+                    {}
+                ],
+                "responses": {
+                    "200": {
+                        "description": "No response body"
+                    },
+                    "400": {
+                        "description": "No response body"
+                    }
+                }
+            }
+        },
+        "/api/ai/bootstrap/": {
+            "get": {
+                "operationId": "api_ai_bootstrap_retrieve",
+                "description": "Aggregate cameras, zones, employees, and thresholds for ai-service startup cache.",
+                "summary": "AI service bootstrap",
+                "tags": [
+                    "api"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    },
+                    {}
+                ],
+                "responses": {
+                    "200": {
+                        "description": "No response body"
+                    }
+                }
+            }
+        },
+        "/api/alerts/{alert_id}/detail/": {
+            "get": {
+                "operationId": "api_alerts_detail_retrieve",
+                "description": "Return alert/event metadata plus lightweight replay evidence persisted in Event.payload.",
+                "summary": "Get alert detail with replay evidence",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "alert_id",
+                        "schema": {
+                            "type": "integer"
+                        },
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "api"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    },
+                    {}
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/AlertDetail"
+                                }
+                            }
+                        },
+                        "description": ""
+                    },
+                    "404": {
+                        "description": "No response body"
+                    }
+                }
+            }
+        },
+        "/api/alerts/{alert_id}/handle/": {
+            "post": {
+                "operationId": "api_alerts_handle_create",
+                "description": "更新告警状态（pending→processing→closed）。该接口需要 Bearer JWT 认证。",
+                "summary": "处置告警",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "alert_id",
+                        "schema": {
+                            "type": "integer"
+                        },
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "api"
+                ],
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/AlertHandle"
+                            },
+                            "examples": {
+                                "处置请求": {
+                                    "value": {
+                                        "status": "processing"
+                                    }
+                                }
+                            }
+                        },
+                        "application/x-www-form-urlencoded": {
+                            "schema": {
+                                "$ref": "#/components/schemas/AlertHandle"
+                            }
+                        },
+                        "multipart/form-data": {
+                            "schema": {
+                                "$ref": "#/components/schemas/AlertHandle"
+                            }
+                        }
+                    },
+                    "required": true
+                },
+                "security": [
+                    {
+                        "jwtAuth": []
+                    },
+                    {}
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/Alert"
+                                },
+                                "examples": {
+                                    "处置成功": {
+                                        "value": {
+                                            "code": 200,
+                                            "message": "success",
+                                            "data": {
+                                                "id": 1,
+                                                "title": "危险区域入侵",
+                                                "eventType": "ZONE_INTRUSION",
+                                                "severity": "high",
+                                                "status": "processing",
+                                                "cameraId": 1,
+                                                "cameraName": "一号车间入口",
+                                                "occurredAt": "2026-07-10T14:05:03+08:00",
+                                                "description": ""
+                                            },
+                                            "requestId": "uuid"
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                        "description": ""
+                    },
+                    "400": {
+                        "description": "No response body"
+                    },
+                    "404": {
+                        "description": "No response body"
+                    }
+                }
+            }
+        },
+        "/api/alerts/list/": {
+            "get": {
+                "operationId": "api_alerts_list_list",
+                "description": "查询告警中心列表，支持关键词（标题）、等级、状态、摄像头和时间范围筛选，支持分页。",
+                "summary": "查询告警列表",
+                "parameters": [
+                    {
+                        "in": "query",
+                        "name": "cameraId",
+                        "schema": {
+                            "type": "integer"
+                        },
+                        "description": "摄像头 ID"
+                    },
+                    {
+                        "in": "query",
+                        "name": "endTime",
+                        "schema": {
+                            "type": "string"
+                        },
+                        "description": "结束时间，ISO 格式"
+                    },
+                    {
+                        "in": "query",
+                        "name": "keyword",
+                        "schema": {
+                            "type": "string"
+                        },
+                        "description": "关键词，模糊搜索告警标题"
+                    },
+                    {
+                        "in": "query",
+                        "name": "page",
+                        "schema": {
+                            "type": "integer"
+                        },
+                        "description": "页码，正整数，默认 1"
+                    },
+                    {
+                        "in": "query",
+                        "name": "pageSize",
+                        "schema": {
+                            "type": "integer"
+                        },
+                        "description": "每页数量，1~100，默认 20"
+                    },
+                    {
+                        "in": "query",
+                        "name": "severity",
+                        "schema": {
+                            "type": "string"
+                        },
+                        "description": "等级：info/low/medium/high"
+                    },
+                    {
+                        "in": "query",
+                        "name": "startTime",
+                        "schema": {
+                            "type": "string"
+                        },
+                        "description": "开始时间，ISO 格式"
+                    },
+                    {
+                        "in": "query",
+                        "name": "status",
+                        "schema": {
+                            "type": "string"
+                        },
+                        "description": "状态：pending/processing/closed"
+                    }
+                ],
+                "tags": [
+                    "api"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    },
+                    {}
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "array",
+                                    "items": {
+                                        "$ref": "#/components/schemas/Alert"
+                                    }
+                                },
+                                "examples": {
+                                    "告警列表响应": {
+                                        "value": [
+                                            {
+                                                "code": 200,
+                                                "message": "success",
+                                                "data": {
+                                                    "total": 1,
+                                                    "items": [
+                                                        {
+                                                            "id": 1,
+                                                            "title": "危险区域入侵",
+                                                            "eventType": "ZONE_INTRUSION",
+                                                            "severity": "high",
+                                                            "status": "pending",
+                                                            "cameraId": 1,
+                                                            "cameraName": "一号车间入口",
+                                                            "occurredAt": "2026-07-10T14:05:03+08:00",
+                                                            "description": "trackId t-1 进入 危险设备区"
+                                                        }
+                                                    ]
+                                                },
+                                                "requestId": "uuid"
+                                            }
+                                        ]
+                                    }
+                                }
+                            }
+                        },
+                        "description": ""
+                    },
+                    "400": {
+                        "description": "No response body"
+                    }
+                }
+            }
+        },
+        "/api/attendance/": {
+            "get": {
+                "operationId": "api_attendance_retrieve",
+                "description": "返回考勤模块当前占位状态，用于确认路由和模块边界存在。",
+                "summary": "考勤模块占位接口",
+                "tags": [
+                    "api"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    },
+                    {}
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/AttendancePlaceholder"
+                                },
+                                "examples": {
+                                    "AttendancePlaceholder": {
+                                        "value": {
+                                            "code": 200,
+                                            "message": "Attendance module placeholder",
+                                            "data": {
+                                                "module": "attendance",
+                                                "status": "placeholder"
+                                            },
+                                            "requestId": "uuid"
+                                        },
+                                        "summary": "Attendance placeholder"
+                                    }
+                                }
+                            }
+                        },
+                        "description": ""
+                    }
+                }
+            }
+        },
+        "/api/auth/": {
+            "get": {
+                "operationId": "api_auth_retrieve",
+                "description": "返回用户模块当前占位状态，用于确认路由和模块边界存在。",
+                "summary": "用户模块占位接口",
+                "tags": [
+                    "api"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    },
+                    {}
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/UserPlaceholder"
+                                },
+                                "examples": {
+                                    "UsersPlaceholder": {
+                                        "value": {
+                                            "code": 200,
+                                            "message": "Users module placeholder",
+                                            "data": {
+                                                "module": "users",
+                                                "status": "placeholder"
+                                            },
+                                            "requestId": "uuid"
+                                        },
+                                        "summary": "Users placeholder"
+                                    }
+                                }
+                            }
+                        },
+                        "description": ""
+                    }
+                }
+            }
+        },
+        "/api/auth/login/": {
+            "post": {
+                "operationId": "api_auth_login_create",
+                "description": "使用用户名和密码登录。认证成功后返回 Bearer JWT token 和用户信息。",
+                "summary": "用户登录",
+                "tags": [
+                    "api"
+                ],
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/Login"
+                            },
+                            "examples": {
+                                "LoginRequest": {
+                                    "value": {
+                                        "username": "admin",
+                                        "password": "password"
+                                    },
+                                    "summary": "Login request"
+                                }
+                            }
+                        },
+                        "application/x-www-form-urlencoded": {
+                            "schema": {
+                                "$ref": "#/components/schemas/Login"
+                            }
+                        },
+                        "multipart/form-data": {
+                            "schema": {
+                                "$ref": "#/components/schemas/Login"
+                            }
+                        }
+                    },
+                    "required": true
+                },
+                "security": [
+                    {
+                        "jwtAuth": []
+                    },
+                    {}
+                ],
+                "responses": {
+                    "200": {
+                        "description": "No response body"
+                    },
+                    "400": {
+                        "description": "No response body"
+                    },
+                    "401": {
+                        "description": "No response body"
+                    },
+                    "403": {
+                        "description": "No response body"
+                    }
+                }
+            }
+        },
+        "/api/auth/logout/": {
+            "post": {
+                "operationId": "api_auth_logout_create",
+                "description": "JWT 无状态登出接口。后端返回成功，前端负责清理本地 token。该接口需要 Bearer JWT 认证。",
+                "summary": "用户登出",
+                "tags": [
+                    "api"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "No response body"
+                    },
+                    "401": {
+                        "description": "No response body"
+                    }
+                }
+            }
+        },
+        "/api/auth/me/": {
+            "get": {
+                "operationId": "api_auth_me_retrieve",
+                "description": "返回当前 Bearer JWT 对应的用户信息。该接口需要 Bearer JWT 认证。",
+                "summary": "获取当前用户",
+                "tags": [
+                    "api"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/User"
+                                },
+                                "examples": {
+                                    "CurrentUser": {
+                                        "value": {
+                                            "code": 200,
+                                            "message": "success",
+                                            "data": {
+                                                "id": 1,
+                                                "username": "admin",
+                                                "role": "admin"
+                                            },
+                                            "requestId": "uuid"
+                                        },
+                                        "summary": "Current user"
+                                    }
+                                }
+                            }
+                        },
+                        "description": ""
+                    },
+                    "401": {
+                        "description": "No response body"
+                    }
+                }
+            }
+        },
+        "/api/cameras/": {
+            "post": {
+                "operationId": "api_cameras_create",
+                "description": "新增摄像头配置。code 编码不填则自动生成 CAM001 格式。该接口需要 Bearer JWT 认证。",
+                "summary": "创建摄像头",
+                "tags": [
+                    "api"
+                ],
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/CameraCreate"
+                            },
+                            "examples": {
+                                "创建请求": {
+                                    "value": {
+                                        "name": "一号车间入口",
+                                        "code": "CAM001",
+                                        "streamUrl": "rtmp://srs/live/1",
+                                        "processedStreamUrl": "rtmp://srs/live/1_detected",
+                                        "location": "南侧"
+                                    }
+                                }
+                            }
+                        },
+                        "application/x-www-form-urlencoded": {
+                            "schema": {
+                                "$ref": "#/components/schemas/CameraCreate"
+                            }
+                        },
+                        "multipart/form-data": {
+                            "schema": {
+                                "$ref": "#/components/schemas/CameraCreate"
+                            }
+                        }
+                    },
+                    "required": true
+                },
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "No response body"
+                    },
+                    "400": {
+                        "description": "No response body"
+                    },
+                    "409": {
+                        "description": "No response body"
+                    }
+                }
+            }
+        },
+        "/api/cameras/{camera_id}/": {
+            "put": {
+                "operationId": "api_cameras_update",
+                "description": "编辑摄像头配置，所有字段可选，不传则保持原值。该接口需要 Bearer JWT 认证。",
+                "summary": "编辑摄像头",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "camera_id",
+                        "schema": {
+                            "type": "integer"
+                        },
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "api"
+                ],
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/CameraUpdate"
+                            },
+                            "examples": {
+                                "编辑请求": {
+                                    "value": {
+                                        "name": "一号车间入口（更新）",
+                                        "location": "南侧门"
+                                    }
+                                }
+                            }
+                        },
+                        "application/x-www-form-urlencoded": {
+                            "schema": {
+                                "$ref": "#/components/schemas/CameraUpdate"
+                            }
+                        },
+                        "multipart/form-data": {
+                            "schema": {
+                                "$ref": "#/components/schemas/CameraUpdate"
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "No response body"
+                    },
+                    "400": {
+                        "description": "No response body"
+                    },
+                    "404": {
+                        "description": "No response body"
+                    },
+                    "409": {
+                        "description": "No response body"
+                    }
+                }
+            }
+        },
+        "/api/cameras/{camera_id}/delete/": {
+            "delete": {
+                "operationId": "api_cameras_delete_destroy",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "camera_id",
+                        "schema": {
+                            "type": "integer"
+                        },
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "api"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No response body"
+                    }
+                }
+            }
+        },
+        "/api/cameras/{camera_id}/stream/start/": {
+            "post": {
+                "operationId": "api_cameras_stream_start_create",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "camera_id",
+                        "schema": {
+                            "type": "integer"
+                        },
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "api"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "No response body"
+                    }
+                }
+            }
+        },
+        "/api/cameras/{camera_id}/stream/status/": {
+            "get": {
+                "operationId": "api_cameras_stream_status_retrieve",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "camera_id",
+                        "schema": {
+                            "type": "integer"
+                        },
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "api"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "No response body"
+                    }
+                }
+            }
+        },
+        "/api/cameras/{camera_id}/stream/stop/": {
+            "post": {
+                "operationId": "api_cameras_stream_stop_create",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "camera_id",
+                        "schema": {
+                            "type": "integer"
+                        },
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "api"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "No response body"
+                    }
+                }
+            }
+        },
+        "/api/cameras/{camera_id}/toggle/": {
+            "post": {
+                "operationId": "api_cameras_toggle_create",
+                "description": "切换摄像头的在线/离线/停用状态。该接口需要 Bearer JWT 认证。",
+                "summary": "切换摄像头状态",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "camera_id",
+                        "schema": {
+                            "type": "integer"
+                        },
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "api"
+                ],
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/CameraToggle"
+                            },
+                            "examples": {
+                                "切换请求": {
+                                    "value": {
+                                        "status": "online"
+                                    }
+                                }
+                            }
+                        },
+                        "application/x-www-form-urlencoded": {
+                            "schema": {
+                                "$ref": "#/components/schemas/CameraToggle"
+                            }
+                        },
+                        "multipart/form-data": {
+                            "schema": {
+                                "$ref": "#/components/schemas/CameraToggle"
+                            }
+                        }
+                    },
+                    "required": true
+                },
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "No response body"
+                    },
+                    "400": {
+                        "description": "No response body"
+                    },
+                    "404": {
+                        "description": "No response body"
+                    }
+                }
+            }
+        },
+        "/api/cameras/list/": {
+            "get": {
+                "operationId": "api_cameras_list_list",
+                "description": "查询摄像头配置，支持关键词搜索（名称/编码/位置）、状态筛选和分页。不传分页参数时返回全量（AI Service 调用兼容）。",
+                "summary": "查询摄像头列表",
+                "parameters": [
+                    {
+                        "in": "query",
+                        "name": "keyword",
+                        "schema": {
+                            "type": "string"
+                        },
+                        "description": "模糊匹配名称、编码或位置"
+                    },
+                    {
+                        "in": "query",
+                        "name": "page",
+                        "schema": {
+                            "type": "integer"
+                        },
+                        "description": "页码，正整数"
+                    },
+                    {
+                        "in": "query",
+                        "name": "pageSize",
+                        "schema": {
+                            "type": "integer"
+                        },
+                        "description": "每页数量，正整数"
+                    },
+                    {
+                        "in": "query",
+                        "name": "status",
+                        "schema": {
+                            "type": "string"
+                        },
+                        "description": "在线状态：online / offline / disabled"
+                    }
+                ],
+                "tags": [
+                    "api"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    },
+                    {}
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "array",
+                                    "items": {
+                                        "$ref": "#/components/schemas/CameraList"
+                                    }
+                                },
+                                "examples": {
+                                    "摄像头列表响应": {
+                                        "value": [
+                                            {
+                                                "code": 200,
+                                                "message": "success",
+                                                "data": {
+                                                    "total": 2,
+                                                    "items": [
+                                                        {
+                                                            "id": 1,
+                                                            "name": "一号车间入口",
+                                                            "code": "CAM001",
+                                                            "streamUrl": "rtmp://srs/live/1",
+                                                            "processedStreamUrl": "rtmp://srs/live/1_detected",
+                                                            "location": "一号车间南侧",
+                                                            "status": "online",
+                                                            "enabled": true
+                                                        },
+                                                        {
+                                                            "id": 2,
+                                                            "name": "二号车间通道",
+                                                            "code": "CAM002",
+                                                            "streamUrl": "rtmp://srs/live/2",
+                                                            "processedStreamUrl": "",
+                                                            "location": "二号车间东侧",
+                                                            "status": "offline",
+                                                            "enabled": true
+                                                        }
+                                                    ]
+                                                },
+                                                "requestId": "uuid"
+                                            }
+                                        ]
+                                    }
+                                }
+                            }
+                        },
+                        "description": ""
+                    }
+                }
+            }
+        },
+        "/api/cameras/placeholder/": {
+            "get": {
+                "operationId": "api_cameras_placeholder_retrieve",
+                "description": "返回摄像头模块当前占位状态，用于确认路由和模块边界存在。",
+                "summary": "摄像头模块占位接口",
+                "tags": [
+                    "api"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    },
+                    {}
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/CameraPlaceholder"
+                                },
+                                "examples": {
+                                    "CamerasPlaceholder": {
+                                        "value": {
+                                            "code": 200,
+                                            "message": "Cameras module placeholder",
+                                            "data": {
+                                                "module": "cameras",
+                                                "status": "placeholder"
+                                            },
+                                            "requestId": "uuid"
+                                        },
+                                        "summary": "Cameras placeholder"
+                                    }
+                                }
+                            }
+                        },
+                        "description": ""
+                    }
+                }
+            }
+        },
+        "/api/dashboard/summary/": {
+            "get": {
+                "operationId": "api_dashboard_summary_retrieve",
+                "description": "Return database-backed operational counts, recent alerts, and today's hourly event trend.",
+                "summary": "Dashboard summary",
+                "tags": [
+                    "api"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    },
+                    {}
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/DashboardSummary"
+                                }
+                            }
+                        },
+                        "description": ""
+                    }
+                }
+            }
+        },
+        "/api/employees/": {
+            "get": {
+                "operationId": "api_employees_retrieve",
+                "description": "返回员工模块当前占位状态，用于确认路由和模块边界存在。",
+                "summary": "员工模块占位接口",
+                "tags": [
+                    "api"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/EmployeePlaceholder"
+                                },
+                                "examples": {
+                                    "EmployeesPlaceholder": {
+                                        "value": {
+                                            "code": 200,
+                                            "message": "Employees module placeholder",
+                                            "data": {
+                                                "module": "employees",
+                                                "status": "placeholder"
+                                            },
+                                            "requestId": "uuid"
+                                        },
+                                        "summary": "Employees placeholder"
+                                    }
+                                }
+                            }
+                        },
+                        "description": ""
+                    }
+                }
+            },
+            "post": {
+                "operationId": "api_employees_create",
+                "description": "新增员工档案。工号重复时返回 409。",
+                "summary": "创建员工",
+                "tags": [
+                    "api"
+                ],
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/EmployeeCreate"
+                            },
+                            "examples": {
+                                "CreateEmployeeRequest": {
+                                    "value": {
+                                        "employeeNo": "E001",
+                                        "name": "张三",
+                                        "department": "生产部",
+                                        "position": "操作员",
+                                        "phone": "13800000000"
+                                    },
+                                    "summary": "Create employee request"
+                                }
+                            }
+                        },
+                        "application/x-www-form-urlencoded": {
+                            "schema": {
+                                "$ref": "#/components/schemas/EmployeeCreate"
+                            }
+                        },
+                        "multipart/form-data": {
+                            "schema": {
+                                "$ref": "#/components/schemas/EmployeeCreate"
+                            }
+                        }
+                    },
+                    "required": true
+                },
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "No response body"
+                    },
+                    "400": {
+                        "description": "No response body"
+                    },
+                    "409": {
+                        "description": "No response body"
+                    }
+                }
+            }
+        },
+        "/api/employees/{employee_id}/": {
+            "put": {
+                "operationId": "api_employees_update",
+                "description": "编辑员工档案，所有字段可选。修改成功通知 AI Service 刷新人脸库。该接口需要 Bearer JWT 认证。",
+                "summary": "编辑员工",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "employee_id",
+                        "schema": {
+                            "type": "integer"
+                        },
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "api"
+                ],
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/EmployeeUpdate"
+                            },
+                            "examples": {
+                                "编辑请求": {
+                                    "value": {
+                                        "name": "张三（更新）",
+                                        "department": "质检部"
+                                    }
+                                }
+                            }
+                        },
+                        "application/x-www-form-urlencoded": {
+                            "schema": {
+                                "$ref": "#/components/schemas/EmployeeUpdate"
+                            }
+                        },
+                        "multipart/form-data": {
+                            "schema": {
+                                "$ref": "#/components/schemas/EmployeeUpdate"
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "No response body"
+                    },
+                    "400": {
+                        "description": "No response body"
+                    },
+                    "404": {
+                        "description": "No response body"
+                    },
+                    "409": {
+                        "description": "No response body"
+                    }
+                }
+            }
+        },
+        "/api/employees/{employee_id}/delete/": {
+            "delete": {
+                "operationId": "api_employees_delete_destroy",
+                "description": "删除员工档案，级联删除人脸特征和本地图片，通知 AI Service。该接口需要 Bearer JWT 认证。",
+                "summary": "删除员工",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "employee_id",
+                        "schema": {
+                            "type": "integer"
+                        },
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "api"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "No response body"
+                    },
+                    "404": {
+                        "description": "No response body"
+                    }
+                }
+            }
+        },
+        "/api/employees/{employee_id}/faces/": {
+            "get": {
+                "operationId": "api_employees_faces_retrieve",
+                "description": "返回指定员工的所有已录入人脸特征记录。该接口需要 Bearer JWT 认证。",
+                "summary": "查询员工人脸列表",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "employee_id",
+                        "schema": {
+                            "type": "integer"
+                        },
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "api"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "No response body"
+                    },
+                    "404": {
+                        "description": "No response body"
+                    }
+                }
+            }
+        },
+        "/api/employees/list/": {
+            "get": {
+                "operationId": "api_employees_list_list",
+                "description": "查询员工档案列表，支持按关键词模糊匹配姓名或工号。该接口需要 Bearer JWT 认证。",
+                "summary": "查询员工列表",
+                "parameters": [
+                    {
+                        "in": "query",
+                        "name": "department",
+                        "schema": {
+                            "type": "string"
+                        },
+                        "description": "部门筛选，可选"
+                    },
+                    {
+                        "in": "query",
+                        "name": "keyword",
+                        "schema": {
+                            "type": "string"
+                        },
+                        "description": "关键词，模糊匹配姓名或工号，可选"
+                    },
+                    {
+                        "in": "query",
+                        "name": "page",
+                        "schema": {
+                            "type": "integer"
+                        },
+                        "description": "页码，正整数，默认 1"
+                    },
+                    {
+                        "in": "query",
+                        "name": "pageSize",
+                        "schema": {
+                            "type": "integer"
+                        },
+                        "description": "每页数量，正整数，默认 20"
+                    },
+                    {
+                        "in": "query",
+                        "name": "status",
+                        "schema": {
+                            "type": "string"
+                        },
+                        "description": "员工状态，可选：active/inactive"
+                    }
+                ],
+                "tags": [
+                    "api"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "array",
+                                    "items": {
+                                        "$ref": "#/components/schemas/EmployeeList"
+                                    }
+                                },
+                                "examples": {
+                                    "EmployeeListResponse": {
+                                        "value": [
+                                            {
+                                                "code": 200,
+                                                "message": "success",
+                                                "data": {
+                                                    "total": 1,
+                                                    "items": [
+                                                        {
+                                                            "id": 1,
+                                                            "employeeNo": "E001",
+                                                            "name": "张三",
+                                                            "department": "生产部",
+                                                            "position": "操作员",
+                                                            "phone": "13800000000",
+                                                            "status": "active"
+                                                        }
+                                                    ]
+                                                },
+                                                "requestId": "uuid"
+                                            }
+                                        ],
+                                        "summary": "Employee list response"
+                                    }
+                                }
+                            }
+                        },
+                        "description": ""
+                    },
+                    "400": {
+                        "description": "No response body"
+                    },
+                    "401": {
+                        "description": "No response body"
+                    }
+                }
+            }
+        },
+        "/api/events/": {
+            "get": {
+                "operationId": "api_events_retrieve",
+                "description": "返回事件模块当前占位状态，用于确认路由和模块边界存在。",
+                "summary": "事件模块占位接口",
+                "tags": [
+                    "api"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    },
+                    {}
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/EventPlaceholder"
+                                },
+                                "examples": {
+                                    "EventsPlaceholder": {
+                                        "value": {
+                                            "code": 200,
+                                            "message": "Events module placeholder",
+                                            "data": {
+                                                "module": "events",
+                                                "status": "placeholder"
+                                            },
+                                            "requestId": "uuid"
+                                        },
+                                        "summary": "Events placeholder"
+                                    }
+                                }
+                            }
+                        },
+                        "description": ""
+                    }
+                }
+            }
+        },
+        "/api/events/{event_id}/media/": {
+            "post": {
+                "operationId": "api_events_media_create",
+                "description": "Accept keyframe/clip/manifest files for a formal event and persist browser-accessible media URLs.",
+                "summary": "Upload event replay media",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "event_id",
+                        "schema": {
+                            "type": "integer"
+                        },
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "api"
+                ],
+                "requestBody": {
+                    "content": {
+                        "multipart/form-data": {
+                            "schema": {
+                                "$ref": "#/components/schemas/EventMediaUpload"
+                            }
+                        },
+                        "application/x-www-form-urlencoded": {
+                            "schema": {
+                                "$ref": "#/components/schemas/EventMediaUpload"
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "jwtAuth": []
+                    },
+                    {}
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/EventMediaUpload"
+                                }
+                            }
+                        },
+                        "description": ""
+                    },
+                    "400": {
+                        "description": "No response body"
+                    },
+                    "404": {
+                        "description": "No response body"
+                    }
+                }
+            }
+        },
+        "/api/events/list/": {
+            "get": {
+                "operationId": "api_events_list_list",
+                "description": "Return formal Event records without any AIEvent compatibility data.",
+                "summary": "List formal events",
+                "tags": [
+                    "api"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    },
+                    {}
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "array",
+                                    "items": {
+                                        "$ref": "#/components/schemas/EventList"
+                                    }
+                                }
+                            }
+                        },
+                        "description": ""
+                    }
+                }
+            }
+        },
+        "/api/face/{face_id}/delete/": {
+            "delete": {
+                "operationId": "api_face_delete_destroy",
+                "description": "删除指定的人脸特征记录和本地图片，并通知 AI Service。该接口需要 Bearer JWT 认证。",
+                "summary": "删除单张人脸",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "face_id",
+                        "schema": {
+                            "type": "integer"
+                        },
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "api"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "No response body"
+                    },
+                    "404": {
+                        "description": "No response body"
+                    }
+                }
+            }
+        },
+        "/api/face/enroll/": {
+            "post": {
+                "operationId": "api_face_enroll_create",
+                "description": "录入 1~3 张人脸图片（正脸/左脸/右脸）。同一 faceType 重新录入会自动替换旧记录。该接口需要 Bearer JWT 认证。",
+                "summary": "人脸录入",
+                "tags": [
+                    "api"
+                ],
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/FaceEnroll"
+                            },
+                            "examples": {
+                                "EnrollRequest": {
+                                    "value": {
+                                        "employeeId": 1,
+                                        "faces": [
+                                            {
+                                                "imageBase64": "data:image/jpeg;base64,...",
+                                                "faceType": "front"
+                                            },
+                                            {
+                                                "imageBase64": "data:image/jpeg;base64,...",
+                                                "faceType": "left"
+                                            }
+                                        ]
+                                    },
+                                    "summary": "Enroll request"
+                                }
+                            }
+                        },
+                        "application/x-www-form-urlencoded": {
+                            "schema": {
+                                "$ref": "#/components/schemas/FaceEnroll"
+                            }
+                        },
+                        "multipart/form-data": {
+                            "schema": {
+                                "$ref": "#/components/schemas/FaceEnroll"
+                            }
+                        }
+                    },
+                    "required": true
+                },
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "No response body"
+                    },
+                    "400": {
+                        "description": "No response body"
+                    },
+                    "404": {
+                        "description": "No response body"
+                    },
+                    "422": {
+                        "description": "No response body"
+                    },
+                    "500": {
+                        "description": "No response body"
+                    }
+                }
+            }
+        },
+        "/api/face/library/": {
+            "get": {
+                "operationId": "api_face_library_retrieve",
+                "description": "Return active employee embeddings to the configured AI service only.",
+                "tags": [
+                    "api"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    },
+                    {}
+                ],
+                "responses": {
+                    "200": {
+                        "description": "No response body"
+                    }
+                }
+            }
+        },
+        "/api/health/": {
+            "get": {
+                "operationId": "api_health_retrieve",
+                "description": "返回后端服务健康状态。",
+                "summary": "后端健康检查",
+                "tags": [
+                    "api"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    },
+                    {}
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/HealthCheck"
+                                },
+                                "examples": {
+                                    "HealthCheck": {
+                                        "value": {
+                                            "code": 200,
+                                            "message": "Backend service is healthy",
+                                            "data": {
+                                                "service": "backend",
+                                                "status": "ok",
+                                                "stage": "skeleton"
+                                            },
+                                            "requestId": "uuid"
+                                        },
+                                        "summary": "Health check"
+                                    }
+                                }
+                            }
+                        },
+                        "description": ""
+                    }
+                }
+            }
+        },
+        "/api/reports/{report_id}/": {
+            "get": {
+                "operationId": "api_reports_retrieve",
+                "description": "返回指定日报的正文预览内容和告警明细。该接口需要 Bearer JWT 认证。",
+                "summary": "查看 AI 监控日报详情",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "report_id",
+                        "schema": {
+                            "type": "string"
+                        },
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "api"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ReportDetail"
+                                }
+                            }
+                        },
+                        "description": ""
+                    },
+                    "404": {
+                        "description": "No response body"
+                    },
+                    "401": {
+                        "description": "No response body"
+                    }
+                }
+            }
+        },
+        "/api/reports/{report_id}/download/": {
+            "get": {
+                "operationId": "api_reports_download_retrieve",
+                "description": "下载指定日报的 Word 文档。该接口需要 Bearer JWT 认证。",
+                "summary": "下载 AI 监控日报",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "report_id",
+                        "schema": {
+                            "type": "string"
+                        },
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "api"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "string",
+                                    "format": "binary"
+                                }
+                            }
+                        },
+                        "description": ""
+                    },
+                    "404": {
+                        "description": "No response body"
+                    },
+                    "401": {
+                        "description": "No response body"
+                    }
+                }
+            }
+        },
+        "/api/reports/generate/": {
+            "post": {
+                "operationId": "api_reports_generate_create",
+                "description": "手动生成 AI 监控时段报告。未传 periodLabel 时生成最近一个已经完整结束的 6 小时时段；同一时段重复生成会更新原报告。该接口需要 Bearer JWT 认证。",
+                "summary": "手动生成 AI 监控日报",
+                "tags": [
+                    "api"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ReportDetail"
+                                }
+                            }
+                        },
+                        "description": ""
+                    },
+                    "400": {
+                        "description": "No response body"
+                    },
+                    "401": {
+                        "description": "No response body"
+                    }
+                }
+            }
+        },
+        "/api/reports/list/": {
+            "get": {
+                "operationId": "api_reports_list_list",
+                "description": "查询已生成的 AI 监控时段报告。该接口需要 Bearer JWT 认证。",
+                "summary": "查询 AI 监控日报列表",
+                "parameters": [
+                    {
+                        "in": "query",
+                        "name": "date",
+                        "schema": {
+                            "type": "string",
+                            "format": "date"
+                        },
+                        "description": "日报日期，格式 YYYY-MM-DD"
+                    },
+                    {
+                        "in": "query",
+                        "name": "page",
+                        "schema": {
+                            "type": "integer"
+                        },
+                        "description": "页码，默认 1"
+                    },
+                    {
+                        "in": "query",
+                        "name": "pageSize",
+                        "schema": {
+                            "type": "integer"
+                        },
+                        "description": "每页数量，默认 20，最大 100"
+                    },
+                    {
+                        "in": "query",
+                        "name": "periodLabel",
+                        "schema": {
+                            "type": "string"
+                        },
+                        "description": "统计时段"
+                    }
+                ],
+                "tags": [
+                    "api"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "array",
+                                    "items": {
+                                        "$ref": "#/components/schemas/ReportListItem"
+                                    }
+                                }
+                            }
+                        },
+                        "description": ""
+                    },
+                    "400": {
+                        "description": "No response body"
+                    },
+                    "401": {
+                        "description": "No response body"
+                    }
+                }
+            }
+        },
+        "/api/users/": {
+            "get": {
+                "operationId": "api_users_retrieve",
+                "description": "返回用户模块当前占位状态，用于确认路由和模块边界存在。",
+                "summary": "用户模块占位接口",
+                "tags": [
+                    "api"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    },
+                    {}
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/UserPlaceholder"
+                                },
+                                "examples": {
+                                    "UsersPlaceholder": {
+                                        "value": {
+                                            "code": 200,
+                                            "message": "Users module placeholder",
+                                            "data": {
+                                                "module": "users",
+                                                "status": "placeholder"
+                                            },
+                                            "requestId": "uuid"
+                                        },
+                                        "summary": "Users placeholder"
+                                    }
+                                }
+                            }
+                        },
+                        "description": ""
+                    }
+                }
+            }
+        },
+        "/api/users/login/": {
+            "post": {
+                "operationId": "api_users_login_create",
+                "description": "使用用户名和密码登录。认证成功后返回 Bearer JWT token 和用户信息。",
+                "summary": "用户登录",
+                "tags": [
+                    "api"
+                ],
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/Login"
+                            },
+                            "examples": {
+                                "LoginRequest": {
+                                    "value": {
+                                        "username": "admin",
+                                        "password": "password"
+                                    },
+                                    "summary": "Login request"
+                                }
+                            }
+                        },
+                        "application/x-www-form-urlencoded": {
+                            "schema": {
+                                "$ref": "#/components/schemas/Login"
+                            }
+                        },
+                        "multipart/form-data": {
+                            "schema": {
+                                "$ref": "#/components/schemas/Login"
+                            }
+                        }
+                    },
+                    "required": true
+                },
+                "security": [
+                    {
+                        "jwtAuth": []
+                    },
+                    {}
+                ],
+                "responses": {
+                    "200": {
+                        "description": "No response body"
+                    },
+                    "400": {
+                        "description": "No response body"
+                    },
+                    "401": {
+                        "description": "No response body"
+                    },
+                    "403": {
+                        "description": "No response body"
+                    }
+                }
+            }
+        },
+        "/api/users/logout/": {
+            "post": {
+                "operationId": "api_users_logout_create",
+                "description": "JWT 无状态登出接口。后端返回成功，前端负责清理本地 token。该接口需要 Bearer JWT 认证。",
+                "summary": "用户登出",
+                "tags": [
+                    "api"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "No response body"
+                    },
+                    "401": {
+                        "description": "No response body"
+                    }
+                }
+            }
+        },
+        "/api/users/me/": {
+            "get": {
+                "operationId": "api_users_me_retrieve",
+                "description": "返回当前 Bearer JWT 对应的用户信息。该接口需要 Bearer JWT 认证。",
+                "summary": "获取当前用户",
+                "tags": [
+                    "api"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/User"
+                                },
+                                "examples": {
+                                    "CurrentUser": {
+                                        "value": {
+                                            "code": 200,
+                                            "message": "success",
+                                            "data": {
+                                                "id": 1,
+                                                "username": "admin",
+                                                "role": "admin"
+                                            },
+                                            "requestId": "uuid"
+                                        },
+                                        "summary": "Current user"
+                                    }
+                                }
+                            }
+                        },
+                        "description": ""
+                    },
+                    "401": {
+                        "description": "No response body"
+                    }
+                }
+            }
+        },
+        "/api/zones/": {
+            "post": {
+                "operationId": "api_zones_create",
+                "description": "为指定摄像头创建多边形警戒区域。点位少于 3 个时拒绝创建。该接口需要 Bearer JWT 认证。",
+                "summary": "创建警戒区域",
+                "tags": [
+                    "api"
+                ],
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/ZoneCreate"
+                            },
+                            "examples": {
+                                "创建请求": {
+                                    "value": {
+                                        "cameraId": 1,
+                                        "name": "危险设备区",
+                                        "type": "danger",
+                                        "points": [
+                                            {
+                                                "x": 0.56,
+                                                "y": 0.45
+                                            },
+                                            {
+                                                "x": 0.82,
+                                                "y": 0.43
+                                            },
+                                            {
+                                                "x": 0.87,
+                                                "y": 0.72
+                                            }
+                                        ],
+                                        "enabled": true,
+                                        "description": "设备运行危险区域"
+                                    }
+                                }
+                            }
+                        },
+                        "application/x-www-form-urlencoded": {
+                            "schema": {
+                                "$ref": "#/components/schemas/ZoneCreate"
+                            }
+                        },
+                        "multipart/form-data": {
+                            "schema": {
+                                "$ref": "#/components/schemas/ZoneCreate"
+                            }
+                        }
+                    },
+                    "required": true
+                },
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "No response body"
+                    },
+                    "400": {
+                        "description": "No response body"
+                    },
+                    "422": {
+                        "description": "No response body"
+                    }
+                }
+            }
+        },
+        "/api/zones/{zone_id}/": {
+            "put": {
+                "operationId": "api_zones_update",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "zone_id",
+                        "schema": {
+                            "type": "integer"
+                        },
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "api"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "No response body"
+                    }
+                }
+            },
+            "delete": {
+                "operationId": "api_zones_destroy",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "zone_id",
+                        "schema": {
+                            "type": "integer"
+                        },
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "api"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No response body"
+                    }
+                }
+            }
+        },
+        "/api/zones/list/": {
+            "get": {
+                "operationId": "api_zones_list_list",
+                "description": "查询指定摄像头的警戒区域配置。选择摄像头后返回对应的多边形区域列表。",
+                "summary": "查询警戒区域列表",
+                "parameters": [
+                    {
+                        "in": "query",
+                        "name": "cameraId",
+                        "schema": {
+                            "type": "string"
+                        },
+                        "description": "摄像头 ID 或编码"
+                    },
+                    {
+                        "in": "query",
+                        "name": "enabled",
+                        "schema": {
+                            "type": "boolean"
+                        },
+                        "description": "是否启用"
+                    }
+                ],
+                "tags": [
+                    "api"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    },
+                    {}
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "array",
+                                    "items": {
+                                        "$ref": "#/components/schemas/ZoneList"
+                                    }
+                                },
+                                "examples": {
+                                    "区域列表响应": {
+                                        "value": [
+                                            {
+                                                "code": 200,
+                                                "message": "success",
+                                                "data": {
+                                                    "total": 1,
+                                                    "items": [
+                                                        {
+                                                            "id": 1,
+                                                            "name": "危险设备区",
+                                                            "cameraId": 1,
+                                                            "type": "danger",
+                                                            "points": [
+                                                                {
+                                                                    "x": 0.56,
+                                                                    "y": 0.45
+                                                                },
+                                                                {
+                                                                    "x": 0.82,
+                                                                    "y": 0.43
+                                                                },
+                                                                {
+                                                                    "x": 0.87,
+                                                                    "y": 0.72
+                                                                }
+                                                            ],
+                                                            "enabled": true,
+                                                            "description": "设备运行危险区域"
+                                                        }
+                                                    ]
+                                                },
+                                                "requestId": "uuid"
+                                            }
+                                        ]
+                                    }
+                                }
+                            }
+                        },
+                        "description": ""
+                    }
+                }
+            }
+        },
+        "/api/zones/placeholder/": {
+            "get": {
+                "operationId": "api_zones_placeholder_retrieve",
+                "description": "返回区域模块当前占位状态，用于确认路由和模块边界存在。",
+                "summary": "区域模块占位接口",
+                "tags": [
+                    "api"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    },
+                    {}
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ZonePlaceholder"
+                                },
+                                "examples": {
+                                    "区域模块占位": {
+                                        "value": {
+                                            "code": 200,
+                                            "message": "Zones module placeholder",
+                                            "data": {
+                                                "module": "zones",
+                                                "status": "placeholder"
+                                            },
+                                            "requestId": "uuid"
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                        "description": ""
+                    }
+                }
+            }
+        }
+    },
+    "components": {
+        "schemas": {
+            "AIResultPlaceholder": {
+                "type": "object",
+                "properties": {
+                    "module": {
+                        "type": "string",
+                        "default": "ai_results"
+                    },
+                    "status": {
+                        "type": "string",
+                        "default": "placeholder"
+                    }
+                }
+            },
+            "AIResultReport": {
+                "type": "object",
+                "properties": {
+                    "cameraId": {
+                        "type": "string"
+                    },
+                    "frameId": {
+                        "type": "string",
+                        "default": ""
+                    },
+                    "timestamp": {
+                        "type": "string",
+                        "format": "date-time"
+                    },
+                    "results": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "additionalProperties": {}
+                        }
+                    },
+                    "eventMedia": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "additionalProperties": {}
+                        }
+                    }
+                },
+                "required": [
+                    "cameraId",
+                    "results",
+                    "timestamp"
+                ]
+            },
+            "Alert": {
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "type": "integer",
+                        "readOnly": true
+                    },
+                    "title": {
+                        "type": "string",
+                        "readOnly": true
+                    },
+                    "eventType": {
+                        "type": "string"
+                    },
+                    "severity": {
+                        "type": "string"
+                    },
+                    "status": {
+                        "allOf": [
+                            {
+                                "$ref": "#/components/schemas/Status65dEnum"
+                            }
+                        ],
+                        "readOnly": true
+                    },
+                    "cameraId": {
+                        "type": "integer",
+                        "nullable": true
+                    },
+                    "cameraName": {
+                        "type": "string",
+                        "nullable": true
+                    },
+                    "occurredAt": {
+                        "type": "string",
+                        "format": "date-time"
+                    },
+                    "description": {
+                        "type": "string",
+                        "readOnly": true
+                    }
+                },
+                "required": [
+                    "cameraId",
+                    "cameraName",
+                    "description",
+                    "eventType",
+                    "id",
+                    "occurredAt",
+                    "severity",
+                    "status",
+                    "title"
+                ]
+            },
+            "AlertDetail": {
+                "type": "object",
+                "properties": {
+                    "alert": {
+                        "type": "object",
+                        "additionalProperties": {}
+                    },
+                    "event": {
+                        "type": "object",
+                        "additionalProperties": {}
+                    },
+                    "replay": {
+                        "type": "object",
+                        "additionalProperties": {}
+                    }
+                },
+                "required": [
+                    "alert",
+                    "event",
+                    "replay"
+                ]
+            },
+            "AlertHandle": {
+                "type": "object",
+                "properties": {
+                    "status": {
+                        "$ref": "#/components/schemas/Status65dEnum"
+                    }
+                },
+                "required": [
+                    "status"
+                ]
+            },
+            "AttendancePlaceholder": {
+                "type": "object",
+                "properties": {
+                    "module": {
+                        "type": "string",
+                        "default": "attendance"
+                    },
+                    "status": {
+                        "type": "string",
+                        "default": "placeholder"
+                    }
+                }
+            },
+            "CameraCreate": {
+                "type": "object",
+                "description": "创建摄像头——参数校验。",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "maxLength": 128
+                    },
+                    "code": {
+                        "type": "string",
+                        "default": "",
+                        "maxLength": 64
+                    },
+                    "streamUrl": {
+                        "type": "string",
+                        "maxLength": 512
+                    },
+                    "processedStreamUrl": {
+                        "type": "string",
+                        "default": "",
+                        "maxLength": 512
+                    },
+                    "location": {
+                        "type": "string",
+                        "default": "",
+                        "maxLength": 255
+                    },
+                    "includeFaces": {
+                        "type": "boolean",
+                        "default": false
+                    }
+                },
+                "required": [
+                    "name",
+                    "streamUrl"
+                ]
+            },
+            "CameraList": {
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "type": "integer",
+                        "readOnly": true
+                    },
+                    "name": {
+                        "type": "string",
+                        "readOnly": true
+                    },
+                    "code": {
+                        "type": "string",
+                        "readOnly": true
+                    },
+                    "cameraId": {
+                        "type": "string"
+                    },
+                    "streamUrl": {
+                        "type": "string"
+                    },
+                    "processedStreamUrl": {
+                        "type": "string"
+                    },
+                    "location": {
+                        "type": "string",
+                        "readOnly": true
+                    },
+                    "status": {
+                        "allOf": [
+                            {
+                                "$ref": "#/components/schemas/CameraListStatusEnum"
+                            }
+                        ],
+                        "readOnly": true
+                    },
+                    "enabled": {
+                        "type": "boolean",
+                        "readOnly": true
+                    },
+                    "includeFaces": {
+                        "type": "boolean"
+                    },
+                    "streamConfig": {
+                        "type": "string",
+                        "readOnly": true
+                    }
+                },
+                "required": [
+                    "cameraId",
+                    "code",
+                    "enabled",
+                    "id",
+                    "includeFaces",
+                    "location",
+                    "name",
+                    "processedStreamUrl",
+                    "status",
+                    "streamConfig",
+                    "streamUrl"
+                ]
+            },
+            "CameraListStatusEnum": {
+                "enum": [
+                    "online",
+                    "offline",
+                    "disabled"
+                ],
+                "type": "string",
+                "description": "* `online` - Online\n* `offline` - Offline\n* `disabled` - Disabled"
+            },
+            "CameraPlaceholder": {
+                "type": "object",
+                "properties": {
+                    "module": {
+                        "type": "string",
+                        "default": "cameras"
+                    },
+                    "status": {
+                        "type": "string",
+                        "default": "placeholder"
+                    }
+                }
+            },
+            "CameraToggle": {
+                "type": "object",
+                "description": "切换摄像头状态。",
+                "properties": {
+                    "status": {
+                        "$ref": "#/components/schemas/CameraToggleStatusEnum"
+                    }
+                },
+                "required": [
+                    "status"
+                ]
+            },
+            "CameraToggleStatusEnum": {
+                "enum": [
+                    "online",
+                    "offline",
+                    "disabled"
+                ],
+                "type": "string",
+                "description": "* `online` - online\n* `offline` - offline\n* `disabled` - disabled"
+            },
+            "CameraUpdate": {
+                "type": "object",
+                "description": "编辑摄像头——所有字段可选，不传保持原值。",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "maxLength": 128
+                    },
+                    "code": {
+                        "type": "string",
+                        "maxLength": 64
+                    },
+                    "streamUrl": {
+                        "type": "string",
+                        "maxLength": 512
+                    },
+                    "processedStreamUrl": {
+                        "type": "string",
+                        "maxLength": 512
+                    },
+                    "location": {
+                        "type": "string",
+                        "maxLength": 255
+                    },
+                    "enabled": {
+                        "type": "boolean"
+                    },
+                    "includeFaces": {
+                        "type": "boolean"
+                    }
+                }
+            },
+            "DashboardSummary": {
+                "type": "object",
+                "properties": {
+                    "cameraCount": {
+                        "type": "integer"
+                    },
+                    "onlineCameraCount": {
+                        "type": "integer"
+                    },
+                    "employeeCount": {
+                        "type": "integer"
+                    },
+                    "todayEventCount": {
+                        "type": "integer"
+                    },
+                    "todayAlertCount": {
+                        "type": "integer"
+                    },
+                    "pendingAlertCount": {
+                        "type": "integer"
+                    },
+                    "recentAlerts": {
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/components/schemas/Alert"
+                        }
+                    },
+                    "eventTrend": {
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/components/schemas/EventTrend"
+                        }
+                    }
+                },
+                "required": [
+                    "cameraCount",
+                    "employeeCount",
+                    "eventTrend",
+                    "onlineCameraCount",
+                    "pendingAlertCount",
+                    "recentAlerts",
+                    "todayAlertCount",
+                    "todayEventCount"
+                ]
+            },
+            "EmployeeCreate": {
+                "type": "object",
+                "description": "创建员工——参数校验。",
+                "properties": {
+                    "employeeNo": {
+                        "type": "string",
+                        "maxLength": 64
+                    },
+                    "name": {
+                        "type": "string",
+                        "maxLength": 64
+                    },
+                    "department": {
+                        "type": "string",
+                        "default": "",
+                        "maxLength": 128
+                    },
+                    "position": {
+                        "type": "string",
+                        "default": "",
+                        "maxLength": 128
+                    },
+                    "phone": {
+                        "type": "string",
+                        "default": "",
+                        "maxLength": 32
+                    }
+                },
+                "required": [
+                    "employeeNo",
+                    "name"
+                ]
+            },
+            "EmployeeList": {
+                "type": "object",
+                "description": "员工列表输出。",
+                "properties": {
+                    "id": {
+                        "type": "integer",
+                        "readOnly": true
+                    },
+                    "employeeNo": {
+                        "type": "string"
+                    },
+                    "name": {
+                        "type": "string",
+                        "readOnly": true,
+                        "title": "姓名"
+                    },
+                    "department": {
+                        "type": "string",
+                        "readOnly": true,
+                        "title": "部门"
+                    },
+                    "position": {
+                        "type": "string",
+                        "readOnly": true,
+                        "title": "岗位"
+                    },
+                    "phone": {
+                        "type": "string",
+                        "readOnly": true,
+                        "title": "手机号"
+                    },
+                    "status": {
+                        "allOf": [
+                            {
+                                "$ref": "#/components/schemas/EmployeeListStatusEnum"
+                            }
+                        ],
+                        "readOnly": true,
+                        "title": "状态"
+                    }
+                },
+                "required": [
+                    "department",
+                    "employeeNo",
+                    "id",
+                    "name",
+                    "phone",
+                    "position",
+                    "status"
+                ]
+            },
+            "EmployeeListStatusEnum": {
+                "enum": [
+                    "active",
+                    "inactive"
+                ],
+                "type": "string",
+                "description": "* `active` - 在职\n* `inactive` - 停用"
+            },
+            "EmployeePlaceholder": {
+                "type": "object",
+                "description": "保留原占位序列化器，供占位接口使用。",
+                "properties": {
+                    "module": {
+                        "type": "string",
+                        "default": "employees"
+                    },
+                    "status": {
+                        "type": "string",
+                        "default": "placeholder"
+                    }
+                }
+            },
+            "EmployeeUpdate": {
+                "type": "object",
+                "description": "编辑员工——所有字段可选。",
+                "properties": {
+                    "employeeNo": {
+                        "type": "string",
+                        "maxLength": 64
+                    },
+                    "name": {
+                        "type": "string",
+                        "maxLength": 64
+                    },
+                    "department": {
+                        "type": "string",
+                        "maxLength": 128
+                    },
+                    "position": {
+                        "type": "string",
+                        "maxLength": 128
+                    },
+                    "phone": {
+                        "type": "string",
+                        "maxLength": 32
+                    },
+                    "status": {
+                        "$ref": "#/components/schemas/EmployeeUpdateStatusEnum"
+                    }
+                }
+            },
+            "EmployeeUpdateStatusEnum": {
+                "enum": [
+                    "active",
+                    "inactive"
+                ],
+                "type": "string",
+                "description": "* `active` - active\n* `inactive` - inactive"
+            },
+            "EventList": {
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "type": "integer",
+                        "readOnly": true
+                    },
+                    "cameraId": {
+                        "type": "integer",
+                        "nullable": true
+                    },
+                    "cameraIdentifier": {
+                        "type": "string"
+                    },
+                    "event_type": {
+                        "type": "string",
+                        "readOnly": true
+                    },
+                    "source": {
+                        "allOf": [
+                            {
+                                "$ref": "#/components/schemas/SourceEnum"
+                            }
+                        ],
+                        "readOnly": true
+                    },
+                    "severity": {
+                        "allOf": [
+                            {
+                                "$ref": "#/components/schemas/SeverityEnum"
+                            }
+                        ],
+                        "readOnly": true
+                    },
+                    "status": {
+                        "allOf": [
+                            {
+                                "$ref": "#/components/schemas/EventListStatusEnum"
+                            }
+                        ],
+                        "readOnly": true
+                    },
+                    "occurred_at": {
+                        "type": "string",
+                        "format": "date-time",
+                        "readOnly": true
+                    },
+                    "frameId": {
+                        "type": "string"
+                    },
+                    "trackId": {
+                        "type": "string"
+                    },
+                    "bbox": {
+                        "readOnly": true
+                    },
+                    "confidence": {
+                        "type": "number",
+                        "format": "double",
+                        "readOnly": true,
+                        "nullable": true
+                    },
+                    "snapshotPath": {
+                        "type": "string"
+                    },
+                    "payload": {
+                        "readOnly": true
+                    }
+                },
+                "required": [
+                    "bbox",
+                    "cameraId",
+                    "cameraIdentifier",
+                    "confidence",
+                    "event_type",
+                    "frameId",
+                    "id",
+                    "occurred_at",
+                    "payload",
+                    "severity",
+                    "snapshotPath",
+                    "source",
+                    "status",
+                    "trackId"
+                ]
+            },
+            "EventListStatusEnum": {
+                "enum": [
+                    "new",
+                    "processing",
+                    "closed"
+                ],
+                "type": "string",
+                "description": "* `new` - New\n* `processing` - Processing\n* `closed` - Closed"
+            },
+            "EventMediaUpload": {
+                "type": "object",
+                "properties": {
+                    "mediaEventId": {
+                        "type": "string"
+                    },
+                    "status": {
+                        "type": "string"
+                    },
+                    "keyframe": {
+                        "type": "string",
+                        "format": "uri"
+                    },
+                    "clip": {
+                        "type": "string",
+                        "format": "uri"
+                    },
+                    "manifest": {
+                        "type": "string",
+                        "format": "uri"
+                    }
+                }
+            },
+            "EventPlaceholder": {
+                "type": "object",
+                "properties": {
+                    "module": {
+                        "type": "string",
+                        "default": "events"
+                    },
+                    "status": {
+                        "type": "string",
+                        "default": "placeholder"
+                    }
+                }
+            },
+            "EventTrend": {
+                "type": "object",
+                "properties": {
+                    "hour": {
+                        "type": "string",
+                        "format": "date-time"
+                    },
+                    "count": {
+                        "type": "integer"
+                    }
+                },
+                "required": [
+                    "count",
+                    "hour"
+                ]
+            },
+            "FaceEnroll": {
+                "type": "object",
+                "description": "人脸录入请求——校验 3 张图片。",
+                "properties": {
+                    "employeeId": {
+                        "type": "integer",
+                        "minimum": 1
+                    },
+                    "faces": {
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/components/schemas/FaceImageItem"
+                        }
+                    }
+                },
+                "required": [
+                    "employeeId",
+                    "faces"
+                ]
+            },
+            "FaceImageItem": {
+                "type": "object",
+                "description": "单张人脸图片校验。",
+                "properties": {
+                    "imageBase64": {
+                        "type": "string"
+                    },
+                    "faceType": {
+                        "type": "string"
+                    },
+                    "featureVector": {
+                        "type": "array",
+                        "items": {
+                            "type": "number",
+                            "format": "double"
+                        }
+                    },
+                    "dimension": {
+                        "type": "integer"
+                    }
+                },
+                "required": [
+                    "faceType",
+                    "imageBase64"
+                ]
+            },
+            "HealthCheck": {
+                "type": "object",
+                "properties": {
+                    "service": {
+                        "type": "string",
+                        "default": "backend"
+                    },
+                    "status": {
+                        "type": "string",
+                        "default": "ok"
+                    },
+                    "stage": {
+                        "type": "string",
+                        "default": "skeleton"
+                    }
+                }
+            },
+            "Login": {
+                "type": "object",
+                "description": "登录请求参数校验。",
+                "properties": {
+                    "username": {
+                        "type": "string",
+                        "maxLength": 150
+                    },
+                    "password": {
+                        "type": "string",
+                        "maxLength": 128
+                    }
+                },
+                "required": [
+                    "password",
+                    "username"
+                ]
+            },
+            "ReportDetail": {
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "type": "integer"
+                    },
+                    "reportDate": {
+                        "type": "string",
+                        "format": "date"
+                    },
+                    "periodLabel": {
+                        "type": "string"
+                    },
+                    "periodStart": {
+                        "type": "string",
+                        "format": "date-time"
+                    },
+                    "periodEnd": {
+                        "type": "string",
+                        "format": "date-time"
+                    },
+                    "alertCount": {
+                        "type": "integer"
+                    },
+                    "highAlertCount": {
+                        "type": "integer"
+                    },
+                    "pendingAlertCount": {
+                        "type": "integer"
+                    },
+                    "status": {
+                        "type": "string"
+                    },
+                    "aiSummary": {
+                        "type": "string"
+                    },
+                    "documentPath": {
+                        "type": "string"
+                    },
+                    "generatedAt": {
+                        "type": "string",
+                        "format": "date-time",
+                        "nullable": true
+                    },
+                    "content": {
+                        "type": "string"
+                    },
+                    "alerts": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "additionalProperties": {}
+                        }
+                    }
+                },
+                "required": [
+                    "aiSummary",
+                    "alertCount",
+                    "alerts",
+                    "content",
+                    "documentPath",
+                    "generatedAt",
+                    "highAlertCount",
+                    "id",
+                    "pendingAlertCount",
+                    "periodEnd",
+                    "periodLabel",
+                    "periodStart",
+                    "reportDate",
+                    "status"
+                ]
+            },
+            "ReportListItem": {
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "type": "integer"
+                    },
+                    "reportDate": {
+                        "type": "string",
+                        "format": "date"
+                    },
+                    "periodLabel": {
+                        "type": "string"
+                    },
+                    "periodStart": {
+                        "type": "string",
+                        "format": "date-time"
+                    },
+                    "periodEnd": {
+                        "type": "string",
+                        "format": "date-time"
+                    },
+                    "alertCount": {
+                        "type": "integer"
+                    },
+                    "highAlertCount": {
+                        "type": "integer"
+                    },
+                    "pendingAlertCount": {
+                        "type": "integer"
+                    },
+                    "status": {
+                        "type": "string"
+                    },
+                    "aiSummary": {
+                        "type": "string"
+                    },
+                    "documentPath": {
+                        "type": "string"
+                    },
+                    "generatedAt": {
+                        "type": "string",
+                        "format": "date-time",
+                        "nullable": true
+                    }
+                },
+                "required": [
+                    "aiSummary",
+                    "alertCount",
+                    "documentPath",
+                    "generatedAt",
+                    "highAlertCount",
+                    "id",
+                    "pendingAlertCount",
+                    "periodEnd",
+                    "periodLabel",
+                    "periodStart",
+                    "reportDate",
+                    "status"
+                ]
+            },
+            "RoleEnum": {
+                "enum": [
+                    "admin",
+                    "operator"
+                ],
+                "type": "string",
+                "description": "* `admin` - 管理员\n* `operator` - 安保员"
+            },
+            "SeverityEnum": {
+                "enum": [
+                    "info",
+                    "low",
+                    "medium",
+                    "high"
+                ],
+                "type": "string",
+                "description": "* `info` - Info\n* `low` - Low\n* `medium` - Medium\n* `high` - High"
+            },
+            "SourceEnum": {
+                "enum": [
+                    "ai_service"
+                ],
+                "type": "string",
+                "description": "* `ai_service` - AI Service"
+            },
+            "Status65dEnum": {
+                "enum": [
+                    "pending",
+                    "processing",
+                    "closed"
+                ],
+                "type": "string",
+                "description": "* `pending` - Pending\n* `processing` - Processing\n* `closed` - Closed"
+            },
+            "User": {
+                "type": "object",
+                "description": "用户信息输出。",
+                "properties": {
+                    "id": {
+                        "type": "integer",
+                        "readOnly": true
+                    },
+                    "username": {
+                        "type": "string",
+                        "readOnly": true,
+                        "title": "用户名",
+                        "description": "必填；长度为150个字符或以下；只能包含字母、数字、特殊字符“@”、“.”、“-”和“_”。"
+                    },
+                    "role": {
+                        "allOf": [
+                            {
+                                "$ref": "#/components/schemas/RoleEnum"
+                            }
+                        ],
+                        "readOnly": true,
+                        "title": "角色"
+                    }
+                },
+                "required": [
+                    "id",
+                    "role",
+                    "username"
+                ]
+            },
+            "UserPlaceholder": {
+                "type": "object",
+                "description": "保留原占位序列化器，供占位接口使用。",
+                "properties": {
+                    "module": {
+                        "type": "string",
+                        "default": "users"
+                    },
+                    "status": {
+                        "type": "string",
+                        "default": "placeholder"
+                    }
+                }
+            },
+            "ZoneCreate": {
+                "type": "object",
+                "description": "创建警戒区域——参数校验。",
+                "properties": {
+                    "cameraId": {
+                        "type": "integer",
+                        "minimum": 1
+                    },
+                    "name": {
+                        "type": "string",
+                        "maxLength": 128
+                    },
+                    "type": {
+                        "$ref": "#/components/schemas/ZoneCreateTypeEnum"
+                    },
+                    "points": {
+                        "type": "array",
+                        "items": {}
+                    },
+                    "enabled": {
+                        "type": "boolean",
+                        "default": true
+                    },
+                    "description": {
+                        "type": "string",
+                        "default": "",
+                        "maxLength": 512
+                    }
+                },
+                "required": [
+                    "cameraId",
+                    "name",
+                    "points"
+                ]
+            },
+            "ZoneCreateTypeEnum": {
+                "enum": [
+                    "restricted",
+                    "danger",
+                    "workstation",
+                    "general"
+                ],
+                "type": "string",
+                "description": "* `restricted` - restricted\n* `danger` - danger\n* `workstation` - workstation\n* `general` - general"
+            },
+            "ZoneList": {
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "type": "integer",
+                        "readOnly": true
+                    },
+                    "name": {
+                        "type": "string",
+                        "readOnly": true
+                    },
+                    "cameraId": {
+                        "type": "integer"
+                    },
+                    "type": {
+                        "allOf": [
+                            {
+                                "$ref": "#/components/schemas/ZoneListTypeEnum"
+                            }
+                        ],
+                        "readOnly": true
+                    },
+                    "points": {
+                        "readOnly": true
+                    },
+                    "polygon": {
+                        "readOnly": true
+                    },
+                    "enabled": {
+                        "type": "boolean",
+                        "readOnly": true
+                    },
+                    "description": {
+                        "type": "string",
+                        "readOnly": true
+                    }
+                },
+                "required": [
+                    "cameraId",
+                    "description",
+                    "enabled",
+                    "id",
+                    "name",
+                    "points",
+                    "polygon",
+                    "type"
+                ]
+            },
+            "ZoneListTypeEnum": {
+                "enum": [
+                    "restricted",
+                    "danger",
+                    "workstation",
+                    "general"
+                ],
+                "type": "string",
+                "description": "* `restricted` - Restricted\n* `danger` - Danger\n* `workstation` - Workstation\n* `general` - General"
+            },
+            "ZonePlaceholder": {
+                "type": "object",
+                "properties": {
+                    "module": {
+                        "type": "string",
+                        "default": "zones"
+                    },
+                    "status": {
+                        "type": "string",
+                        "default": "placeholder"
+                    }
+                }
+            }
+        },
+        "securitySchemes": {
+            "jwtAuth": {
+                "type": "http",
+                "scheme": "bearer",
+                "bearerFormat": "JWT"
+            }
+        }
+    }
+}

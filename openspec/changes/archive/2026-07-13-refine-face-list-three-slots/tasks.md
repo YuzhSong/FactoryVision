@@ -1,0 +1,4 @@
+- [x] 改 employee_face_list_view 返回格式
+- [x] 更新 Swagger
+- [x] 测试
+- [x] 归档

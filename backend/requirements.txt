@@ -1,0 +1,13 @@
+Django>=6.0,<6.1
+djangorestframework>=3.16,<3.17
+django-cors-headers>=4.9,<5.0
+drf-spectacular>=0.28,<0.29
+drf-spectacular-sidecar>=2025.7.1
+djangorestframework-simplejwt>=5.4,<6.0
+requests>=2.32,<2.33
+python-dotenv>=1.0,<1.1
+channels>=4.2,<5.0
+daphne>=4.1,<5.0
+psycopg[binary]>=3.2,<3.3
+APScheduler>=3.10,<4.0
+python-docx>=1.1,<2.0
