@@ -9,6 +9,7 @@ from rest_framework.test import APIClient
 from tempfile import TemporaryDirectory
 
 from apps.cameras.models import Camera
+from apps.ai_results.models import Alert
 
 from .models import Event
 from .consumers import RealtimeEventConsumer
@@ -42,6 +43,15 @@ class EventListTests(TestCase):
                 occurred_at=timezone.now(),
                 payload={"media": {"status": "recording"}},
             )
+            alert = Alert.objects.create(
+                event=event,
+                camera=camera,
+                event_type=event.event_type,
+                level="medium",
+                title="Region Intrusion",
+                occurred_at=event.occurred_at,
+                snapshot_path="event_media/cam-a/stale-keyframe.jpg",
+            )
 
             with override_settings(MEDIA_ROOT=media_root, MEDIA_URL="/media/"):
                 response = APIClient().post(
@@ -65,6 +75,8 @@ class EventListTests(TestCase):
             self.assertEqual(event.payload["media"]["status"], "ready")
             self.assertEqual(event.payload["media"]["keyframePath"], f"events/{event.id}/keyframe.jpg")
             self.assertEqual(event.snapshot_path, f"events/{event.id}/keyframe.jpg")
+            alert.refresh_from_db()
+            self.assertEqual(alert.snapshot_path, f"events/{event.id}/keyframe.jpg")
 
 
 class RealtimeEventConsumerTests(TestCase):

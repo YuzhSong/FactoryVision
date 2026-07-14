@@ -7,6 +7,7 @@ from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework import status as http_status
 from drf_spectacular.utils import OpenApiExample, extend_schema
 
+from apps.ai_results.models import Alert
 from common.response import api_response
 
 from .models import Event
@@ -106,6 +107,7 @@ def event_media_upload_view(request, event_id):
     if media.get("keyframePath"):
         event.snapshot_path = media["keyframePath"]
         event.save(update_fields=["payload", "snapshot_path", "updated_at"])
+        Alert.objects.filter(event=event).update(snapshot_path=media["keyframePath"])
     else:
         event.save(update_fields=["payload", "updated_at"])
 

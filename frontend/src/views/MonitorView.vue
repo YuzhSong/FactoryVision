@@ -28,12 +28,16 @@ const playbackStats = ref({
 const playbackMessage = ref('等待播放 AI 处理后视频流')
 const streamStatus = ref(null)
 const streamAgeSamples = ref([])
-const detectionOptions = ref({
+const DETECTION_OPTIONS_STORAGE_KEY = 'factoryvision.monitor.detectionOptions.v1'
+const DEFAULT_DETECTION_OPTIONS = {
   includeFaces: false,
-  includeHelmet: true,
-  includeFall: true,
+  includeHelmet: false,
+  includeFall: false,
   includeZone: true,
-})
+}
+const DETECTION_OPTION_KEYS = Object.keys(DEFAULT_DETECTION_OPTIONS)
+
+const detectionOptions = ref(loadDetectionOptions())
 
 let player = null
 let realtimeSocket = null
@@ -52,6 +56,28 @@ const FLV_MIN_REMAIN_SECONDS = 0.2
 const FLV_CHASE_TRIGGER_SECONDS = 0.9
 const FLV_CHASE_TARGET_SECONDS = 0.18
 const WEBRTC_JITTER_BUFFER_TARGET_SECONDS = 0.08
+
+function loadDetectionOptions() {
+  if (typeof window === 'undefined') return { ...DEFAULT_DETECTION_OPTIONS }
+  try {
+    const stored = JSON.parse(window.localStorage.getItem(DETECTION_OPTIONS_STORAGE_KEY) || '{}')
+    return DETECTION_OPTION_KEYS.reduce((options, key) => {
+      options[key] = typeof stored[key] === 'boolean' ? stored[key] : DEFAULT_DETECTION_OPTIONS[key]
+      return options
+    }, {})
+  } catch (error) {
+    return { ...DEFAULT_DETECTION_OPTIONS }
+  }
+}
+
+function persistDetectionOptions() {
+  if (typeof window === 'undefined') return
+  const options = DETECTION_OPTION_KEYS.reduce((payload, key) => {
+    payload[key] = detectionOptions.value[key] === true
+    return payload
+  }, {})
+  window.localStorage.setItem(DETECTION_OPTIONS_STORAGE_KEY, JSON.stringify(options))
+}
 
 function syncHeaderStatus() {
   if (typeof window === 'undefined') return
@@ -643,6 +669,10 @@ watch(activeCamera, () => {
   connectRealtime()
 })
 
+watch(detectionOptions, () => {
+  persistDetectionOptions()
+}, { deep: true })
+
 watch(systemStatus, () => {
   syncHeaderStatus()
 }, { deep: true, immediate: true })
@@ -714,10 +744,22 @@ onBeforeUnmount(() => {
         </div>
         <div class="detection-switch-panel">
           <span class="switch-caption">检测开关</span>
-          <el-switch v-model="detectionOptions.includeFaces" active-text="人脸" @change="restartProcessedStream" />
-          <el-switch v-model="detectionOptions.includeHelmet" active-text="头盔" @change="restartProcessedStream" />
-          <el-switch v-model="detectionOptions.includeFall" active-text="摔倒" @change="restartProcessedStream" />
-          <el-switch v-model="detectionOptions.includeZone" active-text="区域" @change="restartProcessedStream" />
+          <div class="detection-switch-item">
+            <span>人脸</span>
+            <el-switch v-model="detectionOptions.includeFaces" @change="restartProcessedStream" />
+          </div>
+          <div class="detection-switch-item">
+            <span>头盔</span>
+            <el-switch v-model="detectionOptions.includeHelmet" @change="restartProcessedStream" />
+          </div>
+          <div class="detection-switch-item">
+            <span>摔倒</span>
+            <el-switch v-model="detectionOptions.includeFall" @change="restartProcessedStream" />
+          </div>
+          <div class="detection-switch-item">
+            <span>区域</span>
+            <el-switch v-model="detectionOptions.includeZone" @change="restartProcessedStream" />
+          </div>
         </div>
       </div>
 
@@ -828,7 +870,7 @@ onBeforeUnmount(() => {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 12px;
+  gap: 12px 18px;
   padding: 10px 2px 0;
   color: var(--fv-text-muted);
 }
@@ -836,6 +878,14 @@ onBeforeUnmount(() => {
 .switch-caption {
   font-size: 13px;
   color: var(--fv-text);
+}
+
+.detection-switch-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--fv-text-muted);
 }
 
 @media (max-width: 1180px) {

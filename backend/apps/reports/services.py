@@ -9,7 +9,7 @@ from django.utils import timezone
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml.ns import qn
-from docx.shared import Inches, Pt, RGBColor
+from docx.shared import Inches, Pt
 import requests
 
 from apps.ai_results.models import Alert
@@ -313,12 +313,6 @@ def _write_word_document(period_start, period_end, period_label, content, alert_
         else:
             document.add_paragraph("事件关键帧：暂无")
 
-    document.add_page_break()
-    document.add_heading("文本摘要", level=2)
-    for block in content.splitlines():
-        text = block.strip()
-        if text:
-            document.add_paragraph(text)
     document.save(path)
     return f"reports/{filename}"
 
@@ -336,9 +330,7 @@ def _setup_document_styles(document):
         style._element.rPr.rFonts.set(qn("w:eastAsia"), "Microsoft YaHei")
     document.styles["Normal"].font.size = Pt(10.5)
     document.styles["Heading 1"].font.size = Pt(20)
-    document.styles["Heading 1"].font.color.rgb = RGBColor(17, 24, 39)
     document.styles["Heading 2"].font.size = Pt(14)
-    document.styles["Heading 2"].font.color.rgb = RGBColor(30, 64, 175)
     document.styles["Heading 3"].font.size = Pt(12)
 
 
@@ -372,17 +364,38 @@ def _alert_item(alert):
 
 
 def _alert_keyframe_path(alert):
-    candidates = [
-        alert.snapshot_path,
-        getattr(alert.event, "snapshot_path", ""),
-    ]
     payload = getattr(alert.event, "payload", {}) or {}
     media = payload.get("media") if isinstance(payload, dict) else {}
+    candidates = []
     if isinstance(media, dict):
         candidates.extend([media.get("keyframePath"), media.get("keyframeUrl")])
     if isinstance(payload, dict):
         candidates.extend([payload.get("keyframePath"), payload.get("snapshotPath"), payload.get("snapshotUrl")])
-    return next((str(value).strip() for value in candidates if value), "")
+    candidates.extend([
+        getattr(alert.event, "snapshot_path", ""),
+        alert.snapshot_path,
+    ])
+    return next((path for path in (_normalize_media_path(value) for value in candidates) if path), "")
+
+
+def _normalize_media_path(value):
+    if not value:
+        return ""
+    path = str(value).strip()
+    if not path:
+        return ""
+    if "\\" in path or (len(path) >= 2 and path[1] == ":"):
+        return ""
+    if path.startswith(("http://", "https://")):
+        parsed_path = urlparse(path).path
+        media_url = settings.MEDIA_URL if settings.MEDIA_URL.startswith("/") else f"/{settings.MEDIA_URL}"
+        if parsed_path.startswith(media_url):
+            return parsed_path.removeprefix(media_url).lstrip("/")
+        return path
+    media_url = settings.MEDIA_URL if settings.MEDIA_URL.startswith("/") else f"/{settings.MEDIA_URL}"
+    if path.startswith(media_url):
+        return path.removeprefix(media_url).lstrip("/")
+    return path.lstrip("/")
 
 
 def _media_url(path):

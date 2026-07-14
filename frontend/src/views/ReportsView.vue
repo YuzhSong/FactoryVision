@@ -14,6 +14,7 @@ const downloadingId = ref('')
 const reportRows = ref([])
 const reportTotal = ref(0)
 const selectedReport = ref(null)
+const brokenKeyframeUrls = ref(new Set())
 
 const filters = reactive({
   reportDate: '',
@@ -91,6 +92,33 @@ function resolveMediaUrl(url) {
   return `/${url}`
 }
 
+function keyframeImageUrl(alert) {
+  const url = resolveMediaUrl(alert?.keyframeUrl || '')
+  return url && !brokenKeyframeUrls.value.has(url) ? url : ''
+}
+
+function markKeyframeBroken(alert) {
+  const url = resolveMediaUrl(alert?.keyframeUrl || '')
+  if (!url) return
+  brokenKeyframeUrls.value = new Set([...brokenKeyframeUrls.value, url])
+}
+
+async function isDocxBlob(blob) {
+  if (!(blob instanceof Blob) || blob.size < 4) return false
+  const signature = new Uint8Array(await blob.slice(0, 4).arrayBuffer())
+  return signature[0] === 0x50 && signature[1] === 0x4b && signature[2] === 0x03 && signature[3] === 0x04
+}
+
+async function blobErrorMessage(blob, fallback) {
+  if (!(blob instanceof Blob) || !blob.type.includes('json')) return fallback
+  try {
+    const payload = JSON.parse(await blob.text())
+    return payload?.message || fallback
+  } catch (error) {
+    return fallback
+  }
+}
+
 function levelText(level) {
   if (level === 'high') return '高危'
   if (level === 'medium') return '中危'
@@ -141,6 +169,7 @@ function queryReports() {
 async function previewReport(row) {
   detailLoading.value = true
   selectedReport.value = row
+  brokenKeyframeUrls.value = new Set()
   try {
     const response = await reportsApi.detail(row.id)
     selectedReport.value = response?.data || row
@@ -156,6 +185,10 @@ async function downloadReport(row) {
   downloadingId.value = row.id
   try {
     const blob = await reportsApi.download(row.id)
+    if (!await isDocxBlob(blob)) {
+      ElMessage.error(await blobErrorMessage(blob, '报告文件格式异常，请重新生成报告后再下载'))
+      return
+    }
     const url = window.URL.createObjectURL(blob)
     const link = document.createElement('a')
     link.href = url
@@ -325,7 +358,6 @@ onMounted(() => {
                 <section v-for="(alert, index) in selectedAlerts" :key="alert.id" class="word-event">
                   <div class="word-event-heading">
                     <h3>{{ index + 1 }}. {{ alert.title }}</h3>
-                    <StatusTag :value="alert.level" />
                   </div>
                   <dl class="event-definition-list">
                     <div>
@@ -353,11 +385,13 @@ onMounted(() => {
                       <dd>{{ alert.description || '无' }}</dd>
                     </div>
                   </dl>
-                  <figure v-if="alert.keyframeUrl" class="keyframe-figure">
-                    <img :src="resolveMediaUrl(alert.keyframeUrl)" alt="事件关键帧" />
+                  <figure v-if="keyframeImageUrl(alert)" class="keyframe-figure">
+                    <img :src="keyframeImageUrl(alert)" alt="事件关键帧" @error="markKeyframeBroken(alert)" />
                     <figcaption>事件关键帧</figcaption>
                   </figure>
-                  <div v-else class="empty-keyframe">暂无关键帧</div>
+                  <div v-else class="empty-keyframe">
+                    {{ alert.keyframeUrl ? '关键帧无法加载' : '暂无关键帧' }}
+                  </div>
                 </section>
               </div>
               <el-empty v-else description="该时段无告警事件" />
@@ -439,20 +473,17 @@ onMounted(() => {
 .word-page {
   width: min(100%, 820px);
   margin: 0 auto;
-  padding: 46px 52px;
+  padding: 44px 52px;
   min-height: 1040px;
-  border-radius: 4px;
   background: #ffffff;
-  color: #1f2937;
-  box-shadow: 0 18px 42px rgba(0, 0, 0, 0.28);
+  color: #111827;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.22);
   font-family: "Microsoft YaHei", "PingFang SC", Arial, sans-serif;
 }
 
 .word-header {
   text-align: center;
-  padding-bottom: 20px;
-  border-bottom: 1px solid #dbeafe;
-  margin-bottom: 26px;
+  margin-bottom: 24px;
 }
 
 .word-header h1 {
@@ -474,18 +505,17 @@ onMounted(() => {
 
 .word-section h2 {
   margin: 0 0 12px;
-  color: #1d4ed8;
+  color: #111827;
   font-size: 18px;
   line-height: 1.4;
 }
 
 .advice-box {
-  padding: 14px 16px;
-  border-left: 4px solid #2563eb;
-  border-radius: 8px;
-  background: #eff6ff;
-  color: #1e3a8a;
+  padding: 0;
+  background: transparent;
+  color: #111827;
   line-height: 1.8;
+  white-space: pre-wrap;
 }
 
 .report-stat-table {
@@ -503,8 +533,8 @@ onMounted(() => {
 }
 
 .report-stat-table th {
-  background: #f1f5f9;
-  color: #334155;
+  background: #ffffff;
+  color: #111827;
   font-weight: 700;
 }
 
@@ -520,15 +550,12 @@ onMounted(() => {
 }
 
 .word-event + .word-event {
-  border-top: 1px dashed #cbd5e1;
+  border-top: 1px solid #e5e7eb;
   padding-top: 20px;
 }
 
 .word-event-heading {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
+  display: block;
 }
 
 .word-event h3 {
@@ -593,7 +620,6 @@ onMounted(() => {
   place-items: center;
   height: 110px;
   border: 1px dashed #cbd5e1;
-  border-radius: 8px;
   background: #f8fafc;
   color: #64748b;
 }
