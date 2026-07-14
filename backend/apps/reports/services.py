@@ -1,12 +1,15 @@
 from collections import Counter
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
+from urllib.parse import urlparse
 import os
 
 from django.conf import settings
 from django.utils import timezone
 from docx import Document
-from docx.shared import Inches
+from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.oxml.ns import qn
+from docx.shared import Inches, Pt, RGBColor
 import requests
 
 from apps.ai_results.models import Alert
@@ -124,7 +127,7 @@ def generate_monitor_report(
     alerts = list(
         Alert.objects.select_related("camera", "event")
         .filter(occurred_at__gte=period_start, occurred_at__lt=period_end)
-        .order_by("occurred_at", "id")
+        .order_by("-occurred_at", "-id")
     )
 
     try:
@@ -171,7 +174,7 @@ def _generate_management_advice(period_start, period_end, alert_items):
                     "role": "system",
                     "content": (
                         "你是工厂安全监控管理助手。请只基于提供的告警数据，"
-                        "输出一到两句中文管理建议，不超过120字，不要编造未提供的信息。"
+                        "输出一到两句中文管理建议，不超过 120 字，不要编造未提供的信息。"
                     ),
                 },
                 {"role": "user", "content": _build_advice_prompt(period_start, period_end, alert_items)},
@@ -211,7 +214,11 @@ def _fallback_management_advice(alert_items):
     type_counts = Counter(item["eventType"] for item in alert_items)
     top_type, top_count = type_counts.most_common(1)[0]
     high_count = level_counts.get("high", 0)
-    return f"本时段共发生 {len(alert_items)} 起告警，其中高危 {high_count} 起，主要类型为 {top_type}（{top_count} 起）。建议优先复核高危和待处理事件，并针对高频类型加强现场巡检。"
+    return (
+        f"本时段共发生 {len(alert_items)} 起告警，其中高危 {high_count} 起，"
+        f"主要类型为 {top_type}（{top_count} 起）。建议优先复核高危和待处理事件，"
+        "并针对高频类型加强现场巡检。"
+    )
 
 
 def _build_report_content(period_start, period_end, period_label, alert_items, ai_summary):
@@ -260,16 +267,34 @@ def _build_report_content(period_start, period_end, period_label, alert_items, a
 def _write_word_document(period_start, period_end, period_label, content, alert_items, ai_summary):
     reports_dir = Path(settings.MEDIA_ROOT) / "reports"
     reports_dir.mkdir(parents=True, exist_ok=True)
-    filename = f"monitor-report-{timezone.localtime(period_start).strftime('%Y%m%d-%H%M')}-{timezone.localtime(period_end).strftime('%H%M')}.docx"
+    filename = (
+        f"monitor-report-{timezone.localtime(period_start).strftime('%Y%m%d-%H%M')}-"
+        f"{timezone.localtime(period_end).strftime('%H%M')}.docx"
+    )
     path = reports_dir / filename
 
     document = Document()
-    document.add_heading("FactoryVision AI 告警时段报告", level=1)
+    _setup_document_styles(document)
+
+    title = document.add_heading("FactoryVision AI 告警时段报告", level=1)
+    title.alignment = WD_ALIGN_PARAGRAPH.CENTER
     document.add_paragraph(f"统计周期：{_fmt(period_start)} 至 {_fmt(period_end)}")
     document.add_paragraph(f"统计时段：{period_label}")
+
     document.add_heading("一、AI 管理建议", level=2)
-    document.add_paragraph(ai_summary)
-    document.add_heading("二、事件明细", level=2)
+    document.add_paragraph(ai_summary or "暂无 AI 管理建议。")
+
+    document.add_heading("二、告警统计", level=2)
+    stats = _stats_rows(alert_items)
+    table = document.add_table(rows=1, cols=4)
+    table.style = "Table Grid"
+    for cell, heading in zip(table.rows[0].cells, ["总告警", "高危", "中危", "待处理"]):
+        cell.text = heading
+    row = table.add_row().cells
+    for cell, value in zip(row, stats):
+        cell.text = str(value)
+
+    document.add_heading("三、事件明细（按时间降序）", level=2)
     if not alert_items:
         document.add_paragraph("本时段无告警事件。")
     for index, item in enumerate(alert_items, start=1):
@@ -280,13 +305,13 @@ def _write_word_document(period_start, period_end, period_label, content, alert_
         document.add_paragraph(f"说明：{item['description'] or '无'}")
         image_path = item.get("keyframeFilePath")
         if image_path and Path(image_path).exists():
-            document.add_paragraph("关键帧：")
+            document.add_paragraph("事件关键帧：")
             try:
                 document.add_picture(str(image_path), width=Inches(5.8))
             except Exception:
                 document.add_paragraph(f"关键帧文件无法嵌入：{item.get('keyframeUrl') or item.get('keyframePath')}")
         else:
-            document.add_paragraph("关键帧：暂无")
+            document.add_paragraph("事件关键帧：暂无")
 
     document.add_page_break()
     document.add_heading("文本摘要", level=2)
@@ -296,6 +321,36 @@ def _write_word_document(period_start, period_end, period_label, content, alert_
             document.add_paragraph(text)
     document.save(path)
     return f"reports/{filename}"
+
+
+def _setup_document_styles(document):
+    section = document.sections[0]
+    section.top_margin = Inches(0.75)
+    section.bottom_margin = Inches(0.75)
+    section.left_margin = Inches(0.8)
+    section.right_margin = Inches(0.8)
+
+    for style_name in ("Normal", "Heading 1", "Heading 2", "Heading 3"):
+        style = document.styles[style_name]
+        style.font.name = "Microsoft YaHei"
+        style._element.rPr.rFonts.set(qn("w:eastAsia"), "Microsoft YaHei")
+    document.styles["Normal"].font.size = Pt(10.5)
+    document.styles["Heading 1"].font.size = Pt(20)
+    document.styles["Heading 1"].font.color.rgb = RGBColor(17, 24, 39)
+    document.styles["Heading 2"].font.size = Pt(14)
+    document.styles["Heading 2"].font.color.rgb = RGBColor(30, 64, 175)
+    document.styles["Heading 3"].font.size = Pt(12)
+
+
+def _stats_rows(alert_items):
+    level_counts = Counter(item["level"] for item in alert_items)
+    status_counts = Counter(item["status"] for item in alert_items)
+    return [
+        len(alert_items),
+        level_counts.get("high", 0),
+        level_counts.get("medium", 0),
+        status_counts.get(Alert.Status.PENDING, 0),
+    ]
 
 
 def _alert_item(alert):
@@ -308,7 +363,7 @@ def _alert_item(alert):
         "status": alert.status,
         "cameraId": alert.camera_id,
         "cameraName": alert.camera.name if alert.camera else "未关联摄像头",
-        "occurredAt": timezone.localtime(alert.occurred_at).strftime("%Y-%m-%d %H:%M:%S"),
+        "occurredAt": _fmt_seconds(alert.occurred_at),
         "description": alert.description,
         "keyframePath": keyframe_path,
         "keyframeUrl": _media_url(keyframe_path),
@@ -333,15 +388,23 @@ def _alert_keyframe_path(alert):
 def _media_url(path):
     if not path:
         return ""
-    if str(path).startswith(("http://", "https://", "/")):
-        return str(path)
-    return f"{settings.MEDIA_URL.rstrip('/')}/{str(path).lstrip('/')}"
+    value = str(path)
+    if value.startswith(("http://", "https://", "/")):
+        return value
+    return f"{settings.MEDIA_URL.rstrip('/')}/{value.lstrip('/')}"
 
 
 def _media_file_path(path):
-    if not path or str(path).startswith(("http://", "https://")):
+    if not path:
         return ""
-    relative = str(path).removeprefix(settings.MEDIA_URL).lstrip("/")
+    value = str(path).strip()
+    if value.startswith(("http://", "https://")):
+        value = urlparse(value).path
+    media_url = settings.MEDIA_URL if settings.MEDIA_URL.startswith("/") else f"/{settings.MEDIA_URL}"
+    if value.startswith(media_url):
+        relative = value.removeprefix(media_url).lstrip("/")
+    else:
+        relative = value.lstrip("/")
     return str(Path(settings.MEDIA_ROOT) / relative)
 
 
@@ -358,3 +421,7 @@ def _period_label(period_start, period_end):
 
 def _fmt(value):
     return timezone.localtime(value).strftime("%Y-%m-%d %H:%M")
+
+
+def _fmt_seconds(value):
+    return timezone.localtime(value).strftime("%Y-%m-%d %H:%M:%S")

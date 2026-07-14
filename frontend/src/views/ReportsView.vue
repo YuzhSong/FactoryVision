@@ -30,6 +30,17 @@ const reportTableRows = computed(() => reportRows.value.map((report) => ({
 
 const selectedAlerts = computed(() => selectedReport.value?.alerts || [])
 
+const selectedStats = computed(() => {
+  const alerts = selectedAlerts.value
+  const mediumCount = alerts.filter((item) => item.level === 'medium').length
+  return {
+    total: selectedReport.value?.alertCount ?? alerts.length,
+    high: selectedReport.value?.highAlertCount ?? alerts.filter((item) => item.level === 'high').length,
+    medium: mediumCount,
+    pending: selectedReport.value?.pendingAlertCount ?? alerts.filter((item) => item.status === 'pending').length,
+  }
+})
+
 function getApiErrorMessage(error, fallback) {
   const response = error?.response?.data
   if (!response) return fallback
@@ -52,11 +63,19 @@ function formatDateTime(value) {
   if (!value) return '-'
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return value
+  const year = date.getFullYear()
   const month = String(date.getMonth() + 1).padStart(2, '0')
   const day = String(date.getDate()).padStart(2, '0')
   const hour = String(date.getHours()).padStart(2, '0')
   const minute = String(date.getMinutes()).padStart(2, '0')
-  return `${month}-${day} ${hour}:${minute}`
+  const second = String(date.getSeconds()).padStart(2, '0')
+  return `${year}-${month}-${day} ${hour}:${minute}:${second}`
+}
+
+function formatDisplayTime(value) {
+  if (!value) return '-'
+  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(value)) return value
+  return formatDateTime(value)
 }
 
 function disableFutureDate(date) {
@@ -70,6 +89,20 @@ function resolveMediaUrl(url) {
   if (url.startsWith('http://') || url.startsWith('https://')) return url
   if (url.startsWith('/')) return url
   return `/${url}`
+}
+
+function levelText(level) {
+  if (level === 'high') return '高危'
+  if (level === 'medium') return '中危'
+  if (level === 'low') return '低危'
+  return level || '-'
+}
+
+function statusText(status) {
+  if (status === 'pending') return '待处理'
+  if (status === 'processing') return '处理中'
+  if (status === 'resolved') return '已处理'
+  return status || '-'
 }
 
 async function loadReports() {
@@ -126,7 +159,7 @@ async function downloadReport(row) {
     const url = window.URL.createObjectURL(blob)
     const link = document.createElement('a')
     link.href = url
-    link.download = `AI告警报告-${row.reportDate}-${row.periodLabel || 'period'}.docx`
+    link.download = `AI告警报告-${row.reportDate}-${(row.periodLabel || 'period').replaceAll(':', '_')}.docx`
     document.body.appendChild(link)
     link.click()
     link.remove()
@@ -174,6 +207,9 @@ onMounted(() => {
           <el-button type="primary" :loading="loading" @click="loadReports">刷新</el-button>
         </div>
       </SectionHeader>
+      <div class="generate-hint">
+        不选择时段时，系统会生成最近一个已完整结束的 6 小时时段；同一时段重复生成会更新原报告。
+      </div>
       <div class="filter-row">
         <el-date-picker
           v-model="filters.reportDate"
@@ -232,7 +268,7 @@ onMounted(() => {
     <div class="panel report-preview-panel">
       <SectionHeader
         :title="selectedReport ? `${selectedReport.reportDate} ${selectedReport.periodLabel || ''} 报告预览` : '报告预览'"
-        description="每 6 小时自动生成一份，AI 负责生成管理建议，事件明细保留真实关键帧"
+        description="右侧预览按导出 Word 的章节结构展示：管理建议、统计表、事件明细与关键帧。"
       >
         <el-button
           :disabled="!selectedReport"
@@ -247,43 +283,86 @@ onMounted(() => {
 
       <div v-loading="detailLoading" class="report-preview">
         <template v-if="selectedReport">
-          <div class="summary-card">
-            <div class="summary-eyebrow">AI 管理建议</div>
-            <p>{{ selectedReport.aiSummary || '暂无 AI 管理建议' }}</p>
-          </div>
+          <article class="word-page">
+            <header class="word-header">
+              <h1>FactoryVision AI 告警时段报告</h1>
+              <p>统计周期：{{ formatPeriod(selectedReport.periodStart, selectedReport.periodEnd) }}</p>
+              <p>统计时段：{{ selectedReport.periodLabel }}</p>
+            </header>
 
-          <div class="report-meta">
-            <span>统计周期：{{ formatPeriod(selectedReport.periodStart, selectedReport.periodEnd) }}</span>
-            <span>告警数：{{ selectedReport.alertCount }}</span>
-            <span>高危：{{ selectedReport.highAlertCount }}</span>
-            <span>待处理：{{ selectedReport.pendingAlertCount }}</span>
-          </div>
-
-          <div class="event-list">
-            <div v-for="alert in selectedAlerts" :key="alert.id" class="event-card">
-              <div class="event-card-header">
-                <div>
-                  <h4>{{ alert.title }}</h4>
-                  <p>{{ alert.occurredAt }} · {{ alert.cameraName }}</p>
-                </div>
-                <StatusTag :value="alert.level" />
+            <section class="word-section">
+              <h2>一、AI 管理建议</h2>
+              <div class="advice-box">
+                {{ selectedReport.aiSummary || '暂无 AI 管理建议。' }}
               </div>
-              <div class="event-fields">
-                <span>类型：{{ alert.eventType }}</span>
-                <span>状态：{{ alert.status }}</span>
-              </div>
-              <p class="event-desc">{{ alert.description || '暂无说明' }}</p>
-              <img
-                v-if="alert.keyframeUrl"
-                class="event-keyframe"
-                :src="resolveMediaUrl(alert.keyframeUrl)"
-                alt="事件关键帧"
-              />
-              <div v-else class="empty-keyframe">暂无关键帧</div>
-            </div>
-          </div>
+            </section>
 
-          <el-empty v-if="selectedAlerts.length === 0" description="该时段无告警事件" />
+            <section class="word-section">
+              <h2>二、告警统计</h2>
+              <table class="report-stat-table">
+                <thead>
+                  <tr>
+                    <th>总告警</th>
+                    <th>高危</th>
+                    <th>中危</th>
+                    <th>待处理</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td>{{ selectedStats.total }}</td>
+                    <td>{{ selectedStats.high }}</td>
+                    <td>{{ selectedStats.medium }}</td>
+                    <td>{{ selectedStats.pending }}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </section>
+
+            <section class="word-section">
+              <h2>三、事件明细（按时间降序）</h2>
+              <div v-if="selectedAlerts.length" class="word-events">
+                <section v-for="(alert, index) in selectedAlerts" :key="alert.id" class="word-event">
+                  <div class="word-event-heading">
+                    <h3>{{ index + 1 }}. {{ alert.title }}</h3>
+                    <StatusTag :value="alert.level" />
+                  </div>
+                  <dl class="event-definition-list">
+                    <div>
+                      <dt>时间</dt>
+                      <dd>{{ formatDisplayTime(alert.occurredAt) }}</dd>
+                    </div>
+                    <div>
+                      <dt>摄像头</dt>
+                      <dd>{{ alert.cameraName || '-' }}</dd>
+                    </div>
+                    <div>
+                      <dt>类型</dt>
+                      <dd>{{ alert.eventType || '-' }}</dd>
+                    </div>
+                    <div>
+                      <dt>等级</dt>
+                      <dd>{{ levelText(alert.level) }}</dd>
+                    </div>
+                    <div>
+                      <dt>状态</dt>
+                      <dd>{{ statusText(alert.status) }}</dd>
+                    </div>
+                    <div class="full-line">
+                      <dt>说明</dt>
+                      <dd>{{ alert.description || '无' }}</dd>
+                    </div>
+                  </dl>
+                  <figure v-if="alert.keyframeUrl" class="keyframe-figure">
+                    <img :src="resolveMediaUrl(alert.keyframeUrl)" alt="事件关键帧" />
+                    <figcaption>事件关键帧</figcaption>
+                  </figure>
+                  <div v-else class="empty-keyframe">暂无关键帧</div>
+                </section>
+              </div>
+              <el-empty v-else description="该时段无告警事件" />
+            </section>
+          </article>
         </template>
         <el-empty v-else description="请选择一条报告进行预览" />
       </div>
@@ -294,7 +373,7 @@ onMounted(() => {
 <style scoped>
 .reports-workspace {
   display: grid;
-  grid-template-columns: minmax(680px, 1.1fr) minmax(420px, 0.9fr);
+  grid-template-columns: minmax(680px, 1.05fr) minmax(520px, 0.95fr);
   gap: 20px;
   align-items: stretch;
 }
@@ -311,6 +390,13 @@ onMounted(() => {
   height: calc(100vh - 172px);
   min-height: 560px;
   overflow: hidden;
+}
+
+.generate-hint {
+  margin: -4px 0 12px;
+  color: var(--fv-text-muted);
+  font-size: 13px;
+  line-height: 1.6;
 }
 
 .filter-row {
@@ -339,111 +425,186 @@ onMounted(() => {
 .report-preview {
   flex: 1;
   min-height: 0;
-  max-height: none;
   overflow: auto;
-  padding: 16px;
+  padding: 22px;
   border: 1px solid var(--fv-border);
+  border-radius: 10px;
+  background:
+    linear-gradient(90deg, rgba(148, 163, 184, 0.06) 1px, transparent 1px),
+    linear-gradient(rgba(148, 163, 184, 0.06) 1px, transparent 1px),
+    var(--fv-panel-muted);
+  background-size: 24px 24px;
+}
+
+.word-page {
+  width: min(100%, 820px);
+  margin: 0 auto;
+  padding: 46px 52px;
+  min-height: 1040px;
+  border-radius: 4px;
+  background: #ffffff;
+  color: #1f2937;
+  box-shadow: 0 18px 42px rgba(0, 0, 0, 0.28);
+  font-family: "Microsoft YaHei", "PingFang SC", Arial, sans-serif;
+}
+
+.word-header {
+  text-align: center;
+  padding-bottom: 20px;
+  border-bottom: 1px solid #dbeafe;
+  margin-bottom: 26px;
+}
+
+.word-header h1 {
+  margin: 0 0 14px;
+  color: #111827;
+  font-size: 28px;
+  line-height: 1.3;
+}
+
+.word-header p {
+  margin: 4px 0;
+  color: #4b5563;
+  font-size: 14px;
+}
+
+.word-section {
+  margin-top: 24px;
+}
+
+.word-section h2 {
+  margin: 0 0 12px;
+  color: #1d4ed8;
+  font-size: 18px;
+  line-height: 1.4;
+}
+
+.advice-box {
+  padding: 14px 16px;
+  border-left: 4px solid #2563eb;
   border-radius: 8px;
-  background: var(--fv-panel-muted);
+  background: #eff6ff;
+  color: #1e3a8a;
+  line-height: 1.8;
 }
 
-.summary-card {
-  padding: 16px;
-  border-radius: 12px;
-  border: 1px solid rgba(34, 211, 238, 0.25);
-  background: rgba(34, 211, 238, 0.08);
-  margin-bottom: 14px;
+.report-stat-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 8px;
+  font-size: 14px;
 }
 
-.summary-eyebrow {
-  font-size: 12px;
-  color: var(--fv-accent);
-  margin-bottom: 8px;
+.report-stat-table th,
+.report-stat-table td {
+  border: 1px solid #cbd5e1;
+  padding: 10px 12px;
+  text-align: center;
 }
 
-.summary-card p {
-  margin: 0;
-  color: var(--fv-text);
-  line-height: 1.7;
+.report-stat-table th {
+  background: #f1f5f9;
+  color: #334155;
+  font-weight: 700;
 }
 
-.report-meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-  margin-bottom: 14px;
-  color: var(--fv-text-muted);
-  font-size: 13px;
-}
-
-.event-list {
+.word-events {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 22px;
 }
 
-.event-card {
-  padding: 14px;
-  border-radius: 12px;
-  border: 1px solid var(--fv-border);
-  background: var(--fv-panel);
+.word-event {
+  padding-top: 2px;
+  break-inside: avoid;
 }
 
-.event-card-header {
+.word-event + .word-event {
+  border-top: 1px dashed #cbd5e1;
+  padding-top: 20px;
+}
+
+.word-event-heading {
   display: flex;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
-  align-items: flex-start;
 }
 
-.event-card h4 {
-  margin: 0 0 4px;
-  color: var(--fv-text);
+.word-event h3 {
+  margin: 0 0 10px;
+  color: #111827;
+  font-size: 16px;
+  line-height: 1.5;
 }
 
-.event-card p {
+.event-definition-list {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px 18px;
+  margin: 0 0 12px;
+  font-size: 14px;
+}
+
+.event-definition-list div {
+  display: grid;
+  grid-template-columns: 54px 1fr;
+  gap: 8px;
+}
+
+.event-definition-list .full-line {
+  grid-column: 1 / -1;
+}
+
+.event-definition-list dt {
+  color: #64748b;
+  font-weight: 700;
+}
+
+.event-definition-list dd {
   margin: 0;
-  color: var(--fv-text-muted);
-  line-height: 1.6;
+  color: #1f2937;
+  word-break: break-word;
 }
 
-.event-fields {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 12px;
-  margin: 10px 0;
-  color: var(--fv-text-muted);
-  font-size: 13px;
+.keyframe-figure {
+  margin: 12px 0 0;
 }
 
-.event-desc {
-  margin-bottom: 10px !important;
-}
-
-.event-keyframe,
-.empty-keyframe {
-  width: 100%;
-  border-radius: 10px;
-  border: 1px solid var(--fv-border);
-  background: rgba(255, 255, 255, 0.04);
-}
-
-.event-keyframe {
+.keyframe-figure img {
   display: block;
-  max-height: 260px;
+  width: 100%;
+  max-height: 360px;
   object-fit: contain;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  background: #f8fafc;
+}
+
+.keyframe-figure figcaption {
+  margin-top: 6px;
+  text-align: center;
+  color: #64748b;
+  font-size: 12px;
 }
 
 .empty-keyframe {
   display: grid;
   place-items: center;
-  height: 120px;
-  color: var(--fv-text-muted);
+  height: 110px;
+  border: 1px dashed #cbd5e1;
+  border-radius: 8px;
+  background: #f8fafc;
+  color: #64748b;
 }
 
 @media (max-width: 1180px) {
   .reports-workspace {
     grid-template-columns: 1fr;
+  }
+
+  .word-page {
+    padding: 34px 28px;
   }
 }
 </style>

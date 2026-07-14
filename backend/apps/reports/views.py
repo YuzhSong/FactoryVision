@@ -1,10 +1,11 @@
-from pathlib import Path
 from datetime import date
+from pathlib import Path
+from urllib.parse import urlparse
 
 from django.conf import settings
 from django.http import FileResponse
 from django.utils import timezone
-from drf_spectacular.utils import OpenApiExample, OpenApiParameter, OpenApiTypes, extend_schema
+from drf_spectacular.utils import OpenApiParameter, OpenApiTypes, extend_schema
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
@@ -46,9 +47,13 @@ def _serialize_report(report):
 
 
 def _alert_items(report):
-    alerts = Alert.objects.select_related("camera").filter(
-        occurred_at__gte=report.period_start,
-        occurred_at__lt=report.period_end,
+    alerts = (
+        Alert.objects.select_related("camera", "event")
+        .filter(
+            occurred_at__gte=report.period_start,
+            occurred_at__lt=report.period_end,
+        )
+        .order_by("-occurred_at", "-id")
     )
     return [
         {
@@ -59,7 +64,7 @@ def _alert_items(report):
             "status": alert.status,
             "cameraId": alert.camera_id,
             "cameraName": alert.camera.name if alert.camera else "未关联摄像头",
-            "occurredAt": alert.occurred_at.isoformat(),
+            "occurredAt": timezone.localtime(alert.occurred_at).strftime("%Y-%m-%d %H:%M:%S"),
             "description": alert.description,
             "keyframePath": _alert_keyframe_path(alert),
             "keyframeUrl": _media_url(_alert_keyframe_path(alert)),
@@ -70,39 +75,14 @@ def _alert_items(report):
 
 @extend_schema(
     summary="查询 AI 监控日报列表",
-    description="查询已生成的一天一份 AI 监控日报。该接口需要 Bearer JWT 认证。",
+    description="查询已生成的 AI 监控时段报告。该接口需要 Bearer JWT 认证。",
     parameters=[
         OpenApiParameter("page", OpenApiTypes.INT, OpenApiParameter.QUERY, description="页码，默认 1"),
         OpenApiParameter("pageSize", OpenApiTypes.INT, OpenApiParameter.QUERY, description="每页数量，默认 20，最大 100"),
+        OpenApiParameter("date", OpenApiTypes.DATE, OpenApiParameter.QUERY, description="日报日期，格式 YYYY-MM-DD"),
+        OpenApiParameter("periodLabel", OpenApiTypes.STR, OpenApiParameter.QUERY, description="统计时段"),
     ],
     responses={200: ReportListItemSerializer(many=True), 400: None, 401: None},
-    examples=[
-        OpenApiExample(
-            "日报列表",
-            value={
-                "code": 200,
-                "message": "success",
-                "data": {
-                    "total": 1,
-                    "items": [
-                        {
-                            "id": 1,
-                            "reportDate": "2026-07-13",
-                            "alertCount": 5,
-                            "highAlertCount": 1,
-                            "pendingAlertCount": 2,
-                            "status": "generated",
-                            "aiSummary": "本周期共记录 5 条告警。",
-                            "documentPath": "reports/monitor-report-2026-07-13.docx",
-                            "generatedAt": "2026-07-13T12:00:10+08:00",
-                        }
-                    ],
-                },
-                "requestId": "uuid",
-            },
-            response_only=True,
-        )
-    ],
 )
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
@@ -112,7 +92,7 @@ def report_list_view(request):
     if page is None or page_size is None or page_size > MAX_PAGE_SIZE:
         return api_response(
             code=400,
-            message="分页参数必须为正整数，pageSize 不超过 100",
+            message="分页参数必须为正整数，pageSize 不能超过 100",
             data=None,
             status=status.HTTP_400_BAD_REQUEST,
         )
@@ -142,7 +122,10 @@ def report_list_view(request):
 
 @extend_schema(
     summary="手动生成 AI 监控日报",
-    description="按日报日期手动触发生成，用于调试或补生成。未传 reportDate 时生成当天日报。该接口需要 Bearer JWT 认证。",
+    description=(
+        "手动生成 AI 监控时段报告。未传 periodLabel 时生成最近一个已经完整结束的 6 小时时段；"
+        "同一时段重复生成会更新原报告。该接口需要 Bearer JWT 认证。"
+    ),
     request=None,
     responses={200: ReportDetailSerializer, 400: None, 401: None},
 )
@@ -179,7 +162,7 @@ def report_generate_view(request):
 
     target_date = report_date or today
     if period_label:
-        period_start, period_end, _label = period_for_label(target_date, period_label)
+        _period_start, period_end, _label = period_for_label(target_date, period_label)
         if period_end > timezone.now():
             return api_response(
                 code=400,
@@ -235,7 +218,7 @@ def report_download_view(_request, report_id):
     return FileResponse(
         path.open("rb"),
         as_attachment=True,
-        filename=f"monitor-report-{report.report_date.isoformat()}-{report.period_label.replace(':', '')}.docx",
+        filename=f"AI告警报告-{report.report_date.isoformat()}-{report.period_label.replace(':', '_')}.docx",
         content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     )
 
@@ -257,6 +240,21 @@ def _alert_keyframe_path(alert):
 def _media_url(path):
     if not path:
         return ""
-    if str(path).startswith(("http://", "https://", "/")):
-        return str(path)
-    return f"{settings.MEDIA_URL.rstrip('/')}/{str(path).lstrip('/')}"
+    value = str(path)
+    if value.startswith(("http://", "https://", "/")):
+        return value
+    return f"{settings.MEDIA_URL.rstrip('/')}/{value.lstrip('/')}"
+
+
+def _media_file_path(path):
+    if not path:
+        return ""
+    value = str(path).strip()
+    if value.startswith(("http://", "https://")):
+        value = urlparse(value).path
+    media_url = settings.MEDIA_URL if settings.MEDIA_URL.startswith("/") else f"/{settings.MEDIA_URL}"
+    if value.startswith(media_url):
+        relative = value.removeprefix(media_url).lstrip("/")
+    else:
+        relative = value.lstrip("/")
+    return str(Path(settings.MEDIA_ROOT) / relative)
