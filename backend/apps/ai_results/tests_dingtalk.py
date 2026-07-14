@@ -172,18 +172,18 @@ class NotifyAlertByTypeTests(TestCase):
             location="生产区域 A",
         )
 
-    def _make_alert(self, event_type: str) -> Alert:
+    def _make_alert(self, event_type: str, level: str = "high") -> Alert:
         event = Event.objects.create(
             camera=self.camera,
             event_type=event_type,
             occurred_at=timezone.now(),
-            severity="high",
+            severity=level,
         )
         return Alert.objects.create(
             event=event,
             camera=self.camera,
             event_type=event_type,
-            level="high",
+            level=level,
             title=views._alert_title(event_type),
             description=f"desc-{event_type}",
             occurred_at=event.occurred_at,
@@ -209,6 +209,28 @@ class NotifyAlertByTypeTests(TestCase):
                     views._notify_dingtalk_alert(alert)
                 kwargs = send_alert.call_args.kwargs
                 self.assertEqual(kwargs["alert_title"], chinese)
+
+    def test_alert_time_is_formatted_to_seconds(self):
+        alert = self._make_alert("region_intrusion")
+        alert.occurred_at = timezone.datetime(
+            2026,
+            7,
+            13,
+            19,
+            35,
+            50,
+            366943,
+            tzinfo=timezone.get_current_timezone(),
+        )
+        alert.save(update_fields=["occurred_at"])
+
+        with mock.patch.object(views.DingTalkNotifier, "send_alert") as send_alert:
+            views._notify_dingtalk_alert(alert)
+
+        occurred_at = send_alert.call_args.kwargs["occurred_at"]
+        self.assertEqual(occurred_at, "2026-07-13 19:35:50")
+        self.assertNotIn("T", occurred_at)
+        self.assertNotIn("+", occurred_at)
 
     def test_message_text_contains_chinese_type(self):
         """端到端到 payload：中文类型名真正出现在钉钉 markdown 文本里。"""
@@ -244,3 +266,25 @@ class NotifyAlertByTypeTests(TestCase):
         with mock.patch.object(views.DingTalkNotifier, "send_alert") as send_alert:
             views._escalate_alert(alert.id)
         send_alert.assert_not_called()
+
+    @override_settings(DINGTALK_ESCALATION_SECONDS=60)
+    def test_medium_alert_does_not_schedule_escalation(self):
+        alert = self._make_alert("region_intrusion", level="medium")
+        with mock.patch.object(views.DingTalkNotifier, "send_alert") as send_alert, mock.patch(
+            "apps.ai_results.views.threading.Timer"
+        ) as timer:
+            views._notify_dingtalk_alert(alert)
+        send_alert.assert_called_once()
+        timer.assert_not_called()
+
+    @override_settings(DINGTALK_ESCALATION_SECONDS=60)
+    def test_high_alert_schedules_escalation(self):
+        alert = self._make_alert("region_dwell", level="high")
+        with mock.patch.object(views.DingTalkNotifier, "send_alert") as send_alert, mock.patch(
+            "apps.ai_results.views.threading.Timer"
+        ) as timer:
+            timer.return_value = mock.Mock()
+            views._notify_dingtalk_alert(alert)
+        send_alert.assert_called_once()
+        timer.assert_called_once()
+        timer.return_value.start.assert_called_once()

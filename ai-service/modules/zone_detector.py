@@ -5,11 +5,21 @@ import math
 class ZoneDetector:
     """Track region entry and dwell state for person foot points in polygon zones."""
 
-    def __init__(self, zones=None, min_stay_seconds=10.0, state_ttl_seconds=30.0):
+    def __init__(
+        self,
+        zones=None,
+        min_stay_seconds=10.0,
+        state_ttl_seconds=30.0,
+        enter_confirm_seconds=0.3,
+        exit_confirm_seconds=1.0,
+    ):
         self.zones = list(zones or [])
         self.min_stay_seconds = max(0.0, float(min_stay_seconds or 0))
         self.state_ttl_seconds = max(1.0, float(state_ttl_seconds or 1))
+        self.enter_confirm_seconds = max(0.0, float(enter_confirm_seconds or 0))
+        self.exit_confirm_seconds = max(0.0, float(exit_confirm_seconds or 0))
         self._states = {}
+        self.last_diagnostics = {}
 
     def set_zones(self, zones):
         self.zones = list(zones or [])
@@ -23,9 +33,9 @@ class ZoneDetector:
         now = _timestamp_seconds(timestamp)
         self._purge_expired(now)
         events = []
+        observations = []
         for detection in detections or []:
             track_id = detection.get("trackId")
-            foot_point = self._get_foot_point(detection)
             if track_id in (None, ""):
                 continue
             confidence = detection.get("confidence")
@@ -41,18 +51,37 @@ class ZoneDetector:
                 if region_id in (None, "") or len(points) < 3:
                     continue
                 key = self._state_key(camera_id, region_id, track_id)
-                hit_point = next((point for point in hit_points if self._point_in_polygon(point, points)), None)
-                inside = hit_point is not None
+                matched_point = self._first_inside_point(hit_points, points)
+                inside = matched_point is not None
+                state = self._states.get(key)
+                state_name = state.get("state") if state else "OUTSIDE"
+                emitted = []
                 if not inside:
+                    if state is not None:
+                        state["lastSeenAt"] = timestamp
+                        state["lastSeenSeconds"] = now
+                        if state.get("exitStartedSeconds") is None:
+                            state["state"] = "EXITING"
+                            state["exitStartedSeconds"] = now
+                        elif now - state["exitStartedSeconds"] >= self.exit_confirm_seconds:
+                            self._states.pop(key, None)
+                            state = None
+                            state_name = "EXITED"
+                        if state is not None:
+                            state_name = state.get("state", "EXITING")
+                    observations.append(self._observation(track_id, zone, hit_points[0][1], points, False, state_name, emitted, "none"))
                     continue
 
-                state = self._states.get(key)
                 if state is None:
                     state = {
-                        "enteredAt": timestamp,
-                        "enteredSeconds": now,
+                        "state": "ENTERING",
+                        "candidateEnteredAt": timestamp,
+                        "candidateEnteredSeconds": now,
+                        "enteredAt": None,
+                        "enteredSeconds": None,
                         "lastSeenAt": timestamp,
                         "lastSeenSeconds": now,
+                        "exitStartedSeconds": None,
                         "intrusionEmitted": False,
                         "dwellEmitted": False,
                     }
@@ -60,17 +89,55 @@ class ZoneDetector:
                 else:
                     state["lastSeenAt"] = timestamp
                     state["lastSeenSeconds"] = now
+                    state["exitStartedSeconds"] = None
+                    if state.get("state") == "EXITING":
+                        state["state"] = "REPORTED" if state.get("intrusionEmitted") else "INSIDE"
+
+                if state.get("state") == "ENTERING":
+                    confirming_for = max(0.0, now - state["candidateEnteredSeconds"])
+                    if confirming_for < self.enter_confirm_seconds:
+                        observations.append(self._observation(track_id, zone, matched_point["point"], points, True, "ENTERING", emitted, matched_point["mode"]))
+                        continue
+                    state["state"] = "INSIDE"
+                    state["enteredAt"] = state["candidateEnteredAt"]
+                    state["enteredSeconds"] = state["candidateEnteredSeconds"]
 
                 duration = max(0.0, now - state["enteredSeconds"])
+                event_point = matched_point["point"]
                 if self._is_restricted(zone) and not state["intrusionEmitted"]:
-                    events.append(self._event("region_intrusion", camera_id, track_id, zone, state, duration, confidence, hit_point))
+                    events.append(self._event("region_intrusion", camera_id, track_id, zone, state, duration, confidence, event_point))
                     state["intrusionEmitted"] = True
-                if duration >= self._min_stay_seconds(zone) and not state["dwellEmitted"]:
-                    events.append(self._event("region_dwell", camera_id, track_id, zone, state, duration, confidence, hit_point))
+                    state["state"] = "REPORTED"
+                    emitted.append("region_intrusion")
+                if self._is_restricted(zone) and duration >= self._min_stay_seconds(zone) and not state["dwellEmitted"]:
+                    events.append(self._event("region_dwell", camera_id, track_id, zone, state, duration, confidence, event_point))
                     state["dwellEmitted"] = True
+                    state["state"] = "REPORTED"
+                    emitted.append("region_dwell")
+                observations.append(self._observation(track_id, zone, event_point, points, True, state["state"], emitted, matched_point["mode"]))
 
-        # Keep a briefly missing track until TTL expiry; detector tracking can drop frames temporarily.
+        self.last_diagnostics = {
+            "cameraId": camera_id,
+            "zoneCount": len([zone for zone in self.zones if isinstance(zone, dict)]),
+            "enabledZoneCount": len([zone for zone in self.zones if isinstance(zone, dict) and zone.get("enabled", True)]),
+            "personCount": len(detections or []),
+            "stateCount": len(self._states),
+            "eventCount": len(events),
+            "observations": observations[:20],
+        }
         return events
+
+    def _observation(self, track_id, zone, anchor_point, points, inside, state, emitted, anchor_mode):
+        return {
+            "trackId": str(track_id),
+            "regionId": self._zone_id(zone),
+            "anchorMode": anchor_mode,
+            "anchorPoint": {"x": round(anchor_point[0], 2), "y": round(anchor_point[1], 2)},
+            "polygonPointCount": len(points),
+            "inside": bool(inside),
+            "state": state,
+            "events": list(emitted),
+        }
 
     def state_count(self):
         return len(self._states)
@@ -85,15 +152,17 @@ class ZoneDetector:
             "regionId": region_id,
             "regionName": zone.get("name", zone.get("zoneName")),
             "regionType": zone.get("type", "restricted"),
+            "regionPoints": [{"x": round(point[0], 2), "y": round(point[1], 2)} for point in self._get_zone_points(zone, None)],
             # zone aliases retain compatibility with current backend alert descriptions.
             "zoneId": region_id,
             "zoneName": zone.get("name", zone.get("zoneName")),
+            "zonePoints": [{"x": round(point[0], 2), "y": round(point[1], 2)} for point in self._get_zone_points(zone, None)],
             "enteredAt": state["enteredAt"],
             "durationSeconds": round(duration, 2),
             "timestamp": state["lastSeenAt"],
             "confidence": round(float(confidence or 0), 4),
             "footPoint": {"x": round(foot_point[0], 2), "y": round(foot_point[1], 2)},
-            "level": "high" if event_type == "region_intrusion" else "medium",
+            "level": "high" if event_type == "region_dwell" else "medium",
         }
 
     def _state_key(self, camera_id, region_id, track_id):
@@ -133,7 +202,7 @@ class ZoneDetector:
         points = []
         foot_point = self._get_foot_point(detection)
         if foot_point is not None:
-            points.append(foot_point)
+            points.append(("bbox_bottom_center", foot_point))
         bbox = detection.get("bbox")
         if isinstance(bbox, dict):
             x1 = float(bbox.get("x1", 0))
@@ -147,11 +216,17 @@ class ZoneDetector:
         center_x = (x1 + x2) / 2
         center_y = (y1 + y2) / 2
         points.extend([
-            (center_x, center_y),
-            (center_x, y1 + (y2 - y1) * 0.33),
-            (center_x, y1 + (y2 - y1) * 0.66),
+            ("bbox_center", (center_x, center_y)),
+            ("bbox_upper_body", (center_x, y1 + (y2 - y1) * 0.33)),
+            ("bbox_lower_body", (center_x, y1 + (y2 - y1) * 0.66)),
         ])
         return points
+
+    def _first_inside_point(self, hit_points, polygon):
+        for mode, point in hit_points:
+            if self._point_in_polygon(point, polygon):
+                return {"mode": mode, "point": point}
+        return None
 
     def _get_zone_points(self, zone, frame_shape):
         points = zone.get("points") or zone.get("polygonPoints") or []

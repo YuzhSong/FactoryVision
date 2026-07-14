@@ -1,8 +1,23 @@
 import http from './http'
 import axios from 'axios'
 
+function resolveAiServiceBaseUrl() {
+  const configuredUrl = import.meta.env.VITE_AI_SERVICE_BASE_URL
+  if (configuredUrl) {
+    return configuredUrl
+  }
+  if (typeof window === 'undefined') {
+    return '/ai-service'
+  }
+  const localHosts = new Set(['127.0.0.1', 'localhost'])
+  if (localHosts.has(window.location.hostname)) {
+    return '/ai-service'
+  }
+  return 'http://127.0.0.1:9000'
+}
+
 const aiServiceHttp = axios.create({
-  baseURL: import.meta.env.VITE_AI_SERVICE_BASE_URL || '/ai-service',
+  baseURL: resolveAiServiceBaseUrl(),
   timeout: 60000,
 })
 
@@ -130,6 +145,9 @@ export const alertsApi = {
   list(params = {}) {
     return http.get('/alerts/list/', { params })
   },
+  detail(alertId) {
+    return http.get(`/alerts/${alertId}/detail/`)
+  },
   handle(alertId, data) {
     return http.post(`/alerts/${alertId}/handle/`, data)
   },
@@ -177,5 +195,11 @@ export const aiServiceApi = {
   },
   streamStatus() {
     return aiServiceHttp.get('/streams/status')
+  },
+  extractFace(data) {
+    return aiServiceHttp.post('/faces/extract', data)
+  },
+  reloadCache(data = { source: 'backend' }) {
+    return aiServiceHttp.post('/cache/reload', data)
   },
 }

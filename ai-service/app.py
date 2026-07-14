@@ -5,6 +5,7 @@ import time
 from typing import Any
 
 from fastapi import FastAPI, File, Form, Request, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 import uvicorn
@@ -27,6 +28,7 @@ backend_client = BackendClient(
     base_url=Config.BACKEND_API_BASE_URL,
     timeout_seconds=Config.BACKEND_TIMEOUT_SECONDS,
     token=Config.BACKEND_API_TOKEN,
+    tls_verify=Config.BACKEND_TLS_VERIFY,
     camera_list_path=Config.BACKEND_CAMERA_LIST_PATH,
     employee_list_path=Config.BACKEND_EMPLOYEE_LIST_PATH,
     face_library_path=Config.BACKEND_FACE_LIBRARY_PATH,
@@ -86,11 +88,14 @@ frame_processor = FrameProcessor(
         "helmetHalfPrecision": Config.HELMET_HALF_PRECISION,
         "helmetCudnnBenchmark": Config.HELMET_CUDNN_BENCHMARK,
         "helmetMatchUpperRatio": Config.HELMET_MATCH_UPPER_RATIO,
+        "helmetMaxDet": Config.HELMET_MAX_DET,
         "helmetClassIds": Config.HELMET_CLASS_IDS,
         "helmetClassId": Config.HELMET_CLASS_ID,
         "noHelmetClassId": Config.NO_HELMET_CLASS_ID,
         "zoneMinStaySeconds": Config.ZONE_MIN_STAY_SECONDS,
         "zoneStateTtlSeconds": Config.ZONE_STATE_TTL_SECONDS,
+        "zoneEnterConfirmSeconds": Config.ZONE_ENTER_CONFIRM_SECONDS,
+        "zoneExitConfirmSeconds": Config.ZONE_EXIT_CONFIRM_SECONDS,
         "helmetEventCooldownSeconds": Config.HELMET_EVENT_COOLDOWN_SECONDS,
         "trackStateTtlSeconds": Config.TRACK_STATE_TTL_SECONDS,
         "faceIdentityCacheSeconds": Config.FACE_IDENTITY_CACHE_SECONDS,
@@ -102,6 +107,12 @@ frame_processor = FrameProcessor(
         "fallMinConfidence": Config.FALL_MIN_CONFIDENCE,
         "fallPoseHorizontalAngleThreshold": Config.FALL_POSE_HORIZONTAL_ANGLE_THRESHOLD,
         "fallPoseMinKeypointConfidence": Config.FALL_POSE_MIN_KEYPOINT_CONFIDENCE,
+        "fallBboxEdgeMarginRatio": Config.FALL_BBOX_EDGE_MARGIN_RATIO,
+        "fallMinCenterDropRatio": Config.FALL_MIN_CENTER_DROP_RATIO,
+        "fallMinHeightDropRatio": Config.FALL_MIN_HEIGHT_DROP_RATIO,
+        "fallMaxTransitionSeconds": Config.FALL_MAX_TRANSITION_SECONDS,
+        "fallRecoverFrames": Config.FALL_RECOVER_FRAMES,
+        "fallStateTtlSeconds": Config.FALL_STATE_TTL_SECONDS,
         "employeeAbsenceTimeoutSeconds": Config.EMPLOYEE_ABSENCE_TIMEOUT_SECONDS,
         "employeePresenceMinSimilarity": Config.EMPLOYEE_PRESENCE_MIN_SIMILARITY,
         "strangerConfirmFrames": Config.STRANGER_CONFIRM_FRAMES,
@@ -151,6 +162,12 @@ def create_app() -> FastAPI:
         title="Smart Factory AI Service",
         description="Video-frame analysis, person detection, face recognition, and behavior reporting service.",
         version="0.2.0",
+    )
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=Config.CORS_ORIGINS,
+        allow_methods=["*"],
+        allow_headers=["*"],
     )
 
     @app.on_event("startup")
@@ -294,6 +311,7 @@ def create_app() -> FastAPI:
                 image_base_url=payload.get("imageBaseUrl", Config.FACE_IMAGE_BASE_URL),
                 image_dir=payload.get("imageDir"),
             )
+            _invalidate_face_identity_cache()
         except Exception as exc:
             return _error_response(exc)
         return {"code": 200, "message": "success", "data": result}
@@ -310,6 +328,7 @@ def create_app() -> FastAPI:
                     payload.get("employeeNos") or payload.get("employee_nos") or payload.get("employeeNo")
                 ),
             )
+            _invalidate_face_identity_cache()
         except Exception as exc:
             return _error_response(exc)
         return {"code": 200, "message": "success", "data": result}
@@ -552,20 +571,34 @@ async def _resolve_face_image_source(
 def _reload_face_library(payload):
     source = payload.get("source", "local")
     if source == "backend":
-        records = backend_client.list_face_records(status=payload.get("status", "active"))
-        return face_service.load_face_library(
+        try:
+            records = backend_client.list_face_records(status=payload.get("status", "active"))
+        except Exception:
+            bootstrap = backend_client.get_bootstrap()
+            data = bootstrap.get("data", bootstrap) if isinstance(bootstrap, dict) else {}
+            records = data.get("employees") if isinstance(data, dict) else []
+        result = face_service.load_face_library(
             employee_items=records,
             image_base_url=payload.get("imageBaseUrl", Config.FACE_IMAGE_BASE_URL),
             image_dir=payload.get("imageDir", Config.FACE_IMAGE_DIR),
         )
+        _invalidate_face_identity_cache()
+        return result
 
-    return face_service.load_face_library(
+    result = face_service.load_face_library(
         records=payload.get("records"),
         employee_items=payload.get("employees"),
         library_path=payload.get("libraryPath", Config.FACE_LIBRARY_PATH),
         image_dir=payload.get("imageDir", Config.FACE_IMAGE_DIR),
         image_base_url=payload.get("imageBaseUrl", Config.FACE_IMAGE_BASE_URL),
     )
+    _invalidate_face_identity_cache()
+    return result
+
+
+def _invalidate_face_identity_cache():
+    if hasattr(frame_processor, "invalidate_face_identity_cache"):
+        frame_processor.invalidate_face_identity_cache()
 
 
 def _reload_runtime_cache(payload):
@@ -626,6 +659,7 @@ def _apply_bootstrap_payload(payload):
             image_base_url=data.get("imageBaseUrl", Config.FACE_IMAGE_BASE_URL),
             image_dir=data.get("imageDir", Config.FACE_IMAGE_DIR),
         )
+        _invalidate_face_identity_cache()
 
     return {
         "runtimeCache": cache_status,

@@ -1,7 +1,8 @@
-from asgiref.sync import async_to_sync
 import logging
 import threading
 from datetime import timedelta
+
+from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
 from django.db import transaction
 from django.db.models import Count, Q
@@ -22,16 +23,18 @@ from apps.zones.serializers import ZoneListSerializer
 from common.response import api_response
 
 from .models import Alert
+
+logger = logging.getLogger(__name__)
+
 from .serializers import (
     AIResultPlaceholderSerializer,
     AIResultReportSerializer,
+    AlertDetailSerializer,
     AlertHandleSerializer,
     AlertSerializer,
     DashboardSummarySerializer,
     HealthCheckSerializer,
 )
-
-logger = logging.getLogger(__name__)
 
 FORMAL_ACTIONABLE_EVENT_TYPES = {
     "helmet_violation",
@@ -44,8 +47,8 @@ FORMAL_ACTIONABLE_EVENT_TYPES = {
 
 EVENT_INTERNAL_TYPES = {
     "helmet_violation": {"HELMET_WARNING", "helmet_violation"},
-    "region_intrusion": {"ZONE_WARNING", "region_intrusion"},
-    "region_dwell": {"ZONE_WARNING", "region_dwell"},
+    "region_intrusion": {"ZONE_WARNING", "ZONE_INTRUSION", "REGION_INTRUSION", "region_intrusion"},
+    "region_dwell": {"ZONE_WARNING", "ZONE_DWELL", "REGION_DWELL", "region_dwell"},
     "face_recognized": {"FACE_RECOGNIZED", "FACE_RESULT", "face_recognized"},
     "stranger_detected": {"STRANGER_DETECTED", "STRANGER_ALERT", "stranger_detected"},
     "fall_detected": {"FALL_DETECTED", "FALL_ALERT", "fall_detected"},
@@ -53,26 +56,15 @@ EVENT_INTERNAL_TYPES = {
 
 EVENT_DEDUP_SECONDS = {
     "helmet_violation": 20,
+    "region_intrusion": 20,
+    "region_dwell": 60,
     "face_recognized": 60,
     "stranger_detected": 30,
     "fall_detected": 30,
 }
 
 
-ALERT_EVENT_TYPES = {
-    "HELMET_WARNING",
-    "STRANGER_DETECTED",
-    "STRANGER_ALERT",
-    "EMPLOYEE_ABSENT",
-    "EMPLOYEE_RETURNED",
-    "FALL_DETECTED",
-    "FALL_ALERT",
-    "ZONE_INTRUSION",
-    "ZONE_WARNING",
-    "RUNNING_ALERT",
-    "NO_HELMET",
-}
-
+# 会触发告警（并推送钉钉）的事件类型，均为 _normalize_event_type 归一化后的小写别名。
 ALERT_TRIGGER_TYPES = {
     "helmet_violation",
     "region_intrusion",
@@ -184,6 +176,7 @@ def report_ai_results(request):
 
     event_ids = []
     alert_ids = []
+    accepted_events = []
     rejected_results = 0
     _pushed_face_keys = set()
 
@@ -192,6 +185,16 @@ def report_ai_results(request):
             result_type = _normalize_event_type(result)
             if result_type not in FORMAL_ACTIONABLE_EVENT_TYPES or not _is_actionable_result(result_type, result):
                 rejected_results += 1
+                continue
+            if not _is_actionable_region_result(camera, result_type, result):
+                rejected_results += 1
+                logger.info(
+                    "Region AI event suppressed by zone type camera_id=%s event_type=%s region_id=%s region_type=%s",
+                    validated["cameraId"],
+                    result_type,
+                    result.get("regionId") or result.get("zoneId"),
+                    result.get("regionType") or result.get("zoneType"),
+                )
                 continue
 
             track_id = _extract_track_id(result)
@@ -205,27 +208,37 @@ def report_ai_results(request):
                 )
                 continue
 
+            result_payload = _attach_initial_media_metadata(result, validated.get("eventMedia", []))
             event = Event.objects.create(
                 camera=camera,
                 camera_identifier=str(validated["cameraId"]),
                 frame_id=validated.get("frameId", ""),
                 event_type=result_type,
                 source=Event.Source.AI_SERVICE,
-                severity=_event_severity(result_type, result),
+                severity=_event_severity(result_type, result_payload),
                 status=Event.Status.NEW,
                 occurred_at=validated["timestamp"],
                 track_id=track_id,
-                bbox=_extract_bbox(result),
-                confidence=_extract_confidence(result),
-                snapshot_path=_extract_snapshot_path(result, validated.get("eventMedia", [])),
-                payload=result,
+                bbox=_extract_bbox(result_payload),
+                confidence=_extract_confidence(result_payload),
+                snapshot_path=_extract_snapshot_path(result_payload, validated.get("eventMedia", [])),
+                payload=result_payload,
             )
             event_ids.append(event.id)
+            accepted_events.append(
+                {
+                    "eventId": event.id,
+                    "mediaEventId": result_payload.get("mediaEventId") or (result_payload.get("media") or {}).get("eventId"),
+                    "trackId": event.track_id,
+                    "eventType": event.event_type,
+                }
+            )
+            event_description = _alert_description(result_payload)
 
             should_push = _should_create_alert(result_type) or result_type == "face_recognized"
-            if result_type == "face_recognized" and result.get("employeeId"):
+            if result_type == "face_recognized" and result_payload.get("employeeId"):
                 # 同一员工同一 trackId 只推一次
-                key = (event.track_id, str(result["employeeId"]))
+                key = (event.track_id, str(result_payload["employeeId"]))
                 if key not in _pushed_face_keys:
                     _pushed_face_keys.add(key)
                     should_push = True
@@ -249,6 +262,13 @@ def report_ai_results(request):
                                     "trackId": event.track_id,
                                     "bbox": event.bbox,
                                     "confidence": event.confidence,
+                                    "name": result_payload.get("name") or result_payload.get("employeeName"),
+                                    "employeeName": result_payload.get("employeeName") or result_payload.get("name"),
+                                    "employeeId": result_payload.get("employeeId"),
+                                    "zoneName": result_payload.get("zoneName") or result_payload.get("regionName"),
+                                    "regionName": result_payload.get("regionName") or result_payload.get("zoneName"),
+                                    "regionId": result_payload.get("regionId") or result_payload.get("zoneId"),
+                                    "description": event_description,
                                     "occurredAt": str(event.occurred_at),
                                 },
                             },
@@ -267,9 +287,9 @@ def report_ai_results(request):
                     event=event,
                     camera=camera,
                     event_type=result_type,
-                    level=str(result.get("level") or _default_level(result_type)),
+                    level=_alert_level(result_type, result_payload),
                     title=_alert_title(result_type),
-                    description=_alert_description(result),
+                    description=event_description,
                     snapshot_path=event.snapshot_path,
                     occurred_at=event.occurred_at,
                 )
@@ -282,6 +302,7 @@ def report_ai_results(request):
         data={
             "eventIds": event_ids,
             "alertIds": alert_ids,
+            "acceptedEvents": accepted_events,
             "acceptedResults": len(event_ids),
             "rejectedResults": rejected_results,
             "cameraId": validated["cameraId"],
@@ -387,6 +408,25 @@ def alert_list_view(request):
     start = (page - 1) * page_size
     items = AlertSerializer(alerts[start:start + page_size], many=True).data
     return api_response(data={"total": total, "items": items}, message="success")
+
+
+@extend_schema(
+    summary="Get alert detail with replay evidence",
+    description="Return alert/event metadata plus lightweight replay evidence persisted in Event.payload.",
+    responses={200: AlertDetailSerializer, 404: None},
+)
+@api_view(["GET"])
+def alert_detail_view(_request, alert_id):
+    alert = Alert.objects.select_related("event", "camera").filter(id=alert_id).first()
+    if alert is None:
+        return api_response(
+            code=404,
+            message="告警不存在",
+            data=None,
+            status=http_status.HTTP_404_NOT_FOUND,
+        )
+
+    return api_response(data=_serialize_alert_detail(alert), message="success")
 
 
 @extend_schema(
@@ -563,8 +603,49 @@ def _extract_track_id(result):
     return "" if value is None else str(value)
 
 
+def _attach_initial_media_metadata(result, event_media):
+    payload = dict(result)
+    media = _matching_event_media(payload, event_media)
+    if not media:
+        return payload
+    payload["mediaEventId"] = media.get("eventId")
+    payload["media"] = {
+        "eventId": media.get("eventId"),
+        "status": media.get("status"),
+        "keyframePath": media.get("keyframePath"),
+        "clipPath": media.get("clipPath"),
+        "manifestPath": media.get("manifestPath"),
+        "preEventFrames": media.get("preEventFrames"),
+        "postEventFrames": media.get("postEventFrames"),
+    }
+    for key in ("keyframePath", "clipPath", "manifestPath"):
+        if media.get(key):
+            payload.setdefault(key, media[key])
+    return payload
+
+
+def _matching_event_media(result, event_media):
+    if not isinstance(event_media, list):
+        return None
+    media_event_id = result.get("mediaEventId")
+    if media_event_id:
+        for media in event_media:
+            if str(media.get("eventId")) == str(media_event_id):
+                return media
+    if len(event_media) == 1:
+        return event_media[0]
+    track_id = result.get("trackId")
+    result_type = result.get("type")
+    for media in event_media:
+        if track_id and str(media.get("trackId")) == str(track_id):
+            return media
+        if result_type and media.get("eventType") == result_type:
+            return media
+    return None
+
+
 def _extract_snapshot_path(result, event_media):
-    for key in ("snapshotPath", "snapshotUrl", "imagePath"):
+    for key in ("snapshotPath", "snapshotUrl", "imagePath", "keyframePath", "keyframeUrl"):
         value = result.get(key)
         if value:
             return str(value)
@@ -573,19 +654,162 @@ def _extract_snapshot_path(result, event_media):
     for media in event_media or []:
         if event_id and str(media.get("eventId")) != str(event_id):
             continue
-        value = media.get("snapshotPath") or media.get("snapshotUrl")
+        value = (
+            media.get("snapshotPath")
+            or media.get("snapshotUrl")
+            or media.get("keyframePath")
+            or media.get("keyframeUrl")
+        )
         if value:
             return str(value)
     return ""
 
 
-def _should_create_alert(result_type):
-    return (
-        result_type in ALERT_EVENT_TYPES
-        or result_type in {"region_intrusion", "region_dwell", "helmet_violation", "stranger_detected", "fall_detected"}
-        or result_type.endswith("_WARNING")
-        or result_type.endswith("_ALERT")
+def _serialize_alert_detail(alert):
+    event = alert.event
+    payload = dict(event.payload or {}) if event else {}
+    return {
+        "alert": dict(AlertSerializer(alert).data),
+        "event": {
+            "eventId": event.id if event else None,
+            "eventType": event.event_type if event else alert.event_type,
+            "cameraId": event.camera_id if event else alert.camera_id,
+            "cameraName": alert.camera.name if alert.camera else None,
+            "occurredAt": event.occurred_at if event else alert.occurred_at,
+            "trackId": event.track_id if event else "",
+            "bbox": event.bbox if event else {},
+            "confidence": event.confidence if event else None,
+            "payload": payload,
+        },
+        "replay": {
+            "trajectory": _extract_replay_trajectory(payload),
+            "triggerPoint": _extract_trigger_point(event, payload),
+            "region": _extract_replay_region(payload),
+            "media": _extract_replay_media(event, payload),
+        },
+    }
+
+
+def _extract_replay_trajectory(payload):
+    trajectory = payload.get("trajectory") or payload.get("trackHistory") or payload.get("path") or []
+    if not isinstance(trajectory, list):
+        return []
+    points = []
+    for item in trajectory:
+        if not isinstance(item, dict):
+            continue
+        point = {
+            "timestamp": item.get("timestamp"),
+            "center": _normalize_point_list(item.get("center") or item.get("centerPoint")),
+            "bbox": _normalize_bbox_list(item.get("bbox")),
+        }
+        for key in ("speed", "frameIndex", "keypoints"):
+            if key in item:
+                point[key] = item[key]
+        points.append({key: value for key, value in point.items() if value not in (None, [], {})})
+    return points[-60:]
+
+
+def _extract_trigger_point(event, payload):
+    for key in ("triggerPoint", "footPoint", "anchorPoint", "centerPoint"):
+        value = _normalize_point_list(payload.get(key))
+        if value:
+            return value
+    trajectory = _extract_replay_trajectory(payload)
+    if trajectory:
+        center = trajectory[-1].get("center")
+        if center:
+            return center
+    return _bbox_center(event.bbox if event else payload.get("bbox"))
+
+
+def _extract_replay_region(payload):
+    points = (
+        payload.get("regionPoints")
+        or payload.get("zonePoints")
+        or payload.get("polygonPoints")
+        or payload.get("polygon")
+        or []
     )
+    return {
+        "id": payload.get("regionId") or payload.get("zoneId"),
+        "name": payload.get("regionName") or payload.get("zoneName"),
+        "type": payload.get("regionType") or payload.get("zoneType"),
+        "points": _normalize_points(points),
+    }
+
+
+def _extract_replay_media(event, payload):
+    media = payload.get("media") if isinstance(payload.get("media"), dict) else {}
+    return {
+        "status": media.get("status") or payload.get("mediaStatus") or ("ready" if event and event.snapshot_path else "unavailable"),
+        "keyframeUrl": media.get("keyframeUrl") or payload.get("keyframeUrl") or payload.get("snapshotUrl"),
+        "keyframePath": media.get("keyframePath") or payload.get("keyframePath") or (event.snapshot_path if event else ""),
+        "clipUrl": media.get("clipUrl") or payload.get("clipUrl"),
+        "clipPath": media.get("clipPath") or payload.get("clipPath"),
+        "manifestUrl": media.get("manifestUrl") or payload.get("manifestUrl"),
+        "manifestPath": media.get("manifestPath") or payload.get("manifestPath"),
+    }
+
+
+def _normalize_points(points):
+    if not isinstance(points, list):
+        return []
+    normalized = []
+    for point in points:
+        value = _normalize_point_list(point)
+        if value:
+            normalized.append(value)
+    return normalized
+
+
+def _normalize_point_list(value):
+    if isinstance(value, dict):
+        x = value.get("x", value.get("0"))
+        y = value.get("y", value.get("1"))
+    elif isinstance(value, (list, tuple)) and len(value) >= 2:
+        x, y = value[0], value[1]
+    else:
+        return []
+    try:
+        return [float(x), float(y)]
+    except (TypeError, ValueError):
+        return []
+
+
+def _normalize_bbox_list(value):
+    if isinstance(value, dict):
+        if all(key in value for key in ("x1", "y1", "x2", "y2")):
+            raw = [value.get("x1"), value.get("y1"), value.get("x2"), value.get("y2")]
+        elif all(key in value for key in ("x", "y", "w", "h")):
+            raw = [value.get("x"), value.get("y"), value.get("x"), value.get("y")]
+            try:
+                raw[2] = float(raw[0]) + float(value.get("w"))
+                raw[3] = float(raw[1]) + float(value.get("h"))
+            except (TypeError, ValueError):
+                return []
+        else:
+            return []
+    elif isinstance(value, (list, tuple)) and len(value) >= 4:
+        raw = value[:4]
+    else:
+        return []
+    try:
+        return [float(item) for item in raw]
+    except (TypeError, ValueError):
+        return []
+
+
+def _bbox_center(bbox):
+    normalized = _normalize_bbox_list(bbox)
+    if not normalized:
+        return []
+    x1, y1, x2, y2 = normalized
+    return [(x1 + x2) / 2, (y1 + y2) / 2]
+
+
+def _should_create_alert(result_type):
+    return result_type in ALERT_TRIGGER_TYPES
 
 
 def _is_actionable_result(result_type, result):
@@ -598,6 +822,23 @@ def _is_actionable_result(result_type, result):
         )
     if result_type == "stranger_detected":
         return result.get("matched") is not True
+    return True
+
+
+def _is_actionable_region_result(camera, result_type, result):
+    if result_type not in {"region_intrusion", "region_dwell"}:
+        return True
+
+    region_id = result.get("regionId") or result.get("zoneId")
+    if region_id not in (None, ""):
+        zone = Zone.objects.filter(camera=camera, id=region_id).only("type").first()
+        if zone is not None:
+            return zone.type in {Zone.ZoneType.RESTRICTED, Zone.ZoneType.DANGER}
+
+    region_type = str(result.get("regionType") or result.get("zoneType") or "").lower()
+    if region_type:
+        return region_type in {Zone.ZoneType.RESTRICTED, Zone.ZoneType.DANGER}
+
     return True
 
 
@@ -614,14 +855,12 @@ def _is_duplicate_event(camera, result_type, result, occurred_at, track_id):
 
     if result_type in {"region_intrusion", "region_dwell"}:
         region_id = result.get("regionId", result.get("zoneId"))
-        entered_at = result.get("enteredAt")
-        if region_id not in (None, "") and entered_at:
-            return events.filter(
-                track_id=track_id,
-                payload__regionId=region_id,
-                payload__enteredAt=entered_at,
-            ).exists()
-        return False
+        cooldown = EVENT_DEDUP_SECONDS.get(result_type)
+        if region_id in (None, "") or not cooldown:
+            return False
+        return events.filter(
+            occurred_at__gte=occurred_at - timedelta(seconds=cooldown),
+        ).filter(Q(payload__regionId=region_id) | Q(payload__zoneId=region_id)).exists()
 
     cooldown = EVENT_DEDUP_SECONDS.get(result_type)
     if not cooldown or not track_id:
@@ -635,6 +874,16 @@ def _is_duplicate_event(camera, result_type, result, occurred_at, track_id):
 def _normalize_event_type(result):
     internal = str(result.get("type") or "").strip()
     nested = str(result.get("eventType") or "").strip()
+    legacy_aliases = {
+        "ZONE_INTRUSION": "region_intrusion",
+        "REGION_INTRUSION": "region_intrusion",
+        "ZONE_DWELL": "region_dwell",
+        "REGION_DWELL": "region_dwell",
+    }
+    if nested in legacy_aliases:
+        return legacy_aliases[nested]
+    if internal in legacy_aliases:
+        return legacy_aliases[internal]
     if internal == "ZONE_WARNING":
         return nested if nested in {"region_intrusion", "region_dwell"} else "region_intrusion"
     aliases = {
@@ -650,7 +899,9 @@ def _normalize_event_type(result):
 
 
 def _default_level(result_type):
-    if result_type in {"FALL_DETECTED", "FALL_ALERT", "ZONE_INTRUSION", "region_intrusion", "STRANGER_DETECTED", "STRANGER_ALERT"}:
+    if result_type == "region_intrusion":
+        return "medium"
+    if result_type in {"FALL_DETECTED", "FALL_ALERT", "region_dwell", "STRANGER_DETECTED", "STRANGER_ALERT"}:
         return "high"
     if result_type == "EMPLOYEE_RETURNED":
         return "low"
@@ -658,6 +909,8 @@ def _default_level(result_type):
 
 
 def _event_severity(result_type, result):
+    if result_type in {"region_intrusion", "region_dwell"}:
+        return _default_level(result_type)
     level = str(result.get("level") or "").lower()
     if level in {choice.value for choice in Event.Severity}:
         return level
@@ -666,11 +919,38 @@ def _event_severity(result_type, result):
     return Event.Severity.INFO
 
 
+def _alert_level(result_type, result):
+    if result_type in {"region_intrusion", "region_dwell"}:
+        return _default_level(result_type)
+    level = str(result.get("level") or "").lower()
+    if level in {choice.value for choice in Event.Severity}:
+        return level
+    return _default_level(result_type)
+
+
 def _alert_title(result_type):
     return result_type.replace("_", " ").title()
 
 
 def _alert_description(result):
+    result_type = _normalize_event_type(result)
+    if result_type == "face_recognized":
+        name = result.get("name") or result.get("employeeName") or "Unknown"
+        confidence = _extract_confidence(result)
+        if confidence is None:
+            return str(name)
+        if confidence <= 1.0:
+            return f"{name} 置信度 {confidence * 100:.1f}%"
+        return f"{name} 置信度 {confidence:.1f}%"
+
+    if result_type in {"region_intrusion", "region_dwell"}:
+        zone_name = result.get("zoneName") or result.get("regionName")
+        if zone_name:
+            return f"区域：{zone_name}"
+        region_id = result.get("regionId") or result.get("zoneId")
+        if region_id not in (None, ""):
+            return f"区域ID：{region_id}"
+
     track_id = result.get("trackId")
     zone_name = result.get("zoneName")
     name = result.get("name") or result.get("employeeName")
@@ -737,7 +1017,7 @@ def _notify_dingtalk_alert(alert: Alert) -> None:
             alert_title=_alert_type_display(alert),
             level=_ALERT_LEVEL_DISPLAY.get(alert.level, alert.level),
             content=alert.description or alert.title,
-            occurred_at=alert.occurred_at.isoformat() if alert.occurred_at else None,
+            occurred_at=_format_alert_time(alert.occurred_at),
             camera_name=alert.camera.name if alert.camera else None,
             location=alert.camera.location if alert.camera else None,
             responsible_name=settings.DINGTALK_RESPONSIBLE_NAME or None,
@@ -749,7 +1029,7 @@ def _notify_dingtalk_alert(alert: Alert) -> None:
         logger.exception("Unexpected DingTalk initial notification error alert_id=%s", alert.id)
 
     escalation_seconds = settings.DINGTALK_ESCALATION_SECONDS
-    if escalation_seconds < 1:
+    if escalation_seconds < 1 or alert.level != "high":
         return
 
     timer = threading.Timer(escalation_seconds, _escalate_alert, args=[alert.id])
@@ -769,7 +1049,7 @@ def _escalate_alert(alert_id: int) -> None:
             alert_title=f"[告警升级] {_alert_type_display(alert)}",
             level=_ALERT_LEVEL_DISPLAY.get(alert.level, alert.level),
             content=alert.description or alert.title,
-            occurred_at=alert.occurred_at.isoformat() if alert.occurred_at else None,
+            occurred_at=_format_alert_time(alert.occurred_at),
             camera_name=alert.camera.name if alert.camera else None,
             location=alert.camera.location if alert.camera else None,
             responsible_name=settings.DINGTALK_LEADER_NAME or None,
@@ -779,5 +1059,11 @@ def _escalate_alert(alert_id: int) -> None:
         logger.exception("DingTalk escalation failed alert_id=%s", alert_id)
     except Exception:
         logger.exception("Unexpected DingTalk escalation error alert_id=%s", alert_id)
+
+
+def _format_alert_time(value) -> str | None:
+    if value is None:
+        return None
+    return timezone.localtime(value).strftime("%Y-%m-%d %H:%M:%S")
 
 # Create your views here.

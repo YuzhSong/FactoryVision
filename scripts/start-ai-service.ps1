@@ -16,7 +16,37 @@ $repoRoot = Get-RepoRoot
 $serviceDir = Join-Path $repoRoot "ai-service"
 $pythonExe = Join-Path $serviceDir ".venv\Scripts\python.exe"
 $pyvenvCfg = Join-Path $serviceDir ".venv\pyvenv.cfg"
+$envFile = Join-Path $serviceDir ".env.local"
 $localAiToken = "factoryvision-local-e2e-token"
+
+function Import-EnvFile {
+    param([string]$Path)
+
+    if (-not (Test-Path -LiteralPath $Path)) {
+        return
+    }
+
+    Get-Content -LiteralPath $Path | ForEach-Object {
+        $line = $_.Trim()
+        if (-not $line -or $line.StartsWith("#")) {
+            return
+        }
+
+        $parts = $line.Split("=", 2)
+        if ($parts.Count -ne 2) {
+            return
+        }
+
+        $name = $parts[0].Trim()
+        $value = $parts[1].Trim()
+        if ($value.Length -ge 2 -and (($value.StartsWith('"') -and $value.EndsWith('"')) -or ($value.StartsWith("'") -and $value.EndsWith("'")))) {
+            $value = $value.Substring(1, $value.Length - 2)
+        }
+        [Environment]::SetEnvironmentVariable($name, $value, "Process")
+    }
+}
+
+Import-EnvFile -Path $envFile
 
 if (-not $env:BACKEND_API_TOKEN) {
     $env:BACKEND_API_TOKEN = $localAiToken
@@ -93,6 +123,7 @@ if (-not $version.StartsWith("3.11")) {
 
 Write-Host "[FactoryVision] Starting AIService with $pythonExe"
 Write-Host "[FactoryVision] Python version: $version"
+Write-Host "[FactoryVision] Backend API: $env:BACKEND_API_BASE_URL"
 $env:MODEL_WARMUP_ON_STARTUP = "True"
 
 Push-Location $serviceDir

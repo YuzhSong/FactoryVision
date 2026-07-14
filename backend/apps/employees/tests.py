@@ -1,6 +1,8 @@
 from django.test import TestCase
 from rest_framework.test import APIClient
+from unittest import mock
 
+from apps.face.models import FaceFeature
 from apps.users.models import User
 
 from .models import Employee
@@ -137,3 +139,23 @@ class EmployeeEndpointTests(TestCase):
         self.assertEqual(employee.position, "Supervisor")
         self.assertEqual(employee.phone, "10010")
         self.assertEqual(employee.status, Employee.Status.INACTIVE)
+
+    def test_delete_employee_cascades_face_features_and_notifies_ai_cache(self):
+        employee = Employee.objects.create(employee_no="E020", name="Li Si")
+        FaceFeature.objects.create(
+            employee=employee,
+            face_type=FaceFeature.FaceType.FRONT,
+            feature_vector=[0.0] * 512,
+            image_path="faces/1/front.jpg",
+        )
+        self.authenticate()
+
+        with mock.patch("apps.employees.views.requests.post") as post:
+            response = self.client.delete(f"/api/employees/{employee.id}/delete/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(Employee.objects.filter(id=employee.id).exists())
+        self.assertFalse(FaceFeature.objects.filter(employee_id=employee.id).exists())
+        post.assert_called_once()
+        self.assertTrue(post.call_args.args[0].endswith("/cache/employees/delete"))
+        self.assertEqual(post.call_args.kwargs["json"], {"employeeIds": [employee.id]})

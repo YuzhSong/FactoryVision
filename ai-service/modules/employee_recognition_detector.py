@@ -36,6 +36,11 @@ class EmployeeRecognitionDetector:
                 continue
 
             self._employee_reported_at[employee_key] = now
+            employee_name = result.get("name") or result.get("employeeName") or "Unknown"
+            confidence = _coerce_float(result.get("confidence"))
+            if confidence is None:
+                confidence = _coerce_float(result.get("similarity"))
+            description = _face_description(employee_name, confidence)
             events.append({
                 "type": "FACE_RECOGNIZED",
                 "eventType": "face_recognized",
@@ -44,13 +49,15 @@ class EmployeeRecognitionDetector:
                 "trackId": track_id,
                 "employeeId": employee_id,
                 "employeeNo": result.get("employeeNo"),
-                "employeeName": result.get("name") or result.get("employeeName"),
-                "name": result.get("name") or result.get("employeeName"),
+                "employeeName": employee_name,
+                "name": employee_name,
+                "confidence": confidence,
                 "similarity": result.get("similarity"),
                 "threshold": result.get("threshold"),
                 "secondBestSimilarity": result.get("secondBestSimilarity"),
                 "scoreMargin": result.get("scoreMargin"),
                 "faceBox": result.get("faceBox"),
+                "description": description,
                 "timestamp": timestamp,
                 "level": "info",
             })
@@ -96,3 +103,18 @@ def _timestamp_seconds(value):
         return datetime.fromisoformat(normalized).timestamp()
     except ValueError:
         return datetime.now(timezone.utc).timestamp()
+
+
+def _coerce_float(value):
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _face_description(name, confidence):
+    if confidence is None:
+        return str(name)
+    if confidence <= 1.0:
+        return f"{name} 置信度 {confidence * 100:.1f}%"
+    return f"{name} 置信度 {confidence:.1f}%"

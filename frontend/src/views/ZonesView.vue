@@ -24,6 +24,7 @@ const videoLayout = reactive({ left: 0, top: 0, width: 0, height: 0 })
 let player = null
 let sdkPromise = null
 let resizeObserver = null
+let playbackLatencyTimer = null
 
 const zoneForm = reactive({
   name: '',
@@ -47,8 +48,15 @@ const zoneRows = computed(() => zones.value.map((zone) => ({
 
 const selectedCamera = computed(() => cameras.value.find((camera) => camera.id === cameraId.value) || null)
 const detectedPlayUrl = computed(() => selectedCamera.value?.processedStreamUrl || selectedCamera.value?.playUrl || '')
+const detectedRtcUrl = computed(() => {
+  const camera = selectedCamera.value
+  return toRtcUrl(camera?.streamConfig?.playUrl)
+    || toRtcUrl(camera?.processedStreamUrl)
+    || toRtcUrl(camera?.streamConfig?.outputUrl)
+    || toRtcUrl(deriveOutputUrl(camera))
+})
 const detectedFlvUrl = computed(() => {
-  const url = detectedPlayUrl.value
+  const url = detectedPlayUrl.value || detectedRtcUrl.value
   if (!url || !url.startsWith('webrtc://')) return url
   return url.replace('webrtc://', 'https://').replace(/\/([^/?]+)(\?.*)?$/, '/$1.flv')
 })
@@ -116,6 +124,32 @@ const loadScript = (src) => new Promise((resolve, reject) => {
 
 const loadMpegtsSdk = () => {
   return Promise.resolve(mpegts)
+}
+
+const toRtcUrl = (url) => {
+  const value = `${url || ''}`.trim()
+  if (!value) return ''
+  if (value.startsWith('webrtc://')) return value
+
+  const flvMatch = value.match(/^https?:\/\/([^/:]+)(?::\d+)?\/(.+)\.flv(?:[?#].*)?$/)
+  if (flvMatch) {
+    return `webrtc://${flvMatch[1]}:8443/${flvMatch[2]}`
+  }
+
+  const rtmpMatch = value.match(/^rtmps?:\/\/[^/]+\/(.+)$/)
+  if (rtmpMatch) {
+    return `webrtc://webrtc.rainycode.cn:8443/${rtmpMatch[1]}`
+  }
+
+  return ''
+}
+
+const normalizeSrsWebRtcUrl = (url) => {
+  if (!url || !url.startsWith('webrtc://')) return url
+  const [base, queryString = ''] = url.split('?')
+  const params = new URLSearchParams(queryString)
+  if (!params.has('schema')) params.set('schema', 'https')
+  return `${base}?${params.toString()}`
 }
 
 const loadSrsSdk = () => {
@@ -189,6 +223,7 @@ const ensureProcessedStream = async () => {
 }
 
 const stopPlayback = () => {
+  stopLiveLatencyChasing()
   player?.close?.()
   player?.destroy?.()
   player = null
@@ -198,11 +233,45 @@ const stopPlayback = () => {
   }
 }
 
+const startLiveLatencyChasing = () => {
+  stopLiveLatencyChasing()
+  playbackLatencyTimer = window.setInterval(() => {
+    const video = videoRef.value
+    if (!video || !video.buffered || video.buffered.length === 0) return
+    const end = video.buffered.end(video.buffered.length - 1)
+    const lag = end - video.currentTime
+    if (Number.isFinite(lag) && lag > 2) {
+      video.currentTime = Math.max(0, end - 0.35)
+    }
+  }, 1000)
+}
+
+const stopLiveLatencyChasing = () => {
+  if (playbackLatencyTimer) {
+    window.clearInterval(playbackLatencyTimer)
+    playbackLatencyTimer = null
+  }
+}
+
+const startRtcPlayback = async () => {
+  await loadSrsSdk()
+  player = new window.SrsRtcPlayerAsync()
+  if (videoRef.value) {
+    videoRef.value.srcObject = player.stream
+    videoRef.value.muted = true
+  }
+  const playUrl = normalizeSrsWebRtcUrl(detectedRtcUrl.value)
+  await player.play(playUrl)
+  playbackStatus.value = 'connected'
+  playbackMessage.value = `姝ｅ湪鎾斁 ${playUrl}`
+  window.setTimeout(updateVideoLayout, 300)
+}
+
 const startPlayback = async (options = {}) => {
   const { ensureStream = false } = options
   stopPlayback()
   const playUrl = detectedFlvUrl.value
-  if (!playUrl) {
+  if (!playUrl && !detectedRtcUrl.value) {
     playbackStatus.value = 'idle'
     playbackMessage.value = '当前摄像头未配置处理后播放地址'
     return
@@ -213,14 +282,32 @@ const startPlayback = async (options = {}) => {
     if (ensureStream) {
       await ensureProcessedStream()
     }
+    if (detectedRtcUrl.value) {
+      try {
+        await startRtcPlayback()
+        return
+      } catch (rtcError) {
+        playbackMessage.value = `WebRTC failed, falling back to HTTP-FLV: ${rtcError.message}`
+      }
+    }
+
     await loadMpegtsSdk()
     if (!mpegts.getFeatureList().mseLivePlayback) throw new Error('当前浏览器不支持 HTTP-FLV 直播播放')
-    player = mpegts.createPlayer({ type: 'flv', url: playUrl, isLive: true, enableStashBuffer: false })
+    player = mpegts.createPlayer({
+      type: 'flv',
+      url: playUrl,
+      isLive: true,
+      enableStashBuffer: false,
+      liveBufferLatencyChasing: true,
+      liveBufferLatencyMaxLatency: 2,
+      liveBufferLatencyMinRemain: 0.5,
+    })
     player.attachMediaElement(videoRef.value)
     player.load()
     await withTimeout(player.play(), 8000, '处理后视频流连接超时，请检查 SRS 或 processedStreamUrl')
     playbackStatus.value = 'connected'
     playbackMessage.value = `正在播放 ${playUrl}`
+    startLiveLatencyChasing()
   } catch (error) {
     playbackStatus.value = 'error'
     playbackMessage.value = error.message

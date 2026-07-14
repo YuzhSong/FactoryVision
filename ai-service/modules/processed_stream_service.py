@@ -60,10 +60,13 @@ class StreamTaskStatus:
     person_inference_ms: float | None = None
     helmet_inference_ms: float | None = None
     face_inference_ms: float | None = None
+    fall_inference_ms: float | None = None
     last_person_frame_id: str | None = None
     last_helmet_frame_id: str | None = None
     last_face_frame_id: str | None = None
     timing_summary_ms: dict | None = None
+    helmet_diagnostics: dict | None = None
+    behavior_diagnostics: dict | None = None
     active_config: dict | None = None
 
 
@@ -139,6 +142,7 @@ class ProcessedStreamService:
             pre_event_seconds=event_media_pre_seconds,
             post_event_seconds=event_media_post_seconds,
             cooldown_seconds=event_media_cooldown_seconds,
+            ffmpeg_path=ffmpeg_path,
         )
         self._status = StreamTaskStatus(
             input_url=default_input_url,
@@ -153,10 +157,16 @@ class ProcessedStreamService:
         self._lock = threading.Lock()
         self._frame_condition = threading.Condition()
         self._event_report_queue = queue.Queue(maxsize=max(1, int(event_report_queue_size or 1)))
+        self._event_media_upload_queue = queue.Queue(maxsize=2)
         self.zone_refresh_interval_seconds = max(1.0, float(zone_refresh_interval_seconds or 1))
         self._event_report_stop = threading.Event()
         self._event_report_lock = threading.Lock()
         self._report_thread = None
+        self._media_upload_thread = None
+        self._media_upload_stop = threading.Event()
+        self._event_media_lock = threading.Lock()
+        self._event_media_by_id = {}
+        self._media_backend_event_ids = {}
         self._queued_region_event_keys = set()
         self._latest_frame: LatestFrameSnapshot | None = None
         self._latest_sequence = 0
@@ -167,11 +177,13 @@ class ProcessedStreamService:
         self._helmet_cache_frame = None
         self._timing_samples = {
             name: deque(maxlen=300)
-            for name in ("person", "helmet", "face", "zoneRules", "draw", "stream_write", "encode", "overall")
+            for name in ("person", "helmet", "face", "fall", "zoneRules", "draw", "stream_write", "encode", "overall")
         }
         self._frame_age_samples = deque(maxlen=120)
         self._schedule_frames = {name: deque(maxlen=20) for name in ("person", "helmet", "face")}
         self._last_face_due_frame = -1
+        if self.event_media_recorder is not None and hasattr(self.event_media_recorder, "set_media_ready_callback"):
+            self.event_media_recorder.set_media_ready_callback(self._on_event_media_ready)
 
     def start(self, payload: dict | None = None):
         """Start background stream processing, or return existing task status."""
@@ -192,6 +204,7 @@ class ProcessedStreamService:
 
             self._stop_event.clear()
             self._event_report_stop.clear()
+            self._media_upload_stop.clear()
             self._cached_person_detections = []
             self._cached_helmet_detections = []
             self._person_cache_frame = None
@@ -202,6 +215,9 @@ class ProcessedStreamService:
             for frames in self._schedule_frames.values():
                 frames.clear()
             self._last_face_due_frame = -1
+            with self._event_media_lock:
+                self._event_media_by_id = {}
+                self._media_backend_event_ids = {}
             with self._frame_condition:
                 self._latest_frame = None
                 self._latest_sequence = 0
@@ -558,6 +574,8 @@ class ProcessedStreamService:
             "STRANGER_DETECTED",
             "STRANGER_ALERT",
             "FACE_RECOGNIZED",
+            "FALL_ALERT",
+            "FALL_DETECTED",
         }
         payload = dict(report)
         source_results = report.get("results") or []
@@ -587,6 +605,7 @@ class ProcessedStreamService:
                 with self._lock:
                     self._status.last_report_attempted_at = _now()
                 response = self.backend_client.report_ai_results(report)
+                self._register_reported_event_media(report, response)
                 with self._lock:
                     self._status.reported_events += len(report.get("results") or [])
                     self._status.last_report_succeeded_at = _now()
@@ -603,11 +622,105 @@ class ProcessedStreamService:
                     self._queued_region_event_keys.difference_update(event_keys)
                 self._event_report_queue.task_done()
 
+    def _register_reported_event_media(self, report, response):
+        data = response.get("data", response) if isinstance(response, dict) else {}
+        accepted_events = data.get("acceptedEvents") if isinstance(data, dict) else None
+        if not isinstance(accepted_events, list):
+            accepted_events = []
+        if not accepted_events:
+            event_ids = data.get("eventIds", []) if isinstance(data, dict) else []
+            results = report.get("results") or []
+            accepted_events = [
+                {
+                    "eventId": event_id,
+                    "mediaEventId": result.get("mediaEventId") or (result.get("media") or {}).get("eventId"),
+                }
+                for event_id, result in zip(event_ids, results)
+            ]
+
+        for item in accepted_events:
+            backend_event_id = item.get("eventId") if isinstance(item, dict) else None
+            media_event_id = item.get("mediaEventId") if isinstance(item, dict) else None
+            if not backend_event_id or not media_event_id:
+                continue
+            with self._event_media_lock:
+                self._media_backend_event_ids[str(media_event_id)] = backend_event_id
+                media = self._event_media_by_id.get(str(media_event_id))
+            if media and _media_is_uploadable(media):
+                self._enqueue_event_media_upload(backend_event_id, media)
+
+    def _remember_event_media(self, media):
+        media_event_id = media.get("eventId") or media.get("mediaEventId")
+        if not media_event_id:
+            return
+        with self._event_media_lock:
+            self._event_media_by_id[str(media_event_id)] = dict(media)
+
+    def _on_event_media_ready(self, media):
+        self._remember_event_media(media)
+        media_event_id = media.get("eventId") or media.get("mediaEventId")
+        if not media_event_id:
+            return
+        with self._event_media_lock:
+            backend_event_id = self._media_backend_event_ids.get(str(media_event_id))
+        if backend_event_id:
+            self._enqueue_event_media_upload(backend_event_id, media)
+
+    def _enqueue_event_media_upload(self, backend_event_id, media):
+        if self.backend_client is None or not _media_is_uploadable(media):
+            return False
+        try:
+            self._event_media_upload_queue.put_nowait((backend_event_id, dict(media)))
+        except queue.Full:
+            logger.warning("Event media upload queue full; dropped media event_id=%s", media.get("eventId"))
+            return False
+        self._start_media_upload_worker()
+        return True
+
+    def _start_media_upload_worker(self):
+        with self._event_report_lock:
+            if self._media_upload_thread is not None and self._media_upload_thread.is_alive():
+                return
+            self._media_upload_thread = threading.Thread(
+                target=self._media_upload_loop,
+                name="event-media-uploader",
+                daemon=True,
+            )
+            self._media_upload_thread.start()
+
+    def _media_upload_loop(self):
+        while not self._media_upload_stop.is_set() or not self._event_media_upload_queue.empty():
+            try:
+                backend_event_id, media = self._event_media_upload_queue.get(timeout=0.5)
+            except queue.Empty:
+                continue
+            try:
+                response = self.backend_client.upload_event_media(backend_event_id, media)
+                logger.info(
+                    "event media upload succeeded backend_event_id=%s media_event_id=%s response=%s",
+                    backend_event_id,
+                    media.get("eventId"),
+                    response.get("code") if isinstance(response, dict) else response,
+                )
+            except Exception as exc:
+                logger.exception(
+                    "event media upload failed backend_event_id=%s media_event_id=%s: %s",
+                    backend_event_id,
+                    media.get("eventId"),
+                    exc,
+                )
+            finally:
+                self._event_media_upload_queue.task_done()
+
     def _shutdown_report_worker(self):
         self._event_report_stop.set()
         report_thread = self._report_thread
         if report_thread is not None and report_thread.is_alive():
             report_thread.join(timeout=5)
+        self._media_upload_stop.set()
+        media_thread = self._media_upload_thread
+        if media_thread is not None and media_thread.is_alive():
+            media_thread.join(timeout=5)
 
     def _publish_latest_frame(self, packet):
         with self._frame_condition:
@@ -657,6 +770,8 @@ class ProcessedStreamService:
             report=report,
         )
         if event_media:
+            for media in event_media:
+                self._remember_event_media(media)
             with self._lock:
                 self._status.event_media_count += len(event_media)
                 self._status.last_event_media = event_media[-1]
@@ -672,7 +787,7 @@ class ProcessedStreamService:
         frame = normalize_camera_frame(packet.frame)
         normalized_shape = list(frame.shape[:2])
         if self.input_width and self.input_height:
-            frame = _resize_landscape_frame(frame, self.input_width, self.input_height, cv2)
+            frame = _resize_frame_preserving_orientation(frame, self.input_width, self.input_height, cv2)
         packet.frame = frame
         output_height, output_width = frame.shape[:2]
         with self._lock:
@@ -757,7 +872,12 @@ class ProcessedStreamService:
     def _record_model_metrics(self, report, frame_id):
         timings = report.get("modelTimingsMs") or {}
         model_runs = report.get("modelRuns") or {}
+        diagnostics = report.get("diagnostics") or {}
         with self._lock:
+            if diagnostics.get("helmet"):
+                self._status.helmet_diagnostics = diagnostics.get("helmet")
+            if diagnostics.get("behavior"):
+                self._status.behavior_diagnostics = diagnostics.get("behavior")
             if model_runs.get("person"):
                 self._status.person_inference_ms = timings.get("person")
                 self._status.last_person_frame_id = frame_id
@@ -770,7 +890,9 @@ class ProcessedStreamService:
                 self._status.face_inference_ms = timings.get("face")
                 self._status.last_face_frame_id = frame_id
                 self._schedule_frames["face"].append(self._status.processed_frames)
-        for name in ("person", "helmet", "face", "zoneRules"):
+            if model_runs.get("fall"):
+                self._status.fall_inference_ms = timings.get("fall")
+        for name in ("person", "helmet", "face", "fall", "zoneRules"):
             if name in timings:
                 self._record_timing(name, timings[name])
 
@@ -824,10 +946,15 @@ def normalize_camera_frame(frame):
     return cv2.rotate(frame, cv2.ROTATE_90_COUNTERCLOCKWISE)
 
 
-def _resize_landscape_frame(frame, target_width: int, target_height: int, cv2_module):
+def _resize_frame_preserving_orientation(frame, target_width: int, target_height: int, cv2_module):
     source_height, source_width = frame.shape[:2]
     if source_width <= 0 or source_height <= 0:
         return frame
+
+    source_is_portrait = source_height > source_width
+    target_is_portrait = target_height > target_width
+    if source_is_portrait != target_is_portrait:
+        target_width, target_height = target_height, target_width
 
     scale = min(target_width / source_width, target_height / source_height)
     if scale <= 0:
@@ -895,8 +1022,15 @@ def _region_event_key(result):
         str(result.get("regionId")),
         str(result.get("trackId")),
         str(result.get("eventType")),
-        str(result.get("enteredAt")),
     )
+
+
+def _media_is_uploadable(media):
+    if not isinstance(media, dict):
+        return False
+    if media.get("status") not in {"ready", "frames_saved", "finalize_skipped", "finalize_failed"}:
+        return False
+    return any(media.get(key) for key in ("keyframePath", "clipPath", "manifestPath"))
 
 
 def _timing_summary(samples):

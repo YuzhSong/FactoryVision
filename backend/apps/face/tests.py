@@ -1,3 +1,4 @@
+from django.contrib.auth import get_user_model
 from django.test import SimpleTestCase, TestCase, override_settings
 from rest_framework.test import APIClient
 
@@ -77,3 +78,33 @@ class FaceLibraryApiTests(TestCase):
         item = response.data["data"]["items"][0]
         self.assertEqual(item["employeeNo"], "FACE-001")
         self.assertEqual(len(item["faceFeatures"][0]["featureVector"]), FACE_FEATURE_DIMENSION)
+
+
+class FaceEnrollWithProvidedFeatureTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.user = get_user_model().objects.create_user(username="face-enroll-admin", password="test-pass-123")
+        self.employee = Employee.objects.create(employee_no="FACE-002", name="Provided Feature User")
+
+    def test_enroll_accepts_browser_extracted_features_without_ai_service_call(self):
+        self.client.force_authenticate(user=self.user)
+        image = "data:image/jpeg;base64,/9j/4AAQSkZJRg=="
+        response = self.client.post(
+            "/api/face/enroll/",
+            {
+                "employeeId": self.employee.id,
+                "faces": [
+                    {
+                        "faceType": face_type,
+                        "imageBase64": image,
+                        "featureVector": [0.1] * FACE_FEATURE_DIMENSION,
+                        "dimension": FACE_FEATURE_DIMENSION,
+                    }
+                    for face_type in ("front", "left", "right")
+                ],
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(FaceFeature.objects.filter(employee=self.employee).count(), 3)

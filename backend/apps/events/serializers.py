@@ -34,3 +34,11 @@ class EventListSerializer(serializers.ModelSerializer):
             "payload",
         )
         read_only_fields = fields
+
+
+class EventMediaUploadSerializer(serializers.Serializer):
+    mediaEventId = serializers.CharField(required=False, allow_blank=True)
+    status = serializers.CharField(required=False, allow_blank=True)
+    keyframe = serializers.FileField(required=False)
+    clip = serializers.FileField(required=False)
+    manifest = serializers.FileField(required=False)

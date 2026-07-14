@@ -3,7 +3,12 @@ import time
 import numpy as np
 
 from modules.frame_processor import FrameProcessor
-from modules.processed_stream_service import LatestFrameSnapshot, ProcessedStreamService, normalize_camera_frame
+from modules.processed_stream_service import (
+    LatestFrameSnapshot,
+    ProcessedStreamService,
+    _resize_frame_preserving_orientation,
+    normalize_camera_frame,
+)
 
 
 class _FakeDetector:
@@ -103,9 +108,14 @@ class _FakeEventMediaRecorder:
 class _FakeBackendClient:
     def __init__(self):
         self.report = None
+        self.media_uploads = []
 
     def report_ai_results(self, payload):
         self.report = payload
+        return {"code": 200}
+
+    def upload_event_media(self, event_id, media):
+        self.media_uploads.append({"eventId": event_id, "media": media})
         return {"code": 200}
 
 
@@ -285,6 +295,7 @@ class RealtimeStreamingTests(unittest.TestCase):
                 {"type": "FACE_RESULT", "trackId": "person-2", "matched": True, "employeeId": 4},
                 {"type": "FACE_RECOGNIZED", "trackId": "person-2", "employeeId": 4},
                 {"type": "ZONE_WARNING", "trackId": "person-1"},
+                {"type": "FALL_ALERT", "trackId": "person-1", "confidence": 0.9},
             ],
         }
 
@@ -292,8 +303,9 @@ class RealtimeStreamingTests(unittest.TestCase):
 
         self.assertEqual(
             [item["type"] for item in filtered["results"]],
-            ["HELMET_WARNING", "FACE_RECOGNIZED", "ZONE_WARNING"],
+            ["HELMET_WARNING", "FACE_RECOGNIZED", "ZONE_WARNING", "FALL_ALERT"],
         )
+        self.assertEqual([item["eventType"] for item in filtered["results"]][-1], "fall_detected")
         self.assertEqual(service.status()["filtered_results"], 5)
 
     def test_reporting_requires_camera_id_and_rejects_legacy_realtime_path(self):
@@ -302,6 +314,32 @@ class RealtimeStreamingTests(unittest.TestCase):
             service.start({})
         with self.assertRaisesRegex(ValueError, "reportRealtimeToBackend"):
             service.start({"reportRealtimeToBackend": True})
+
+    def test_processed_stream_uploads_ready_event_media_after_report_mapping(self):
+        backend = _FakeBackendClient()
+        service = ProcessedStreamService(
+            frame_processor=None,
+            backend_client=backend,
+            annotator=_FakeAnnotator(),
+            event_media_recorder=_FakeEventMediaRecorder(),
+        )
+        media = {
+            "eventId": "local-media-1",
+            "status": "ready",
+            "keyframePath": __file__,
+            "manifestPath": __file__,
+        }
+
+        service._on_event_media_ready(media)
+        service._register_reported_event_media(
+            {"results": [{"mediaEventId": "local-media-1"}]},
+            {"data": {"acceptedEvents": [{"eventId": 7, "mediaEventId": "local-media-1"}]}},
+        )
+        service._event_media_upload_queue.join()
+
+        self.assertEqual(len(backend.media_uploads), 1)
+        self.assertEqual(backend.media_uploads[0]["eventId"], 7)
+        self.assertEqual(backend.media_uploads[0]["media"]["eventId"], "local-media-1")
 
     def test_track_history_keeps_lightweight_recent_points(self):
         processor = FrameProcessor(person_detector=_FakeDetector(), history_limit=5)
@@ -367,6 +405,11 @@ class RealtimeStreamingTests(unittest.TestCase):
         self.assertFalse(any(result.get("type") == "STRANGER_ALERT" for result in reports[0]["results"]))
         self.assertFalse(any(result.get("type") == "STRANGER_ALERT" for result in reports[1]["results"]))
         self.assertTrue(any(result.get("type") == "STRANGER_ALERT" for result in reports[2]["results"]))
+        stranger = next(result for result in reports[2]["results"] if result.get("type") == "STRANGER_ALERT")
+        self.assertEqual(stranger["trajectory"][-1]["center"], processor.track_histories["t-1"][-1]["center"])
+        self.assertEqual(stranger["triggerPoint"], stranger["trajectory"][-1]["center"])
+        self.assertLessEqual(len(stranger["trajectory"]), processor.history_limit)
+        self.assertNotIn("frame", stranger["trajectory"][-1])
 
     def test_frame_processor_does_not_confirm_stranger_without_loaded_face_library(self):
         processor = FrameProcessor(
@@ -438,6 +481,45 @@ class RealtimeStreamingTests(unittest.TestCase):
         self.assertEqual(leave_events[0]["employeeId"], 1)
         self.assertEqual(return_events[0]["eventType"], "RETURN")
         self.assertEqual(return_events[0]["leaveDurationSeconds"], 10.0)
+
+
+class DetectionObservationRegressionTests(unittest.TestCase):
+    def test_portrait_frame_uses_swapped_target_bounds(self):
+        import cv2
+
+        frame = np.zeros((1280, 720, 3), dtype=np.uint8)
+        resized = _resize_frame_preserving_orientation(frame, 640, 360, cv2)
+        self.assertEqual(resized.shape[:2], (640, 360))
+
+    def test_cached_person_boxes_do_not_create_fake_fall_history(self):
+        processor = FrameProcessor(
+            person_detector=_FakeDetector(),
+            history_limit=12,
+            abnormal_config={"helmetModelPath": "", "fallConfirmFrames": 5},
+        )
+        frame = np.zeros((120, 120, 3), dtype=np.uint8)
+        first = processor.process_frame(
+            frame,
+            camera_id=1,
+            frame_id="real-1",
+            timestamp="2026-07-13T10:00:00+08:00",
+            include_faces=False,
+            run_person_detection=True,
+            run_helmet_detection=False,
+        )
+        cached_people = [item for item in first["results"] if item.get("type") == "PERSON_DETECTION"]
+        for index in range(5):
+            processor.process_frame(
+                frame,
+                camera_id=1,
+                frame_id=f"cached-{index}",
+                timestamp=f"2026-07-13T10:00:0{index + 1}+08:00",
+                include_faces=False,
+                person_detections=cached_people,
+                run_person_detection=False,
+                run_helmet_detection=False,
+            )
+        self.assertEqual(len(processor.track_histories["t-1"]), 1)
 
 
 if __name__ == "__main__":

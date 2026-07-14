@@ -1,5 +1,7 @@
 import json
 from pathlib import Path
+import shutil
+import subprocess
 import tempfile
 import unittest
 
@@ -48,6 +50,7 @@ class EventMediaRecorderTests(unittest.TestCase):
             )
             recorder.record_frame(_frame(40), frame_id="frame-4", timestamp="2026-07-08T03:00:03+08:00")
             recorder.record_frame(_frame(50), frame_id="frame-5", timestamp="2026-07-08T03:00:04+08:00")
+            recorder.flush()
 
             self.assertEqual(len(media), 1)
             self.assertTrue(Path(media[0]["keyframePath"]).exists())
@@ -62,6 +65,26 @@ class EventMediaRecorderTests(unittest.TestCase):
                 "frameSequenceDir" in manifest_media and Path(manifest_media["frameSequenceDir"]).exists()
             )
             self.assertTrue(clip_exists or sequence_exists)
+            if clip_exists and shutil.which("ffprobe"):
+                probe = subprocess.run(
+                    [
+                        "ffprobe",
+                        "-v",
+                        "error",
+                        "-select_streams",
+                        "v:0",
+                        "-show_entries",
+                        "stream=codec_name,pix_fmt",
+                        "-of",
+                        "default=nw=1:nk=1",
+                        manifest_media["clipPath"],
+                    ],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertIn("h264", probe.stdout.splitlines())
+                self.assertIn("yuv420p", probe.stdout.splitlines())
 
     def test_cooldown_suppresses_repeated_event_media(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -92,6 +115,7 @@ class EventMediaRecorderTests(unittest.TestCase):
                 timestamp="2026-07-08T03:00:11+08:00",
                 report=_report("STRANGER_ALERT"),
             )
+            recorder.flush()
 
             self.assertEqual(len(first), 1)
             manifest = json.loads(Path(first[0]["manifestPath"]).read_text(encoding="utf-8"))

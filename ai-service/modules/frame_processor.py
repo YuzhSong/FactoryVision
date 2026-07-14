@@ -11,6 +11,18 @@ from .stranger_detector import StrangerDetector
 from .identity_cache import FaceIdentityCache
 
 
+REPLAY_EVENT_TYPES = {
+    "HELMET_WARNING",
+    "ZONE_WARNING",
+    "RUNNING_ALERT",
+    "STRANGER_DETECTED",
+    "STRANGER_ALERT",
+    "FACE_RECOGNIZED",
+    "FALL_ALERT",
+    "FALL_DETECTED",
+}
+
+
 class FrameProcessor:
     """Coordinate person detection, face recognition, and behavior report building."""
 
@@ -26,6 +38,7 @@ class FrameProcessor:
         self.person_detector = person_detector
         self.face_service = face_service
         abnormal_config = abnormal_config or {}
+        self.abnormal_config = abnormal_config
         self.abnormal_service = AbnormalBehaviorService(zones=zones or [], config=abnormal_config)
         self.stranger_detector = StrangerDetector(
             confirm_frames=abnormal_config.get("strangerConfirmFrames", 3),
@@ -92,7 +105,16 @@ class FrameProcessor:
         else:
             helmet_results = deepcopy(helmet_detections or [])
         self._apply_helmet_results(person_results, helmet_results)
-        self._update_track_histories(person_results, timestamp=timestamp, frame_index=frame_index, fps=fps)
+        # Cached boxes are for drawing/rule continuity only. Treating them as fresh
+        # observations made one detector result look like five temporal fall samples.
+        if run_person_detection:
+            self._update_track_histories(
+                person_results,
+                timestamp=timestamp,
+                frame_index=frame_index,
+                fps=fps,
+                frame_shape=getattr(frame, "shape", None),
+            )
 
         started_at = time.perf_counter()
         report = self.abnormal_service.build_ai_report(
@@ -103,7 +125,18 @@ class FrameProcessor:
             timestamp=timestamp,
             frame_shape=getattr(frame, "shape", None),
         )
-        timings["zoneRules"] = _elapsed_ms(started_at)
+        behavior_ms = _elapsed_ms(started_at)
+        behavior_timings = (
+            getattr(self.abnormal_service, "last_diagnostics", {}).get("timingsMs", {})
+            if getattr(self.abnormal_service, "last_diagnostics", None)
+            else {}
+        )
+        timings["zoneRules"] = behavior_timings.get("zoneRules", behavior_ms)
+        timings["fall"] = behavior_timings.get("fall", 0.0)
+        report["diagnostics"] = {
+            "helmet": dict(getattr(self.abnormal_service.helmet_detector, "last_diagnostics", {}) or {}),
+            "behavior": dict(getattr(self.abnormal_service, "last_diagnostics", {}) or {}),
+        }
 
         face_results = []
         run_face_recognition = include_faces if run_face_recognition is None else run_face_recognition
@@ -165,11 +198,13 @@ class FrameProcessor:
             + presence_results
             + non_person_results
         )
+        self._attach_replay_evidence(report["results"])
         report["modelTimingsMs"] = timings
         report["modelRuns"] = {
             "person": bool(run_person_detection),
             "helmet": bool(run_helmet_detection),
             "face": bool(include_faces and run_face_recognition and self.face_service is not None),
+            "fall": True,
         }
         return report
 
@@ -184,7 +219,21 @@ class FrameProcessor:
         if hasattr(self.person_detector, "reset_tracks"):
             self.person_detector.reset_tracks()
 
-    def _update_track_histories(self, person_results, timestamp: str, frame_index: int | None, fps: float | None):
+    def invalidate_face_identity_cache(self):
+        """Drop short-lived identity state after the face library changes."""
+        self.identity_cache.invalidate_library()
+        self.employee_presence_detector.reset()
+        self.employee_recognition_detector.reset()
+        self.stranger_detector.reset()
+
+    def _update_track_histories(
+        self,
+        person_results,
+        timestamp: str,
+        frame_index: int | None,
+        fps: float | None,
+        frame_shape=None,
+    ):
         """Append lightweight per-track history for behavior rules."""
         for detection in person_results:
             track_id = detection.get("trackId")
@@ -207,6 +256,8 @@ class FrameProcessor:
                 entry["frameIndex"] = frame_index
             if fps is not None:
                 entry["fps"] = fps
+            if frame_shape is not None:
+                entry["frameShape"] = list(frame_shape[:2])
             if speed is not None:
                 entry["speed"] = round(speed, 2)
 
@@ -251,6 +302,22 @@ class FrameProcessor:
             detection["helmetConfidence"] = helmet.get("helmetConfidence")
             detection["helmetClassName"] = helmet.get("className")
 
+    def _attach_replay_evidence(self, results):
+        """Attach bounded trajectory metadata to actionable results without storing frames."""
+        for result in results or []:
+            if not _is_replay_event(result):
+                continue
+            track_id = result.get("trackId")
+            if track_id in (None, ""):
+                continue
+            history = self.track_histories.get(track_id) or self.track_histories.get(str(track_id)) or []
+            trajectory = [_replay_point(entry) for entry in history[-self.history_limit:]]
+            trajectory = [point for point in trajectory if point.get("center") or point.get("bbox")]
+            if not trajectory:
+                continue
+            result.setdefault("trajectory", trajectory)
+            result.setdefault("triggerPoint", trajectory[-1].get("center"))
+
     def _face_library_ready(self):
         if self.face_service is None or not hasattr(self.face_service, "status"):
             return False
@@ -289,6 +356,23 @@ def _extract_keypoints(detection):
     if isinstance(keypoints, list):
         return keypoints
     return None
+
+
+def _is_replay_event(result):
+    event_type = result.get("type") or result.get("eventType")
+    return event_type in REPLAY_EVENT_TYPES
+
+
+def _replay_point(entry):
+    point = {
+        "timestamp": entry.get("timestamp"),
+        "center": list(entry.get("center") or []),
+        "bbox": list(entry.get("bbox") or []),
+    }
+    for key in ("speed", "frameIndex", "keypoints"):
+        if key in entry:
+            point[key] = entry[key]
+    return {key: value for key, value in point.items() if value not in (None, [], {})}
 
 
 def _elapsed_seconds(previous_timestamp, current_timestamp):

@@ -79,7 +79,11 @@ class AIResultsReportTests(TestCase):
         sync_mock.assert_called_once()
         call = sync_mock.return_value.call_args
         self.assertEqual(call.args[0], f"realtime_{self.camera.id}")
-        self.assertEqual(call.args[1]["data"]["payload"]["eventType"], "face_recognized")
+        pushed_payload = call.args[1]["data"]["payload"]
+        self.assertEqual(pushed_payload["eventType"], "face_recognized")
+        self.assertEqual(pushed_payload["name"], "Employee 4")
+        self.assertEqual(pushed_payload["confidence"], 0.82)
+        self.assertEqual(pushed_payload["description"], "Employee 4 置信度 82.0%")
 
     def test_person_detection_cannot_spoof_actionable_event_type(self):
         response = self.client.post(
@@ -175,6 +179,204 @@ class AIResultsReportTests(TestCase):
         self.assertEqual(alert.event, event)
         self.assertEqual(alert.level, "high")
         self.assertEqual(alert.status, Alert.Status.PENDING)
+
+    def test_region_intrusion_alert_uses_region_name_without_track_id(self):
+        from unittest.mock import patch
+
+        with patch("apps.ai_results.views.async_to_sync") as sync_mock:
+            sync_mock.return_value.return_value = None
+            response = self.client.post(
+                "/api/ai-results/report/",
+                {
+                    "cameraId": self.camera.code,
+                    "frameId": "region-frame",
+                    "timestamp": "2026-07-07T10:02:00+08:00",
+                    "results": [
+                        {
+                            "type": "ZONE_WARNING",
+                            "eventType": "region_intrusion",
+                            "trackId": "t-49",
+                            "regionId": 13,
+                            "zoneName": "一号车间入口禁区",
+                            "confidence": 0.869,
+                        }
+                    ],
+                },
+                format="json",
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["data"]["acceptedResults"], 1)
+        event = Event.objects.get()
+        alert = Alert.objects.get()
+        self.assertEqual(event.event_type, "region_intrusion")
+        self.assertEqual(alert.description, "区域：一号车间入口禁区")
+        self.assertNotIn("trackId", alert.description)
+        pushed_payload = sync_mock.return_value.call_args.args[1]["data"]["payload"]
+        self.assertEqual(pushed_payload["eventType"], "region_intrusion")
+        self.assertEqual(pushed_payload["zoneName"], "一号车间入口禁区")
+        self.assertEqual(pushed_payload["regionName"], "一号车间入口禁区")
+        self.assertEqual(pushed_payload["regionId"], 13)
+        self.assertEqual(pushed_payload["description"], "区域：一号车间入口禁区")
+
+    def test_region_intrusion_defaults_to_medium_and_is_time_deduplicated(self):
+        def report(timestamp, track_id="t-49"):
+            return self.client.post(
+                "/api/ai-results/report/",
+                {
+                    "cameraId": self.camera.code,
+                    "frameId": f"region-{timestamp}",
+                    "timestamp": timestamp,
+                    "results": [
+                        {
+                            "type": "ZONE_WARNING",
+                            "eventType": "region_intrusion",
+                            "trackId": track_id,
+                            "regionId": 13,
+                            "regionName": "Restricted Gate",
+                            "level": "high",
+                            "confidence": 0.9,
+                        }
+                    ],
+                },
+                format="json",
+            )
+
+        first = report("2026-07-07T10:02:00+08:00")
+        duplicate = report("2026-07-07T10:02:10+08:00", track_id="t-fragmented")
+        after_cooldown = report("2026-07-07T10:02:21+08:00")
+
+        self.assertEqual(first.data["data"]["acceptedResults"], 1)
+        self.assertEqual(duplicate.data["data"]["acceptedResults"], 0)
+        self.assertEqual(duplicate.data["data"]["rejectedResults"], 1)
+        self.assertEqual(after_cooldown.data["data"]["acceptedResults"], 1)
+        self.assertEqual(Event.objects.filter(event_type="region_intrusion").count(), 2)
+        self.assertTrue(all(event.severity == "medium" for event in Event.objects.filter(event_type="region_intrusion")))
+        self.assertTrue(all(alert.level == "medium" for alert in Alert.objects.filter(event_type="region_intrusion")))
+
+    def test_region_dwell_defaults_to_high_and_uses_longer_cooldown(self):
+        def report(timestamp):
+            return self.client.post(
+                "/api/ai-results/report/",
+                {
+                    "cameraId": self.camera.code,
+                    "frameId": f"dwell-{timestamp}",
+                    "timestamp": timestamp,
+                    "results": [
+                        {
+                            "type": "ZONE_WARNING",
+                            "eventType": "region_dwell",
+                            "trackId": "t-49",
+                            "regionId": 13,
+                            "regionName": "Restricted Gate",
+                            "durationSeconds": 30,
+                            "level": "medium",
+                            "confidence": 0.9,
+                        }
+                    ],
+                },
+                format="json",
+            )
+
+        first = report("2026-07-07T10:03:00+08:00")
+        duplicate = report("2026-07-07T10:03:59+08:00")
+        after_cooldown = report("2026-07-07T10:04:01+08:00")
+
+        self.assertEqual(first.data["data"]["acceptedResults"], 1)
+        self.assertEqual(duplicate.data["data"]["acceptedResults"], 0)
+        self.assertEqual(after_cooldown.data["data"]["acceptedResults"], 1)
+        self.assertEqual(Event.objects.filter(event_type="region_dwell").count(), 2)
+        self.assertTrue(all(event.severity == "high" for event in Event.objects.filter(event_type="region_dwell")))
+        self.assertTrue(all(alert.level == "high" for alert in Alert.objects.filter(event_type="region_dwell")))
+
+    def test_workstation_region_events_are_rejected_by_zone_type(self):
+        zone = Zone.objects.create(
+            camera=self.camera,
+            name="Assembly Workstation",
+            type=Zone.ZoneType.WORKSTATION,
+            points=[{"x": 0, "y": 0}, {"x": 100, "y": 0}, {"x": 100, "y": 100}],
+        )
+
+        response = self.client.post(
+            "/api/ai-results/report/",
+            {
+                "cameraId": self.camera.code,
+                "frameId": "workstation-region",
+                "timestamp": "2026-07-07T10:05:00+08:00",
+                "results": [
+                    {
+                        "type": "ZONE_WARNING",
+                        "eventType": "region_dwell",
+                        "trackId": "t-1",
+                        "regionId": zone.id,
+                        "regionName": zone.name,
+                        "regionType": "workstation",
+                        "durationSeconds": 30,
+                        "confidence": 0.9,
+                    }
+                ],
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["data"]["acceptedResults"], 0)
+        self.assertEqual(response.data["data"]["rejectedResults"], 1)
+        self.assertEqual(Event.objects.count(), 0)
+        self.assertEqual(Alert.objects.count(), 0)
+
+    def test_alert_detail_returns_replay_trajectory_region_and_media_placeholder(self):
+        response = self.client.post(
+            "/api/ai-results/report/",
+            {
+                "cameraId": self.camera.code,
+                "frameId": "replay-frame",
+                "timestamp": "2026-07-07T10:03:00+08:00",
+                "results": [
+                    {
+                        "type": "ZONE_WARNING",
+                        "eventType": "region_intrusion",
+                        "trackId": "t-49",
+                        "mediaEventId": "local-media-1",
+                        "regionId": 13,
+                        "regionName": "Restricted Gate",
+                        "regionPoints": [{"x": 10, "y": 10}, {"x": 90, "y": 10}, {"x": 90, "y": 90}],
+                        "trajectory": [
+                            {
+                                "timestamp": "2026-07-07T10:02:59+08:00",
+                                "center": [20, 30],
+                                "bbox": [10, 10, 30, 50],
+                                "speed": 4.2,
+                                "frameIndex": 12,
+                            }
+                        ],
+                        "triggerPoint": [20, 30],
+                        "keyframePath": "event_media/cam-a/replay-frame.jpg",
+                        "confidence": 0.869,
+                    }
+                ],
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        alert_id = response.data["data"]["alertIds"][0]
+        accepted_event = response.data["data"]["acceptedEvents"][0]
+        self.assertEqual(accepted_event["eventType"], "region_intrusion")
+        self.assertEqual(accepted_event["mediaEventId"], "local-media-1")
+
+        detail_response = self.client.get(f"/api/alerts/{alert_id}/detail/")
+
+        self.assertEqual(detail_response.status_code, 200)
+        detail = detail_response.data["data"]
+        self.assertEqual(detail["event"]["eventType"], "region_intrusion")
+        self.assertEqual(detail["event"]["trackId"], "t-49")
+        self.assertEqual(detail["replay"]["region"]["name"], "Restricted Gate")
+        self.assertEqual(detail["replay"]["region"]["points"][0], [10.0, 10.0])
+        self.assertEqual(detail["replay"]["trajectory"][0]["center"], [20.0, 30.0])
+        self.assertEqual(detail["replay"]["triggerPoint"], [20.0, 30.0])
+        self.assertEqual(detail["replay"]["media"]["keyframePath"], "event_media/cam-a/replay-frame.jpg")
+        self.assertNotIn("frame", detail["event"]["payload"])
 
     def test_report_endpoint_rejects_invalid_payload(self):
         response = self.client.post(

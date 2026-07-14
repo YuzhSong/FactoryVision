@@ -25,15 +25,33 @@ def _parse_size(value: str, default: tuple[int, int]):
         return default
 
 
+def _parse_csv(value: str, default: list[str]):
+    items = [item.strip() for item in value.split(",") if item.strip()]
+    return items or default
+
+
 class Config:
     SERVICE_NAME = "smart-factory-ai-service"
     HOST = os.getenv("AI_SERVICE_HOST", "0.0.0.0")
     PORT = int(os.getenv("AI_SERVICE_PORT", "9000"))
+    CORS_ORIGINS = _parse_csv(
+        os.getenv(
+            "AI_SERVICE_CORS_ORIGINS",
+            "http://127.0.0.1:5173,http://localhost:5173,https://webrtc.rainycode.cn,https://webrtc.rainycode.cn:8443",
+        ),
+        [
+            "http://127.0.0.1:5173",
+            "http://localhost:5173",
+            "https://webrtc.rainycode.cn",
+            "https://webrtc.rainycode.cn:8443",
+        ],
+    )
     # Reloading starts a parent/child process pair and makes local stop/restart unreliable.
     DEBUG = os.getenv("AI_SERVICE_DEBUG", "False").lower() == "true"
     BACKEND_API_BASE_URL = os.getenv("BACKEND_API_BASE_URL", "http://127.0.0.1:8000/api")
     BACKEND_API_TOKEN = os.getenv("BACKEND_API_TOKEN", "")
     BACKEND_TIMEOUT_SECONDS = float(os.getenv("BACKEND_TIMEOUT_SECONDS", "5"))
+    BACKEND_TLS_VERIFY = os.getenv("BACKEND_TLS_VERIFY", "True").lower() not in {"0", "false", "no", "off"}
     BACKEND_CAMERA_LIST_PATH = os.getenv("BACKEND_CAMERA_LIST_PATH", "/cameras/list/")
     BACKEND_EMPLOYEE_LIST_PATH = os.getenv("BACKEND_EMPLOYEE_LIST_PATH", "/employees/list/")
     # Face vectors are fetched through a dedicated AI-to-backend endpoint, never a browser JWT.
@@ -73,13 +91,14 @@ class Config:
     HELMET_IOU_THRESHOLD = float(os.getenv("HELMET_IOU_THRESHOLD", "0.45"))
     HELMET_WARNING_THRESHOLD = float(os.getenv("HELMET_WARNING_THRESHOLD", "0.6"))
     HELMET_MATCH_UPPER_RATIO = float(os.getenv("HELMET_MATCH_UPPER_RATIO", "0.65"))
+    HELMET_MAX_DET = int(os.getenv("HELMET_MAX_DET", "300"))
     HELMET_CLASS_IDS = tuple(
         int(value.strip())
-        for value in os.getenv("HELMET_CLASS_IDS", "1,2").split(",")
+        for value in os.getenv("HELMET_CLASS_IDS", "3,8").split(",")
         if value.strip()
     )
-    HELMET_CLASS_ID = int(os.getenv("HELMET_CLASS_ID", "1"))
-    NO_HELMET_CLASS_ID = int(os.getenv("NO_HELMET_CLASS_ID", "2"))
+    HELMET_CLASS_ID = int(os.getenv("HELMET_CLASS_ID", "3"))
+    NO_HELMET_CLASS_ID = int(os.getenv("NO_HELMET_CLASS_ID", "8"))
 
     FACE_MODEL_NAME = os.getenv("FACE_MODEL_NAME", "buffalo_l")
     FACE_DETECTION_SIZE = _parse_size(os.getenv("FACE_DETECTION_SIZE", "640,640"), (640, 640))
@@ -121,8 +140,8 @@ class Config:
     # Run one expensive model per analysis tick by default. The intervals are based on
     # processed output frames, so they remain stable when capture drops source frames.
     PERSON_DETECT_INTERVAL = int(os.getenv("PERSON_DETECT_INTERVAL", "5"))
-    HELMET_DETECT_INTERVAL = int(os.getenv("HELMET_DETECT_INTERVAL", "8"))
-    HELMET_DETECT_OFFSET = int(os.getenv("HELMET_DETECT_OFFSET", "4"))
+    HELMET_DETECT_INTERVAL = int(os.getenv("HELMET_DETECT_INTERVAL", "4"))
+    HELMET_DETECT_OFFSET = int(os.getenv("HELMET_DETECT_OFFSET", "2"))
     STREAM_INCLUDE_FACES_DEFAULT = os.getenv("STREAM_INCLUDE_FACES_DEFAULT", "False").lower() == "true"
     FACE_DETECT_INTERVAL = int(os.getenv("FACE_RECOGNITION_INTERVAL", os.getenv("FACE_DETECT_INTERVAL", "30")))
     FACE_DETECT_OFFSET = int(os.getenv("FACE_DETECT_OFFSET", "2"))
@@ -134,7 +153,9 @@ class Config:
     EVENT_MEDIA_PRE_SECONDS = float(os.getenv("EVENT_MEDIA_PRE_SECONDS", "3"))
     EVENT_MEDIA_POST_SECONDS = float(os.getenv("EVENT_MEDIA_POST_SECONDS", "3"))
     EVENT_MEDIA_COOLDOWN_SECONDS = float(os.getenv("EVENT_MEDIA_COOLDOWN_SECONDS", "10"))
-    MAX_HISTORY_POINTS = int(os.getenv("MAX_HISTORY_POINTS", "5"))
+    # Keep real detector observations before and after a posture transition. Cached
+    # display frames are deliberately excluded from this history.
+    MAX_HISTORY_POINTS = int(os.getenv("MAX_HISTORY_POINTS", "12"))
     INPUT_WIDTH = int(os.getenv("INPUT_WIDTH", "640"))
     INPUT_HEIGHT = int(os.getenv("INPUT_HEIGHT", "360"))
     RUNNING_SPEED_THRESHOLD = float(os.getenv("RUNNING_SPEED_THRESHOLD", "120.0"))
@@ -145,8 +166,10 @@ class Config:
     FACE_RECOGNIZED_COOLDOWN_SECONDS = float(os.getenv("FACE_RECOGNIZED_COOLDOWN_SECONDS", "60"))
     ZONE_MIN_STAY_SECONDS = float(os.getenv("ZONE_MIN_STAY_SECONDS", "5"))
     ZONE_STATE_TTL_SECONDS = float(os.getenv("ZONE_STATE_TTL_SECONDS", "30"))
+    ZONE_ENTER_CONFIRM_SECONDS = float(os.getenv("ZONE_ENTER_CONFIRM_SECONDS", "0.3"))
+    ZONE_EXIT_CONFIRM_SECONDS = float(os.getenv("ZONE_EXIT_CONFIRM_SECONDS", "1.0"))
     ZONE_REFRESH_INTERVAL_SECONDS = float(os.getenv("ZONE_REFRESH_INTERVAL_SECONDS", "10"))
-    HELMET_EVENT_COOLDOWN_SECONDS = float(os.getenv("HELMET_EVENT_COOLDOWN_SECONDS", "20"))
+    HELMET_EVENT_COOLDOWN_SECONDS = float(os.getenv("HELMET_EVENT_COOLDOWN_SECONDS", "10"))
     HELMET_RESULT_CACHE_TTL_SECONDS = float(os.getenv("HELMET_RESULT_CACHE_TTL_SECONDS", "3"))
     TRACK_STATE_TTL_SECONDS = float(os.getenv("TRACK_STATE_TTL_SECONDS", "30"))
     FALL_RATIO_THRESHOLD = float(os.getenv("FALL_RATIO_THRESHOLD", "1.2"))
@@ -154,6 +177,12 @@ class Config:
     FALL_MIN_CONFIDENCE = float(os.getenv("FALL_MIN_CONFIDENCE", "0.6"))
     FALL_POSE_HORIZONTAL_ANGLE_THRESHOLD = float(os.getenv("FALL_POSE_HORIZONTAL_ANGLE_THRESHOLD", "35"))
     FALL_POSE_MIN_KEYPOINT_CONFIDENCE = float(os.getenv("FALL_POSE_MIN_KEYPOINT_CONFIDENCE", "0.3"))
+    FALL_BBOX_EDGE_MARGIN_RATIO = float(os.getenv("FALL_BBOX_EDGE_MARGIN_RATIO", "0.02"))
+    FALL_MIN_CENTER_DROP_RATIO = float(os.getenv("FALL_MIN_CENTER_DROP_RATIO", "0.15"))
+    FALL_MIN_HEIGHT_DROP_RATIO = float(os.getenv("FALL_MIN_HEIGHT_DROP_RATIO", "0.2"))
+    FALL_MAX_TRANSITION_SECONDS = float(os.getenv("FALL_MAX_TRANSITION_SECONDS", "2.0"))
+    FALL_RECOVER_FRAMES = int(os.getenv("FALL_RECOVER_FRAMES", "2"))
+    FALL_STATE_TTL_SECONDS = float(os.getenv("FALL_STATE_TTL_SECONDS", str(TRACK_STATE_TTL_SECONDS)))
     EMPLOYEE_ABSENCE_TIMEOUT_SECONDS = float(os.getenv("EMPLOYEE_ABSENCE_TIMEOUT_SECONDS", "60"))
     EMPLOYEE_PRESENCE_MIN_SIMILARITY = float(os.getenv("EMPLOYEE_PRESENCE_MIN_SIMILARITY", "0"))
     STRANGER_CONFIRM_FRAMES = int(os.getenv("STRANGER_CONFIRM_FRAMES", "3"))

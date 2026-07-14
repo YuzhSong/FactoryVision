@@ -7,7 +7,9 @@ import { alertsApi } from '../api/modules'
 
 const drawerVisible = ref(false)
 const selectedAlert = ref(null)
+const selectedDetail = ref(null)
 const loading = ref(false)
+const detailLoading = ref(false)
 const handlingStatus = ref('')
 const alertRows = ref([])
 const alertTotal = ref(0)
@@ -20,19 +22,37 @@ const filters = reactive({
   pageSize: 20,
 })
 
-const alertTableRows = computed(() => alertRows.value.map((alert) => ({
-  ...alert,
-  camera: alert.cameraName || alert.cameraId || '未关联摄像头',
-  type: alert.eventType,
-  level: alert.severity,
-  time: formatDateTime(alert.occurredAt),
-})))
+const alertTableRows = computed(() => alertRows.value.map(normalizeAlertRow))
+const replay = computed(() => selectedDetail.value?.replay || {})
+const eventDetail = computed(() => selectedDetail.value?.event || {})
+const mediaVersion = computed(() => {
+  const media = replay.value?.media || {}
+  return media.mediaEventId || media.eventId || eventDetail.value?.id || eventDetail.value?.eventId || Date.now()
+})
+const keyframePreviewUrl = computed(() => withMediaVersion(replay.value?.media?.keyframeUrl, mediaVersion.value))
+const clipPreviewUrl = computed(() => withMediaVersion(replay.value?.media?.clipUrl, mediaVersion.value))
+
+function normalizeAlertRow(alert) {
+  return {
+    ...alert,
+    camera: alert.cameraName || alert.cameraId || '未关联摄像头',
+    type: alert.eventType,
+    level: alert.severity,
+    time: formatDateTime(alert.occurredAt),
+  }
+}
 
 function formatDateTime(value) {
-  if (!value) return '无'
+  if (!value) return '暂无'
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return value
   return date.toLocaleString('zh-CN', { hour12: false })
+}
+
+function withMediaVersion(url, version) {
+  if (!url) return ''
+  const separator = String(url).includes('?') ? '&' : '?'
+  return `${url}${separator}v=${encodeURIComponent(version || Date.now())}`
 }
 
 function getApiErrorMessage(error, fallback) {
@@ -87,9 +107,19 @@ function queryAlerts() {
   loadAlerts()
 }
 
-function openDetail(row) {
+async function openDetail(row) {
   selectedAlert.value = row
+  selectedDetail.value = null
   drawerVisible.value = true
+  detailLoading.value = true
+  try {
+    const response = await alertsApi.detail(row.id)
+    selectedDetail.value = response?.data || null
+  } catch (error) {
+    ElMessage.error(getApiErrorMessage(error, '告警详情加载失败'))
+  } finally {
+    detailLoading.value = false
+  }
 }
 
 async function handleAlert(status) {
@@ -100,12 +130,9 @@ async function handleAlert(status) {
     const updated = response?.data
     if (updated) {
       alertRows.value = alertRows.value.map((alert) => (alert.id === updated.id ? updated : alert))
-      selectedAlert.value = {
-        ...updated,
-        camera: updated.cameraName || updated.cameraId || '未关联摄像头',
-        type: updated.eventType,
-        level: updated.severity,
-        time: formatDateTime(updated.occurredAt),
+      selectedAlert.value = normalizeAlertRow(updated)
+      if (selectedDetail.value?.alert) {
+        selectedDetail.value.alert = updated
       }
     }
     ElMessage.success('告警状态已更新')
@@ -141,23 +168,25 @@ onMounted(() => {
         <el-date-picker v-model="filters.alertDate" type="date" value-format="YYYY-MM-DD" placeholder="选择日期" clearable />
         <el-button type="primary" @click="queryAlerts">查询</el-button>
       </div>
-      <el-table v-loading="loading" :data="alertTableRows" stripe class="stable-alert-table" table-layout="fixed">
-        <el-table-column prop="title" label="告警标题" width="260" show-overflow-tooltip>
-          <template #default="{ row }"><span class="table-cell-ellipsis">{{ row.title }}</span></template>
-        </el-table-column>
-        <el-table-column prop="camera" label="摄像头" width="160" show-overflow-tooltip>
-          <template #default="{ row }"><span class="table-cell-ellipsis">{{ row.camera }}</span></template>
-        </el-table-column>
-        <el-table-column prop="type" label="类型" width="150" show-overflow-tooltip>
-          <template #default="{ row }"><span class="table-cell-ellipsis">{{ row.type }}</span></template>
-        </el-table-column>
-        <el-table-column label="等级" width="100"><template #default="{ row }"><StatusTag :value="row.level" /></template></el-table-column>
-        <el-table-column label="状态" width="110"><template #default="{ row }"><StatusTag :value="row.status" /></template></el-table-column>
-        <el-table-column prop="time" label="时间" width="180" />
-        <el-table-column label="操作" width="120">
-          <template #default="{ row }"><el-button link type="primary" @click="openDetail(row)">查看</el-button></template>
-        </el-table-column>
-      </el-table>
+      <div class="alert-table-frame">
+        <el-table v-loading="loading" :data="alertTableRows" stripe class="stable-alert-table">
+          <el-table-column prop="title" label="告警标题" min-width="260" show-overflow-tooltip>
+            <template #default="{ row }"><span class="table-cell-ellipsis">{{ row.title }}</span></template>
+          </el-table-column>
+          <el-table-column prop="camera" label="摄像头" min-width="180" show-overflow-tooltip>
+            <template #default="{ row }"><span class="table-cell-ellipsis">{{ row.camera }}</span></template>
+          </el-table-column>
+          <el-table-column prop="type" label="类型" min-width="170" show-overflow-tooltip>
+            <template #default="{ row }"><span class="table-cell-ellipsis">{{ row.type }}</span></template>
+          </el-table-column>
+          <el-table-column label="等级" width="100"><template #default="{ row }"><StatusTag :value="row.level" /></template></el-table-column>
+          <el-table-column label="状态" width="110"><template #default="{ row }"><StatusTag :value="row.status" /></template></el-table-column>
+          <el-table-column prop="time" label="时间" min-width="180" />
+          <el-table-column label="操作" width="120" fixed="right">
+            <template #default="{ row }"><el-button link type="primary" @click="openDetail(row)">查看</el-button></template>
+          </el-table-column>
+        </el-table>
+      </div>
       <el-empty v-if="!loading && alertTableRows.length === 0" description="暂无告警数据" />
       <el-pagination
         v-model:current-page="filters.page"
@@ -169,23 +198,59 @@ onMounted(() => {
       />
     </div>
 
-    <el-drawer v-model="drawerVisible" title="告警详情" size="420px">
+    <el-drawer v-model="drawerVisible" title="告警详情" size="520px">
       <template v-if="selectedAlert">
-        <el-descriptions :column="1" border>
-          <el-descriptions-item label="标题">{{ selectedAlert.title }}</el-descriptions-item>
-          <el-descriptions-item label="摄像头">{{ selectedAlert.camera }}</el-descriptions-item>
-          <el-descriptions-item label="类型">{{ selectedAlert.type }}</el-descriptions-item>
-          <el-descriptions-item label="等级"><StatusTag :value="selectedAlert.level" /></el-descriptions-item>
-          <el-descriptions-item label="状态"><StatusTag :value="selectedAlert.status" /></el-descriptions-item>
-          <el-descriptions-item label="时间">{{ selectedAlert.time }}</el-descriptions-item>
-          <el-descriptions-item label="说明">{{ selectedAlert.description || '无' }}</el-descriptions-item>
-        </el-descriptions>
-        <el-divider />
-        <div class="drawer-actions">
-          <el-button type="primary" plain :loading="handlingStatus === 'pending'" @click="handleAlert('pending')">确认</el-button>
-          <el-button type="warning" plain :loading="handlingStatus === 'processing'" @click="handleAlert('processing')">处理中</el-button>
-          <el-button type="danger" plain :loading="handlingStatus === 'closed'" @click="handleAlert('closed')">关闭</el-button>
-        </div>
+        <el-skeleton v-if="detailLoading" :rows="8" animated />
+        <template v-else>
+          <el-descriptions :column="1" border>
+            <el-descriptions-item label="标题">{{ selectedAlert.title }}</el-descriptions-item>
+            <el-descriptions-item label="摄像头">{{ selectedAlert.camera }}</el-descriptions-item>
+            <el-descriptions-item label="类型">{{ selectedAlert.type }}</el-descriptions-item>
+            <el-descriptions-item label="等级"><StatusTag :value="selectedAlert.level" /></el-descriptions-item>
+            <el-descriptions-item label="状态"><StatusTag :value="selectedAlert.status" /></el-descriptions-item>
+            <el-descriptions-item label="时间">{{ selectedAlert.time }}</el-descriptions-item>
+            <el-descriptions-item label="说明">{{ selectedAlert.description || '暂无' }}</el-descriptions-item>
+            <el-descriptions-item label="Track">{{ eventDetail.trackId || '暂无' }}</el-descriptions-item>
+            <el-descriptions-item label="置信度">
+              {{ eventDetail.confidence != null ? `${(Number(eventDetail.confidence) * 100).toFixed(1)}%` : '暂无' }}
+            </el-descriptions-item>
+          </el-descriptions>
+
+          <el-divider content-position="left">媒体证据</el-divider>
+          <div v-if="keyframePreviewUrl || clipPreviewUrl" class="media-preview">
+            <img
+              v-if="keyframePreviewUrl"
+              class="media-preview__image"
+              :src="keyframePreviewUrl"
+              alt="事件关键帧"
+            />
+            <video
+              v-if="clipPreviewUrl"
+              class="media-preview__video"
+              :src="clipPreviewUrl"
+              controls
+              muted
+              playsinline
+            />
+          </div>
+          <el-descriptions :column="1" border>
+            <el-descriptions-item label="关键帧">
+              {{ replay.media?.keyframeUrl || replay.media?.keyframePath || '暂无' }}
+            </el-descriptions-item>
+            <el-descriptions-item label="短视频">
+              {{ replay.media?.clipUrl || replay.media?.clipPath || '第二阶段接入' }}
+            </el-descriptions-item>
+          </el-descriptions>
+
+          <el-divider content-position="left">事件日志</el-divider>
+          <pre class="payload-log">{{ JSON.stringify(eventDetail.payload || {}, null, 2) }}</pre>
+
+          <div class="drawer-actions">
+            <el-button type="primary" plain :loading="handlingStatus === 'pending'" @click="handleAlert('pending')">确认</el-button>
+            <el-button type="warning" plain :loading="handlingStatus === 'processing'" @click="handleAlert('processing')">处理中</el-button>
+            <el-button type="danger" plain :loading="handlingStatus === 'closed'" @click="handleAlert('closed')">关闭</el-button>
+          </div>
+        </template>
       </template>
     </el-drawer>
   </div>
@@ -203,8 +268,17 @@ onMounted(() => {
   margin-top: 16px;
 }
 
+.alert-table-frame {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
 .stable-alert-table {
   width: 100%;
+  min-width: 1120px;
 }
 
 .stable-alert-table :deep(.el-table__inner-wrapper),
@@ -214,11 +288,42 @@ onMounted(() => {
   max-width: 100%;
 }
 
+.stable-alert-table :deep(.el-table__body-wrapper) {
+  max-height: clamp(320px, calc(100vh - 360px), 620px);
+  overflow-y: auto;
+}
+
 .table-cell-ellipsis {
   display: block;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.payload-log {
+  max-height: 220px;
+  overflow: auto;
+  padding: 12px;
+  border-radius: 10px;
+  background: #0f172a;
+  color: #dbeafe;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.media-preview {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.media-preview__image,
+.media-preview__video {
+  width: 100%;
+  max-height: 280px;
+  object-fit: contain;
+  border-radius: 12px;
+  background: #0f172a;
 }
 </style>
