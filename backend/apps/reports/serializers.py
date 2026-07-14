@@ -4,6 +4,9 @@ from rest_framework import serializers
 class ReportListItemSerializer(serializers.Serializer):
     id = serializers.IntegerField()
     reportDate = serializers.DateField()
+    periodLabel = serializers.CharField()
+    periodStart = serializers.DateTimeField()
+    periodEnd = serializers.DateTimeField()
     alertCount = serializers.IntegerField()
     highAlertCount = serializers.IntegerField()
     pendingAlertCount = serializers.IntegerField()

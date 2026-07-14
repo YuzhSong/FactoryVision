@@ -5,7 +5,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from django.conf import settings
 from django.utils import timezone
 
-from .services import generate_monitor_report
+from .services import generate_latest_period_report
 
 _scheduler = None
 
@@ -19,11 +19,11 @@ def start_report_scheduler():
 
     _scheduler = BackgroundScheduler(timezone=settings.TIME_ZONE)
     _scheduler.add_job(
-        generate_monitor_report,
+        generate_latest_period_report,
         trigger="cron",
-        hour=12,
+        hour="0,6,12,18",
         minute=0,
-        id="daily-monitor-report",
+        id="six-hour-monitor-report",
         replace_existing=True,
         misfire_grace_time=3600,
     )

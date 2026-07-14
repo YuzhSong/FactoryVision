@@ -14,7 +14,7 @@ from common.response import api_response
 
 from .models import MonitorReport
 from .serializers import ReportDetailSerializer, ReportListItemSerializer
-from .services import generate_monitor_report
+from .services import REPORT_PERIODS, generate_monitor_report, period_for_label
 
 DEFAULT_PAGE_SIZE = 20
 MAX_PAGE_SIZE = 100
@@ -32,6 +32,9 @@ def _serialize_report(report):
     return {
         "id": report.id,
         "reportDate": report.report_date,
+        "periodLabel": report.period_label,
+        "periodStart": report.period_start,
+        "periodEnd": report.period_end,
         "alertCount": report.alert_count,
         "highAlertCount": report.high_alert_count,
         "pendingAlertCount": report.pending_alert_count,
@@ -58,6 +61,8 @@ def _alert_items(report):
             "cameraName": alert.camera.name if alert.camera else "未关联摄像头",
             "occurredAt": alert.occurred_at.isoformat(),
             "description": alert.description,
+            "keyframePath": _alert_keyframe_path(alert),
+            "keyframeUrl": _media_url(_alert_keyframe_path(alert)),
         }
         for alert in alerts
     ]
@@ -125,6 +130,9 @@ def report_list_view(request):
                 status=status.HTTP_400_BAD_REQUEST,
             )
         reports = reports.filter(report_date=parsed_date)
+    period_label = request.query_params.get("periodLabel")
+    if period_label:
+        reports = reports.filter(period_label=period_label)
     total = reports.count()
     start = (page - 1) * page_size
     items = [_serialize_report(report) for report in reports[start:start + page_size]]
@@ -142,6 +150,7 @@ def report_list_view(request):
 @permission_classes([IsAuthenticated])
 def report_generate_view(request):
     report_date_value = request.data.get("reportDate") if isinstance(request.data, dict) else None
+    period_label = request.data.get("periodLabel") if isinstance(request.data, dict) else None
     try:
         report_date = date.fromisoformat(report_date_value) if report_date_value else None
     except ValueError:
@@ -160,8 +169,27 @@ def report_generate_view(request):
             status=status.HTTP_400_BAD_REQUEST,
         )
 
+    if period_label and period_label not in REPORT_PERIODS:
+        return api_response(
+            code=400,
+            message="periodLabel 必须是 00:00-06:00、06:00-12:00、12:00-18:00 或 18:00-24:00",
+            data=None,
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
     target_date = report_date or today
-    report = generate_monitor_report(target_date, end_at_now=target_date == today)
+    if period_label:
+        period_start, period_end, _label = period_for_label(target_date, period_label)
+        if period_end > timezone.now():
+            return api_response(
+                code=400,
+                message="不能生成尚未结束时段的报告",
+                data=None,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        report = generate_monitor_report(target_date, period_label=period_label)
+    else:
+        report = generate_monitor_report()
     detail = {**_serialize_report(report), "content": report.content, "alerts": _alert_items(report)}
     return api_response(data=ReportDetailSerializer(detail).data, message="success")
 
@@ -207,6 +235,28 @@ def report_download_view(_request, report_id):
     return FileResponse(
         path.open("rb"),
         as_attachment=True,
-        filename=f"monitor-report-{report.report_date.isoformat()}.docx",
+        filename=f"monitor-report-{report.report_date.isoformat()}-{report.period_label.replace(':', '')}.docx",
         content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     )
+
+
+def _alert_keyframe_path(alert):
+    candidates = [
+        alert.snapshot_path,
+        getattr(alert.event, "snapshot_path", ""),
+    ]
+    payload = getattr(alert.event, "payload", {}) or {}
+    media = payload.get("media") if isinstance(payload, dict) else {}
+    if isinstance(media, dict):
+        candidates.extend([media.get("keyframePath"), media.get("keyframeUrl")])
+    if isinstance(payload, dict):
+        candidates.extend([payload.get("keyframePath"), payload.get("snapshotPath"), payload.get("snapshotUrl")])
+    return next((str(value).strip() for value in candidates if value), "")
+
+
+def _media_url(path):
+    if not path:
+        return ""
+    if str(path).startswith(("http://", "https://", "/")):
+        return str(path)
+    return f"{settings.MEDIA_URL.rstrip('/')}/{str(path).lstrip('/')}"

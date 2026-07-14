@@ -8,7 +8,8 @@ class MonitorReport(models.Model):
         GENERATED = "generated", "Generated"
         FAILED = "failed", "Failed"
 
-    report_date = models.DateField(unique=True, verbose_name="日报日期")
+    report_date = models.DateField(verbose_name="日报日期")
+    period_label = models.CharField(max_length=32, blank=True, default="", verbose_name="统计时段")
     period_start = models.DateTimeField(verbose_name="统计开始时间")
     period_end = models.DateTimeField(verbose_name="统计结束时间")
     alert_count = models.PositiveIntegerField(default=0, verbose_name="告警总数")
@@ -25,4 +26,7 @@ class MonitorReport(models.Model):
 
     class Meta:
         db_table = "monitor_report"
-        ordering = ["-report_date"]
+        ordering = ["-period_start", "-id"]
+        constraints = [
+            models.UniqueConstraint(fields=["period_start", "period_end"], name="uniq_monitor_report_period"),
+        ]
