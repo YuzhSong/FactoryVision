@@ -41,12 +41,17 @@ let lastDecodedFrames = 0
 let lastDecodedAt = 0
 let lastDecodedProgressAt = 0
 let watchdogRestarting = false
+let iceDisconnectedAt = 0
+let playbackRunId = 0
 
 const FLV_MAX_LATENCY_SECONDS = 0.9
 const FLV_MIN_REMAIN_SECONDS = 0.2
 const FLV_CHASE_TRIGGER_SECONDS = 0.9
 const FLV_CHASE_TARGET_SECONDS = 0.18
 const WEBRTC_JITTER_BUFFER_TARGET_SECONDS = 0.08
+const WEBRTC_FIRST_FRAME_TIMEOUT_MS = 20000
+const WEBRTC_STALL_TIMEOUT_MS = 10000
+const WEBRTC_DISCONNECTED_GRACE_MS = 5000
 
 const zoneForm = reactive({
   name: '',
@@ -198,6 +203,53 @@ const loadSrsSdk = () => {
 
 const wait = (milliseconds) => new Promise((resolve) => window.setTimeout(resolve, milliseconds))
 
+const waitForFirstVideoFrame = (video, runId) => new Promise((resolve, reject) => {
+  if (!video) {
+    reject(new Error('WebRTC video element is not ready'))
+    return
+  }
+
+  let settled = false
+  let timeoutTimer = null
+  let checkTimer = null
+  const hasFrame = () => video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA && video.videoWidth > 0
+  const cleanup = () => {
+    window.clearTimeout(timeoutTimer)
+    window.clearInterval(checkTimer)
+    video.removeEventListener('loadeddata', check)
+    video.removeEventListener('playing', check)
+    video.removeEventListener('resize', check)
+  }
+  const finish = (callback, value) => {
+    if (settled) return
+    settled = true
+    cleanup()
+    callback(value)
+  }
+  function check() {
+    if (runId !== playbackRunId) {
+      finish(reject, new Error('WebRTC playback request was cancelled'))
+      return
+    }
+    if (hasFrame()) {
+      finish(resolve)
+    }
+  }
+
+  if (hasFrame()) {
+    resolve()
+    return
+  }
+
+  video.addEventListener('loadeddata', check)
+  video.addEventListener('playing', check)
+  video.addEventListener('resize', check)
+  checkTimer = window.setInterval(check, 250)
+  timeoutTimer = window.setTimeout(() => {
+    finish(reject, new Error('WebRTC 20 秒内未收到首帧，请手动重连或使用 FLV 兼容'))
+  }, WEBRTC_FIRST_FRAME_TIMEOUT_MS)
+})
+
 const deriveOutputUrl = (camera) => {
   const processedUrl = `${camera?.processedStreamUrl || ''}`.trim()
   if (processedUrl.startsWith('rtmp://') || processedUrl.startsWith('rtmps://')) {
@@ -267,6 +319,7 @@ const resetPlaybackStats = () => {
   lastDecodedAt = 0
   lastDecodedProgressAt = 0
   watchdogRestarting = false
+  iceDisconnectedAt = 0
 }
 
 const getPeerConnection = () => player?.pc || player?.peerConnection || null
@@ -357,10 +410,21 @@ const startPlaybackWatchdog = () => {
     if (playbackMode.value !== 'webrtc' || playbackStatus.value !== 'connected' || watchdogRestarting) return
     const video = videoRef.value
     const pc = getPeerConnection()
-    const iceFailed = ['failed', 'disconnected', 'closed'].includes(pc?.iceConnectionState)
-    const stalled = video && video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA
-    const noDecodedFrames = lastDecodedProgressAt > 0 && performance.now() - lastDecodedProgressAt > 2500
-    if (!iceFailed && !stalled && !noDecodedFrames) return
+    const now = performance.now()
+    const iceState = pc?.iceConnectionState
+    const iceFailed = ['failed', 'closed'].includes(iceState)
+    if (iceState === 'disconnected') {
+      iceDisconnectedAt = iceDisconnectedAt || now
+    } else {
+      iceDisconnectedAt = 0
+    }
+    const disconnectedTooLong = iceDisconnectedAt > 0 && now - iceDisconnectedAt > WEBRTC_DISCONNECTED_GRACE_MS
+    const videoStarved = video
+      && video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA
+      && lastDecodedProgressAt > 0
+      && now - lastDecodedProgressAt > WEBRTC_STALL_TIMEOUT_MS
+    const noDecodedFrames = lastDecodedProgressAt > 0 && now - lastDecodedProgressAt > WEBRTC_STALL_TIMEOUT_MS
+    if (!iceFailed && !disconnectedTooLong && !videoStarved && !noDecodedFrames) return
 
     watchdogRestarting = true
     playbackMessage.value = 'WebRTC stalled, reconnecting...'
@@ -383,6 +447,7 @@ const stopPlaybackWatchdog = () => {
 }
 
 const stopPlayback = () => {
+  playbackRunId += 1
   stopLiveLatencyChasing()
   stopWebRtcStatsPolling()
   stopPlaybackWatchdog()
@@ -416,8 +481,9 @@ const stopLiveLatencyChasing = () => {
   }
 }
 
-const startRtcPlayback = async () => {
+const startRtcPlayback = async (runId) => {
   await loadSrsSdk()
+  if (runId !== playbackRunId) return
   player = new window.SrsRtcPlayerAsync()
   if (videoRef.value) {
     videoRef.value.srcObject = player.stream
@@ -425,7 +491,11 @@ const startRtcPlayback = async () => {
   }
   const playUrl = normalizeSrsWebRtcUrl(detectedRtcUrl.value)
   await player.play(playUrl)
+  if (runId !== playbackRunId) return
   applyReceiverLowLatencyHints()
+  playbackMessage.value = 'WebRTC 已连接，正在等待首帧...'
+  await waitForFirstVideoFrame(videoRef.value, runId)
+  if (runId !== playbackRunId) return
   lastDecodedProgressAt = performance.now()
   playbackStatus.value = 'connected'
   playbackMode.value = 'webrtc'
@@ -439,6 +509,7 @@ const startRtcPlayback = async () => {
 const startPlayback = async (options = {}) => {
   const { ensureStream = false, allowFlvFallback = false } = options
   stopPlayback()
+  const runId = ++playbackRunId
   const playUrl = detectedFlvUrl.value
   if (!playUrl && !detectedRtcUrl.value) {
     playbackStatus.value = 'idle'
@@ -452,12 +523,14 @@ const startPlayback = async (options = {}) => {
   try {
     if (ensureStream) {
       await ensureProcessedStream()
+      if (runId !== playbackRunId) return
     }
     if (detectedRtcUrl.value) {
       try {
-        await startRtcPlayback()
+        await startRtcPlayback(runId)
         return
       } catch (rtcError) {
+        if (runId !== playbackRunId) return
         if (!allowFlvFallback) {
           throw new Error(`WebRTC playback failed: ${rtcError.message}`)
         }
@@ -465,6 +538,7 @@ const startPlayback = async (options = {}) => {
       }
     }
 
+    if (runId !== playbackRunId) return
     await loadMpegtsSdk()
     if (!mpegts.getFeatureList().mseLivePlayback) throw new Error('当前浏览器不支持 HTTP-FLV 直播播放')
     player = mpegts.createPlayer({
@@ -484,6 +558,7 @@ const startPlayback = async (options = {}) => {
     playbackMessage.value = `正在播放 ${playUrl}`
     startLiveLatencyChasing()
   } catch (error) {
+    if (runId !== playbackRunId) return
     playbackStatus.value = 'error'
     playbackMessage.value = error.message
     stopPlayback()

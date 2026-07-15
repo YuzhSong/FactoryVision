@@ -89,6 +89,37 @@ class FallDetectorTests(unittest.TestCase):
         self.assertFalse(result["isFall"])
         self.assertEqual(result["evidence"]["rejectionReason"], "insufficient_history")
 
+    def test_initial_horizontal_posture_triggers_without_upright_baseline(self):
+        detector = FallDetector(ratio_threshold=1.2, confirm_frames=3, min_confidence=0.4)
+        result = detector.detect(
+            _history(
+                [
+                    {"bbox": [10, 70, 90, 110]},
+                    {"bbox": [12, 70, 92, 110]},
+                    {"bbox": [14, 70, 94, 110]},
+                ]
+            )
+        )
+
+        self.assertTrue(result["isFall"])
+        self.assertIn("initial_horizontal_posture", result["evidence"]["triggerReasons"])
+        self.assertTrue(result["evidence"]["staticHorizontalPosture"]["isConfirmed"])
+
+    def test_initial_upright_posture_still_requires_a_fall_transition(self):
+        detector = FallDetector(ratio_threshold=1.2, confirm_frames=3, min_confidence=0.4)
+        result = detector.detect(
+            _history(
+                [
+                    {"bbox": [20, 10, 60, 110]},
+                    {"bbox": [22, 10, 62, 110]},
+                    {"bbox": [24, 10, 64, 110]},
+                ]
+            )
+        )
+
+        self.assertFalse(result["isFall"])
+        self.assertEqual(result["evidence"]["rejectionReason"], "not_consecutive")
+
     def test_bend_then_recover_does_not_trigger(self):
         detector = FallDetector(ratio_threshold=1.2, confirm_frames=3)
         result = detector.detect(
@@ -196,6 +227,23 @@ class FallDetectorTests(unittest.TestCase):
         self.assertTrue(result["isFall"])
         self.assertLess(result["evidence"]["latestRatio"], 1.2)
         self.assertIn("very_low_posture", result["evidence"]["triggerReasons"])
+
+    def test_sustained_low_height_can_trigger_without_horizontal_posture(self):
+        detector = FallDetector(ratio_threshold=1.2, confirm_frames=3, min_confidence=0.4)
+        result = detector.detect(
+            _history(
+                [
+                    {"bbox": [100, 10, 140, 160]},
+                    {"bbox": [100, 55, 140, 115]},
+                    {"bbox": [101, 55, 141, 115]},
+                    {"bbox": [102, 55, 142, 115]},
+                ]
+            )
+        )
+
+        self.assertTrue(result["isFall"])
+        self.assertFalse(result["evidence"]["sustainedLowPosture"]["hasHorizontalPosture"])
+        self.assertIn("sustained_low_posture", result["evidence"]["triggerReasons"])
 
     def test_partial_upper_body_box_does_not_trigger_sustained_low_posture(self):
         detector = FallDetector(ratio_threshold=1.2, confirm_frames=5)

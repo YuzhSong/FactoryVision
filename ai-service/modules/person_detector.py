@@ -123,46 +123,72 @@ class PersonDetector:
         self._next_track_number = 1
 
     def _assign_tracks(self, boxes):
-        """Assign YOLO boxes to existing or new track IDs by IoU."""
+        """Assign boxes by IoU, then bridge obvious upright/fallen shape transitions."""
         for track in self._tracks:
             track.missed_frames += 1
 
-        assignments = []
+        assignments_by_box = {}
         used_track_indexes = set()
+        used_box_indexes = set()
 
-        for box in boxes:
-            bbox = box[:4]
-            best_index = None
-            best_iou = 0.0
+        iou_candidates = []
+        for box_index, box in enumerate(boxes):
+            for track_index, track in enumerate(self._tracks):
+                overlap = _iou(box[:4], track.bbox)
+                if overlap >= self.track_iou_threshold:
+                    iou_candidates.append((overlap, box_index, track_index))
 
-            for index, track in enumerate(self._tracks):
-                if index in used_track_indexes:
-                    continue
-                overlap = _iou(bbox, track.bbox)
-                if overlap > best_iou:
-                    best_iou = overlap
-                    best_index = index
-
-            if best_index is not None and best_iou >= self.track_iou_threshold:
-                track = self._tracks[best_index]
-                track.bbox = bbox
-                track.missed_frames = 0
-                used_track_indexes.add(best_index)
-                assignments.append((track.track_id, box))
+        for _overlap, box_index, track_index in sorted(iou_candidates, reverse=True):
+            if box_index in used_box_indexes or track_index in used_track_indexes:
                 continue
+            _assign_existing_track(
+                self._tracks[track_index],
+                boxes[box_index],
+                box_index,
+                track_index,
+                assignments_by_box,
+                used_box_indexes,
+                used_track_indexes,
+            )
 
-            track = _Track(track_id=f"t-{self._next_track_number}", bbox=bbox)
+        transition_candidates = []
+        for box_index, box in enumerate(boxes):
+            if box_index in used_box_indexes:
+                continue
+            for track_index, track in enumerate(self._tracks):
+                if track_index in used_track_indexes:
+                    continue
+                distance = _fall_transition_distance(track.bbox, box[:4], track.missed_frames)
+                if distance is not None:
+                    transition_candidates.append((distance, box_index, track_index))
+
+        for _distance, box_index, track_index in sorted(transition_candidates):
+            if box_index in used_box_indexes or track_index in used_track_indexes:
+                continue
+            _assign_existing_track(
+                self._tracks[track_index],
+                boxes[box_index],
+                box_index,
+                track_index,
+                assignments_by_box,
+                used_box_indexes,
+                used_track_indexes,
+            )
+
+        for box_index, box in enumerate(boxes):
+            if box_index in used_box_indexes:
+                continue
+            track = _Track(track_id=f"t-{self._next_track_number}", bbox=box[:4])
             self._next_track_number += 1
             self._tracks.append(track)
-            used_track_indexes.add(len(self._tracks) - 1)
-            assignments.append((track.track_id, box))
+            assignments_by_box[box_index] = (track.track_id, box)
 
         self._tracks = [
             track
             for track in self._tracks
             if track.missed_frames <= self.max_missed_frames
         ]
-        return assignments
+        return [assignments_by_box[index] for index in range(len(boxes))]
 
 
 def _iou(box_a, box_b):
@@ -186,6 +212,74 @@ def _iou(box_a, box_b):
     if union_area <= 0:
         return 0.0
     return intersection_area / union_area
+
+
+def _assign_existing_track(
+    track,
+    box,
+    box_index,
+    track_index,
+    assignments_by_box,
+    used_box_indexes,
+    used_track_indexes,
+):
+    track.bbox = box[:4]
+    track.missed_frames = 0
+    assignments_by_box[box_index] = (track.track_id, box)
+    used_box_indexes.add(box_index)
+    used_track_indexes.add(track_index)
+
+
+def _fall_transition_distance(previous_bbox, current_bbox, missed_frames):
+    """Return normalized distance for an obvious upright-to-horizontal transition."""
+    if missed_frames > 3:
+        return None
+
+    previous = _valid_bbox(previous_bbox)
+    current = _valid_bbox(current_bbox)
+    if previous is None or current is None:
+        return None
+
+    px1, py1, px2, py2 = previous
+    cx1, cy1, cx2, cy2 = current
+    previous_width, previous_height = px2 - px1, py2 - py1
+    current_width, current_height = cx2 - cx1, cy2 - cy1
+    previous_ratio = previous_width / previous_height
+    current_ratio = current_width / current_height
+    changes_posture = (
+        previous_ratio <= 0.8 and current_ratio >= 1.2
+    ) or (
+        current_ratio <= 0.8 and previous_ratio >= 1.2
+    )
+    if not changes_posture:
+        return None
+
+    horizontal_overlap = min(px2, cx2) - max(px1, cx1)
+    vertical_overlap = min(py2, cy2) - max(py1, cy1)
+    if horizontal_overlap <= 0 or vertical_overlap <= 0:
+        return None
+
+    previous_center = ((px1 + px2) / 2, (py1 + py2) / 2)
+    current_center = ((cx1 + cx2) / 2, (cy1 + cy2) / 2)
+    center_distance = (
+        (current_center[0] - previous_center[0]) ** 2
+        + (current_center[1] - previous_center[1]) ** 2
+    ) ** 0.5
+    scale = max(previous_height, current_height, 1.0)
+    normalized_distance = center_distance / scale
+    return normalized_distance if normalized_distance <= 0.75 else None
+
+
+def _valid_bbox(bbox):
+    if not isinstance(bbox, (list, tuple)) or len(bbox) < 4:
+        return None
+    try:
+        x1, y1, x2, y2 = [float(value) for value in bbox[:4]]
+    except (TypeError, ValueError):
+        return None
+    if x2 <= x1 or y2 <= y1:
+        return None
+    return x1, y1, x2, y2
 
 
 def _ensure_ultralytics_config_dir():

@@ -26,9 +26,9 @@ const canvasRef = ref(null)
 let mediaStream = null
 
 const faceShotTypes = [
-  { key: 'front', label: '正脸', hint: '请保持正对镜头' },
-  { key: 'left', label: '左脸', hint: '请向左侧转头' },
-  { key: 'right', label: '右脸', hint: '请向右侧转头' },
+  { key: 'front', label: '正脸1', hint: '请保持正对镜头' },
+  { key: 'left', label: '正脸2', hint: '请向左侧转头' },
+  { key: 'right', label: '正脸3', hint: '请向右侧转头' },
 ]
 
 const faceImages = reactive({
