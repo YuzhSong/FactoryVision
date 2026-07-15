@@ -1,5 +1,6 @@
 import unittest
 
+from ai_config import Config
 from modules.abnormal_behavior_service import AbnormalBehaviorService
 from modules.fall_detector import FallDetector
 
@@ -228,6 +229,12 @@ class FallEventStateTests(unittest.TestCase):
         self.clock.now = 6
         service.build_ai_report(1, "missing", [], {})
         self.assertTrue(any(item.get("type") == "FALL_ALERT" for item in service.build_ai_report(1, "f3", [person], history)["results"]))
+
+
+class FallConfigTests(unittest.TestCase):
+    def test_history_keeps_baseline_frames_beyond_fall_confirmation_window(self):
+        self.assertGreater(Config.MAX_HISTORY_POINTS, Config.FALL_CONFIRM_FRAMES)
+        self.assertGreaterEqual(Config.MAX_HISTORY_POINTS, Config.FALL_CONFIRM_FRAMES * 3)
 
 
 if __name__ == "__main__":
