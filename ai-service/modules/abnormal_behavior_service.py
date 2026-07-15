@@ -20,7 +20,7 @@ class AbnormalBehaviorService:
         self.fall_detector = FallDetector(
             ratio_threshold=config.get("fallRatioThreshold", 1.2),
             confirm_frames=config.get("fallConfirmFrames", 5),
-            min_confidence=config.get("fallMinConfidence", 0.6),
+            min_confidence=config.get("fallMinConfidence", 0.4),
             pose_horizontal_angle_threshold=config.get("fallPoseHorizontalAngleThreshold", 35.0),
             pose_min_keypoint_confidence=config.get("fallPoseMinKeypointConfidence", 0.3),
             bbox_edge_margin_ratio=config.get("fallBboxEdgeMarginRatio", 0.02),

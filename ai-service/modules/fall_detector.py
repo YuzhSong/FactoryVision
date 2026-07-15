@@ -9,7 +9,7 @@ class FallDetector:
         self,
         ratio_threshold: float = 1.2,
         confirm_frames: int = 5,
-        min_confidence: float = 0.6,
+        min_confidence: float = 0.4,
         pose_horizontal_angle_threshold: float = 35.0,
         pose_min_keypoint_confidence: float = 0.3,
         bbox_edge_margin_ratio: float = 0.02,
@@ -41,32 +41,40 @@ class FallDetector:
         latest = history[-1] if history else {}
         observation_id = latest.get("frameIndex", latest.get("timestamp"))
         if len(history) < self.confirm_frames:
-            return self._result(latest, False, 0.0, [], None, None, observation_id, "insufficient_history")
+            return self._result(latest, False, 0.0, [], None, None, observation_id, "insufficient_history", None)
 
         recent = history[-self.confirm_frames :]
         frame_scores = [self._fall_score(entry) for entry in recent]
         baseline = self._find_upright_baseline(history[: -self.confirm_frames])
         transition = self._transition_evidence(baseline, recent) if baseline else None
         sustained_low = self._sustained_low_posture_evidence(baseline, recent, frame_scores) if baseline else None
+        static_horizontal = self._static_horizontal_evidence(frame_scores) if baseline is None else None
         fall_like = [score for score in frame_scores if score["isFallLike"]]
         all_consecutive = len(fall_like) == self.confirm_frames
         rapid_descent = bool(transition and transition.get("rapidDescent"))
         sustained_low_fall = bool(sustained_low and sustained_low.get("hasSustainedLow"))
+        initial_horizontal_fall = bool(static_horizontal and static_horizontal.get("isConfirmed"))
 
         rejection_reason = None
         if any(score.get("rejectionReason") for score in frame_scores):
             rejection_reason = next(score["rejectionReason"] for score in frame_scores if score.get("rejectionReason"))
         elif not all_consecutive and not rapid_descent and not sustained_low_fall:
             rejection_reason = "not_consecutive"
-        elif baseline is None:
+        elif baseline is None and not initial_horizontal_fall:
             rejection_reason = "no_upright_baseline"
-        elif not transition["fastEnough"] and not (sustained_low and sustained_low["allowsSlowTransition"]):
+        elif not initial_horizontal_fall and not transition["fastEnough"] and not (sustained_low and sustained_low["allowsSlowTransition"]):
             rejection_reason = "transition_too_slow"
-        elif not transition["hasDrop"] and not sustained_low_fall:
+        elif not initial_horizontal_fall and not transition["hasDrop"] and not sustained_low_fall:
             rejection_reason = "no_downward_transition"
 
         is_fall = rejection_reason is None
-        confidence = self._calculate_rule_score(frame_scores, transition, sustained_low) if is_fall else 0.0
+        confidence = 0.0
+        if is_fall:
+            confidence = (
+                self._calculate_static_horizontal_score(frame_scores)
+                if initial_horizontal_fall
+                else self._calculate_rule_score(frame_scores, transition, sustained_low)
+            )
         if is_fall and confidence < self.min_confidence:
             is_fall = False
             rejection_reason = "rule_score_below_threshold"
@@ -80,10 +88,11 @@ class FallDetector:
             sustained_low,
             observation_id,
             rejection_reason,
+            static_horizontal,
         )
 
-    def _result(self, latest, is_fall, confidence, frame_scores, transition, sustained_low, observation_id, rejection_reason):
-        evidence = self._summarize_evidence(frame_scores, transition, sustained_low, rejection_reason)
+    def _result(self, latest, is_fall, confidence, frame_scores, transition, sustained_low, observation_id, rejection_reason, static_horizontal):
+        evidence = self._summarize_evidence(frame_scores, transition, sustained_low, rejection_reason, static_horizontal)
         return {
             "type": "FALL_ALERT",
             "trackId": latest.get("trackId"),
@@ -256,8 +265,12 @@ class FallDetector:
         has_downward_motion = max_center_drop >= self.min_center_drop_ratio
         has_low_height = max_height_drop >= self.sustained_low_drop_ratio
         has_horizontal_posture = latest_ratio >= self.ratio_threshold
-        has_sustained_low = has_downward_motion or (has_low_height and has_horizontal_posture)
-        very_low = has_downward_motion and has_low_height and any(
+        # Accept a large, sustained height drop even when camera perspective keeps
+        # the center nearly fixed. Still reject boxes that jump noticeably upward,
+        # which commonly happens when YOLO switches to a partial upper-body box.
+        has_plausible_low_height = has_low_height and max_center_drop >= -0.05
+        has_sustained_low = has_downward_motion or has_plausible_low_height
+        very_low = has_plausible_low_height and any(
             (bbox[3] - bbox[1]) <= base_height * self.very_low_height_ratio
             for _entry, bbox in valid_entries
         )
@@ -276,10 +289,28 @@ class FallDetector:
             "maxHeightDropRatio": round(max_height_drop, 4),
             "maxCenterDropRatio": round(max_center_drop, 4),
             "hasDownwardMotion": has_downward_motion,
+            "hasPlausibleLowHeight": has_plausible_low_height,
             "hasHorizontalPosture": has_horizontal_posture,
             "elapsedSeconds": round(elapsed, 4) if elapsed is not None else None,
             "triggerReasons": reasons,
         }
+
+    def _static_horizontal_evidence(self, frame_scores):
+        bbox_scores = [score for score in frame_scores if score.get("evidenceType") == "bbox"]
+        confirmed = len(bbox_scores) == self.confirm_frames and all(
+            score.get("isFallLike") and float(score.get("ratio") or 0.0) >= self.ratio_threshold
+            for score in bbox_scores
+        )
+        return {
+            "isConfirmed": confirmed,
+            "horizontalFrames": sum(1 for score in bbox_scores if score.get("isFallLike")),
+            "requiredFrames": self.confirm_frames,
+            "triggerReason": "initial_horizontal_posture" if confirmed else None,
+        }
+
+    def _calculate_static_horizontal_score(self, frame_scores):
+        shape_score = sum(score.get("score", 0.0) for score in frame_scores) / max(1, len(frame_scores))
+        return _clamp(0.4 + (0.4 * shape_score))
 
     def _calculate_rule_score(self, frame_scores, transition, sustained_low=None):
         transition = transition or {}
@@ -292,7 +323,7 @@ class FallDetector:
             low_score = _clamp(sustained_low.get("maxHeightDropRatio", 0.0) / max(self.sustained_low_drop_ratio, 1e-6))
         return _clamp((0.35 * shape_score) + (0.20 * center_score) + (0.20 * height_score) + (0.15 * low_score) + (0.10 * persistence_score))
 
-    def _summarize_evidence(self, frame_scores, transition, sustained_low, rejection_reason):
+    def _summarize_evidence(self, frame_scores, transition, sustained_low, rejection_reason, static_horizontal=None):
         latest = frame_scores[-1] if frame_scores else {}
         summary = {
             "evidenceType": latest.get("evidenceType", "none"),
@@ -311,6 +342,10 @@ class FallDetector:
         if sustained_low:
             summary["sustainedLowPosture"] = sustained_low
             summary["triggerReasons"] = sustained_low.get("triggerReasons", [])
+        if static_horizontal:
+            summary["staticHorizontalPosture"] = static_horizontal
+            if static_horizontal.get("isConfirmed"):
+                summary["triggerReasons"] = [static_horizontal.get("triggerReason")]
         return summary
 
     def _is_edge_truncated(self, bbox, frame_shape):
